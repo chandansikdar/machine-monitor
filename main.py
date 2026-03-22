@@ -1,5 +1,5 @@
 """
-main.py â€” Machine Continuous Monitoring Analytics
+main.py — Machine Continuous Monitoring Analytics
 Run with:  streamlit run main.py
 """
 
@@ -22,7 +22,7 @@ load_dotenv()
 
 st.set_page_config(
     page_title="Machine Analytics",
-    page_icon="âš™ï¸",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -40,7 +40,7 @@ st.markdown("""
 
 
 # ------------------------------------------------------------------ #
-# Helper â€” render a complete insights block
+# Helper — render a complete insights block
 # (defined first so it can be called from anywhere below)
 # ------------------------------------------------------------------ #
 
@@ -53,7 +53,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer):
     tier_colors = {1: "blue", 2: "green", 3: "orange", 4: "red"}
     if tier_label:
         st.caption(
-            f"Analysis engine â€” **Tier {tier}:** {tier_label}"
+            f"Analysis engine — **Tier {tier}:** {tier_label}"
         )
 
     score = insights.get("health_score")
@@ -64,13 +64,13 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer):
 
     kpis = insights.get("kpis", [])
     if kpis:
-        status_icon = {"normal": "âœ…", "warning": "âš ï¸", "critical": "ðŸ”´"}
+        status_icon = {"normal": "[OK]", "warning": "!", "critical": "[CRIT]"}
         cols = st.columns(min(len(kpis), 5))
         for i, kpi in enumerate(kpis[:5]):
             icon = status_icon.get(kpi.get("status", "normal"), "")
             cols[i].metric(
-                kpi.get("label", "â€”"),
-                f"{icon} {kpi.get('value', 'â€”')}",
+                kpi.get("label", "—"),
+                f"{icon} {kpi.get('value', '—')}",
             )
 
     if insights.get("narrative"):
@@ -78,9 +78,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer):
 
     anomalies = insights.get("anomalies", [])
     if anomalies:
-        st.subheader("âš ï¸ Anomalies detected")
+        st.subheader("Anomalies detected")
         for a in anomalies:
-            st.warning(f"**{a.get('parameter', 'â€”')}** â€” {a.get('description', '')}")
+            st.warning(f"**{a.get('parameter', '—')}** — {a.get('description', '')}")
 
     key_points = insights.get("insights", [])
     if key_points:
@@ -121,8 +121,8 @@ db, viz = get_services()
 # ================================================================== #
 
 with st.sidebar:
-    st.title("âš™ï¸ Machine Analytics")
-    st.caption("Continuous monitoring  Â·  Powered by Claude")
+    st.title("Machine Analytics")
+    st.caption("Continuous monitoring - Powered by Claude")
     st.divider()
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -137,19 +137,19 @@ with st.sidebar:
 
     st.divider()
 
-    with st.expander("âž• Register new machine", expanded=not db.get_machines()):
+    with st.expander("Register new machine", expanded=not db.get_machines()):
         machine_type = st.text_input(
             "Machine type", placeholder="e.g. Compressor, Pump, Furnace"
         )
         machine_id = st.text_input("Machine ID", placeholder="e.g. COMP-001")
         machine_desc = st.text_area(
             "Specs / notes",
-            placeholder="Rated power: 75 kW\nFlow: 500 mÂ³/h\nRPM: 1480",
+            placeholder="Rated power: 75 kW\nFlow: 500 m³/h\nRPM: 1480",
             height=90,
         )
 
         # Optional thresholds
-        with st.expander("âš ï¸ Parameter thresholds (optional)", expanded=False):
+        with st.expander("Parameter thresholds (optional)", expanded=False):
             st.caption("Define warning and critical limits per parameter. Leave blank to let Claude decide automatically.")
             thresh_text = st.text_area(
                 "Thresholds",
@@ -202,10 +202,10 @@ with st.sidebar:
     )
     if uploaded_file:
         if st.button("Ingest", use_container_width=True):
-            with st.spinner("Reading and storing dataâ€¦"):
+            with st.spinner("Reading and storing data…"):
                 result = db.ingest_file(uploaded_file, selected_id)
             if result["success"]:
-                st.success(f"âœ“ {result['rows']:,} rows ingested")
+                st.success(f"✓ {result['rows']:,} rows ingested")
                 st.caption("Columns: " + ", ".join(result["columns"]))
                 st.rerun()
             else:
@@ -225,11 +225,11 @@ with st.sidebar:
     )
     if log_file:
         if st.button("Read & store log", use_container_width=True):
-            with st.spinner("Reading log fileâ€¦"):
+            with st.spinner("Reading log file…"):
                 result = read_log(log_file, api_key=os.getenv("ANTHROPIC_API_KEY", ""))
             if result["success"]:
                 db.save_log(selected_id, log_file.name, result["method"], result["text"])
-                st.success(f"Log stored â€” {result['method']} ({len(result['text'])} chars)")
+                st.success(f"Log stored — {result['method']} ({len(result['text'])} chars)")
                 st.rerun()
             else:
                 st.error(result["error"])
@@ -244,12 +244,12 @@ with st.sidebar:
 # ================================================================== #
 
 machine_info = db.get_machine_info(selected_id)
-st.title(f"{machine_info['machine_type']}  Â·  {selected_id}")
+st.title(f"{machine_info['machine_type']}  ·  {selected_id}")
 if machine_info.get("description"):
     st.caption(machine_info["description"])
 
 # Inline threshold editor
-with st.expander("âš ï¸ Edit parameter thresholds", expanded=False):
+with st.expander("Edit parameter thresholds", expanded=False):
     st.caption("Define warning/critical limits. Leave blank for fully automatic (unsupervised) detection.")
     desc = machine_info.get("description", "")
     # Extract existing thresholds if present
@@ -279,11 +279,11 @@ with st.expander("âš ï¸ Edit parameter thresholds", expanded=False):
 
 data = db.get_data(selected_id)
 
-tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["ðŸ“Š Data", "ðŸ” Analysis", "ðŸ“‹ History", "ðŸ”§ Maintenance Logs"])
+tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "History", "Maintenance Logs"])
 
 
 # ------------------------------------------------------------------ #
-# TAB 1 â€” Data preview
+# TAB 1 — Data preview
 # ------------------------------------------------------------------ #
 
 with tab_data:
@@ -316,7 +316,7 @@ with tab_data:
 
 
 # ------------------------------------------------------------------ #
-# TAB 2 â€” Analysis
+# TAB 2 — Analysis
 # ------------------------------------------------------------------ #
 
 with tab_analysis:
@@ -352,7 +352,7 @@ with tab_analysis:
             else:
                 date_range = (min_d, max_d)
 
-            # Schedule config â€” only shown for compliance analysis
+            # Schedule config — only shown for compliance analysis
             schedule = None
             if analysis_type == "Operational Schedule Compliance":
                 with st.expander("Schedule configuration", expanded=True):
@@ -391,17 +391,17 @@ with tab_analysis:
 
             has_key = bool(os.getenv("ANTHROPIC_API_KEY"))
             analyze_clicked = st.button(
-                "ðŸ”  Analyze",
+                "Analyze",
                 type="primary",
                 use_container_width=True,
                 disabled=not has_key,
             )
             if not has_key:
-                st.caption("âš ï¸ Add your API key in the sidebar first.")
+                st.caption("! Add your API key in the sidebar first.")
 
         with right:
             if analyze_clicked:
-                with st.spinner("Claude is analysing your dataâ€¦"):
+                with st.spinner("Claude is analysing your data…"):
                     analyzer = Analyzer()
                     logs_text = db.get_logs_text(selected_id)
                     result = analyzer.analyze(
@@ -435,7 +435,7 @@ with tab_analysis:
 
 
 # ------------------------------------------------------------------ #
-# TAB 3 â€” History
+# TAB 3 — History
 # ------------------------------------------------------------------ #
 
 with tab_history:
@@ -444,7 +444,7 @@ with tab_history:
         st.info("No analysis runs yet for this machine.")
     else:
         for record in history:
-            label = f"{record['analysis_type']}  â€”  {record['timestamp']}"
+            label = f"{record['analysis_type']}  —  {record['timestamp']}"
             with st.expander(label):
                 ins = record["insights"]
                 score = ins.get("health_score")
@@ -458,7 +458,7 @@ with tab_history:
 
 
 # ------------------------------------------------------------------ #
-# TAB 4 â€” Maintenance Logs
+# TAB 4 — Maintenance Logs
 # ------------------------------------------------------------------ #
 
 with tab_logs:
@@ -466,11 +466,11 @@ with tab_logs:
     if not stored_logs:
         st.info("No maintenance logs uploaded yet. Use the sidebar to upload a log file.")
     else:
-        st.caption(f"{len(stored_logs)} log file(s) â€” included automatically in every analysis")
+        st.caption(f"{len(stored_logs)} log file(s) — included automatically in every analysis")
         for log in stored_logs:
             col1, col2 = st.columns([5, 1])
             with col1:
-                with st.expander(f"{log['filename']}  â€”  {log['uploaded_at']}  [{log['file_type']}]"):
+                with st.expander(f"{log['filename']}  —  {log['uploaded_at']}  [{log['file_type']}]"):
                     st.text(log["content"][:3000] + ("..." if len(log["content"]) > 3000 else ""))
             with col2:
                 if st.button("Delete", key=f"del_{log['filename']}_{log['uploaded_at']}"):
