@@ -108,14 +108,22 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
 
     kpis = insights.get("kpis", [])
     if kpis:
-        status_icon = {"normal": "[OK]", "warning": "!", "critical": "[CRIT]"}
-        cols = st.columns(min(len(kpis), 5))
-        for i, kpi in enumerate(kpis[:5]):
-            icon = status_icon.get(kpi.get("status", "normal"), "")
-            cols[i].metric(
-                kpi.get("label", "—"),
-                f"{icon} {kpi.get('value', '—')}",
-            )
+        n_cols = min(len(kpis), 4)
+        cols = st.columns(n_cols)
+        for i, kpi in enumerate(kpis[:4]):
+            status = kpi.get("status", "normal")
+            value  = kpi.get("value", "—")
+            label  = kpi.get("label", "—")
+            if analysis_type == "Operational Schedule Compliance":
+                # Show status as delta arrow, not prefix text
+                delta_map = {"normal": None, "warning": "Warning", "critical": "Critical"}
+                delta     = delta_map.get(status)
+                delta_col = "inverse" if status == "critical" else "off" if status == "warning" else "normal"
+                cols[i].metric(label, value, delta=delta, delta_color=delta_col)
+            else:
+                status_colour = {"normal": "green", "warning": "orange", "critical": "red"}
+                colour = status_colour.get(status, "gray")
+                cols[i].metric(label, f":{colour}[{value}]")
 
     if insights.get("narrative"):
         st.info(insights["narrative"])
