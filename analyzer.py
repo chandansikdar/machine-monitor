@@ -85,13 +85,69 @@ Rules:
 """
 
 ANALYSIS_DESCRIPTIONS = {
-    "Overall Health Assessment":        "Provide a comprehensive health assessment covering all parameters.",
-    "Trend & Drift Analysis":           "Identify gradual trends, drifts, and degradation patterns over time.",
-    "Anomaly Detection":                "Find outliers, spikes, and values outside expected operating ranges.",
-    "Correlation Analysis":             "Find relationships and dependencies between parameters.",
-    "Parameter Distribution":           "Analyse the statistical distribution and spread of each parameter.",
-    "Cross-Parameter Comparison":       "Compare parameters against each other to identify imbalances.",
-    "Operational Schedule Compliance":  "Analyse whether the machine ran outside its permitted schedule (weekends, holidays, out-of-hours). Identify unauthorised running periods, estimate energy waste, and flag if sensor readings during off-schedule periods indicate abnormal operation.",
+    # ── Primary analyses ──────────────────────────────────────────────────────
+    "Overall Health Assessment": (
+        "Provide a comprehensive health assessment covering all parameters. "
+        "Your assessment must include: "
+        "(1) Current parameter status against specs and thresholds. "
+        "(2) Any notable correlations or relationships between parameters — e.g. if two parameters "
+        "are both degrading together, or if a parameter that should correlate with another has decoupled. "
+        "(3) Cross-parameter ratios or balance issues — e.g. efficiency (output vs input energy), "
+        "pressure ratios, temperature differentials, phase balance. "
+        "(4) Overall degradation trajectory. "
+        "Be specific — cite actual values, percentages and parameter names."
+    ),
+    "Trend & Drift Analysis": (
+        "Focus exclusively on gradual trends and drift over time. "
+        "For each parameter: report the drift percentage (recent vs early period), "
+        "direction (rising or falling), and rate. "
+        "Identify which parameters are trending towards warning or critical thresholds "
+        "and estimate time to breach where possible. "
+        "Flag any parameters showing accelerating drift. "
+        "Do not report on current anomalies or spikes — focus only on sustained directional change."
+    ),
+    "Anomaly Detection": (
+        "Identify and catalogue all anomalous events. "
+        "For each anomaly: name the parameter, state the anomalous value, "
+        "give the timestamp or approximate period, state the Z-score or IQR deviation, "
+        "and explain why it is significant. "
+        "Report Isolation Forest multivariate anomalies if available. "
+        "Distinguish between isolated spikes and sustained out-of-range periods. "
+        "Do not report on trends — focus on sudden, unexpected deviations."
+    ),
+    "Operational Schedule Compliance": (
+        "Analyse whether the machine ran outside its permitted schedule. "
+        "Report only schedule compliance findings — off-schedule running periods, "
+        "weekend running, after-hours running. "
+        "Do NOT report on sensor health, vibration, temperature, pressure, or any parameter conditions. "
+        "KPIs must cover only: compliance %, off-schedule %, weekend %, after-hours %. "
+        "Health score = schedule compliance percentage (100 = fully compliant)."
+    ),
+    # ── Additional analytics ──────────────────────────────────────────────────
+    "Correlation Analysis": (
+        "Analyse the statistical relationships between all parameters. "
+        "Report the strongest positive and negative correlations with their coefficients. "
+        "Identify any parameter pairs that should be correlated but show unexpectedly low correlation "
+        "(possible sensor fault or developing fault). "
+        "Note any parameters that appear to be co-degrading. "
+        "Recommend a scatter or correlation chart for the most interesting pair."
+    ),
+    "Parameter Distribution": (
+        "Analyse the statistical distribution of each parameter. "
+        "Report mean, standard deviation, skewness, min, max and IQR for each. "
+        "Identify parameters with unusual distribution shapes: highly skewed, bimodal, "
+        "or with extreme outliers pulling the distribution. "
+        "Compare actual operating ranges against design specification ranges where available. "
+        "Flag parameters operating significantly away from their design point."
+    ),
+    "Cross-Parameter Comparison": (
+        "Compare physically related parameters against each other. "
+        "Calculate key ratios and differentials: pressure ratio, temperature differential, "
+        "specific energy (power per unit output), efficiency proxies. "
+        "Identify imbalances, unexpected ratios, or parameters that have drifted out of their "
+        "expected relationship with each other. "
+        "Use the machine specifications to determine what the expected ratios should be."
+    ),
 }
 
 
