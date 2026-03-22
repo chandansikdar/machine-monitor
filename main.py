@@ -17,6 +17,7 @@ try:
     REPORT_AVAILABLE = True
 except ImportError:
     REPORT_AVAILABLE = False
+from data_checker import run_data_quality_checks, format_quality_report_for_claude
 from database import Database
 from visualizer import Visualizer
 
@@ -1122,6 +1123,32 @@ with tab_analysis:
                 st.rerun()
 
             # Display results — one section per analysis type
+            # ── Data quality report ────────────────────────────────────
+            dq = st.session_state.get("last_dq_report")
+            if dq:
+                sev_color = {"critical":"#A32D2D","warning":"#BA7517","info":"#185FA5"}
+                sev_bg    = {"critical":"#FFF0F0","warning":"#FFFBF0","info":"#EAF4FF"}
+                n_crit = dq["summary"]["critical"]; n_warn = dq["summary"]["warning"]
+                score  = dq["score"]
+                label  = (f"  \u00b7  {n_crit} critical issue(s)" if n_crit else "") +                          (f"  \u00b7  {n_warn} warning(s)" if n_warn else "") +                          ("  \u00b7  All checks passed" if not dq["issues"] else "")
+                with st.expander(f"Data quality check \u2014 score {score}/100{label}", expanded=(n_crit>0)):
+                    if not dq["issues"]:
+                        st.success("All data quality checks passed.")
+                    else:
+                        for iss in dq["issues"]:
+                            sev   = iss["severity"]
+                            icon  = {"critical":"\u274c","warning":"\u26a0\ufe0f","info":"\u2139\ufe0f"}.get(sev,"\u2022")
+                            bg    = sev_bg.get(sev,"#F8F8F8")
+                            fc    = sev_color.get(sev,"#333")
+                            st.markdown(
+                                f'<div style="background:{bg};border-left:4px solid {fc};padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
+                                f'<span style="font-weight:600;color:{fc}">{icon} {iss["check"]}</span>' +
+                                f' &nbsp;\u00b7&nbsp; <code>{iss["col"]}</code>' +
+                                f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.85em">{iss["affected_pct"]}% affected</span><br>' +
+                                f'<span style="font-size:0.88em">{iss["detail"]}</span></div>',
+                                unsafe_allow_html=True)
+                st.markdown("")
+
             multi_results = st.session_state.get("last_multi_results")
             if multi_results:
                 for atype, insights in multi_results.items():
