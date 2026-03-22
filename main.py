@@ -4,6 +4,7 @@ Run with:  streamlit run main.py
 """
 
 import os
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 
 from analyzer import Analyzer
 from log_reader import read_log
+from report_generator import generate_report
 from database import Database
 from visualizer import Visualizer
 
@@ -999,6 +1001,35 @@ with tab_analysis:
                 st.markdown(
                     "_Select one or more analysis types and press **Analyze** to generate insights._"
                 )
+
+            # PDF download button — shown when results exist
+            if st.session_state.get("last_multi_results"):
+                st.divider()
+                if st.button("Download PDF report", type="secondary", use_container_width=True):
+                    with st.spinner("Generating PDF report..."):
+                        try:
+                            _data = st.session_state.get("last_data")
+                            _data_info = None
+                            if _data is not None:
+                                _data_info = {
+                                    "rows": len(_data),
+                                    "columns": len(_data.select_dtypes(include="number").columns),
+                                }
+                            pdf_bytes = generate_report(
+                                machine_info=machine_info,
+                                multi_results=st.session_state["last_multi_results"],
+                                date_range=date_range,
+                                data_info=_data_info,
+                            )
+                            st.download_button(
+                                label="Click here to save PDF",
+                                data=pdf_bytes,
+                                file_name=f"{selected_id}_analytics_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                            )
+                        except Exception as e:
+                            st.error(f"PDF generation failed: {e}")
 
 
 # ------------------------------------------------------------------ #
