@@ -328,12 +328,12 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e3.metric("Cost saving potential",
                           f"{currency_sym}{cost_saved:,.0f}")
                 calc_note = (
-                    f"**Energy calculation method:** Direct metering from column `{kwh_col}`.  \n"
-                    f"Total energy recorded in the selected period: **{total_kwh:,.1f} kWh**.  \n"
-                    f"Off-schedule energy = Total energy × Off-schedule % "
-                    f"({total_kwh:,.1f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**).  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}** (over {duration_str}).  \n"
-                    f"No assumptions required — measured data used directly."
+                    f"**Scenario: Energy meter data available**  \n"
+                    f"**Method:** Direct summation of column `{kwh_col}`. No assumptions required.  \n"
+                    f"---  \n"
+                    f"Total energy in period ({duration_str}): **{total_kwh:,.1f} kWh**  \n"
+                    f"Off-schedule energy = {total_kwh:,.1f} kWh x {off_pct:.1f}% = **{off_kwh:,.0f} kWh**  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh} = **{currency_sym}{cost_saved:,.0f}**"
                 )
 
             elif power_col:
@@ -347,13 +347,14 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e3.metric("Cost saving potential",
                           f"{currency_sym}{cost_saved:,.0f}")
                 calc_note = (
-                    f"**Energy calculation method:** Power integration from column `{power_col}`.  \n"
-                    f"Formula: Energy (kWh) = Average power (kW) × Time (h)  \n"
-                    f"= {avg_power_kw:.1f} kW × {total_hours:.1f} h = **{total_kwh:,.0f} kWh** total.  \n"
-                    f"Off-schedule energy = {total_kwh:,.0f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**.  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}** (over {duration_str}).  \n"
-                    f"**Assumption:** Average power assumed constant across the period. "
-                    f"Actual energy may vary if load fluctuates significantly."
+                    f"**Scenario: Power (kW) data available, no energy meter**  \n"
+                    f"**Method:** Power x time from column `{power_col}`.  \n"
+                    f"**Assumption:** Average power assumed constant. Actual energy may vary if load fluctuates.  \n"
+                    f"---  \n"
+                    f"Average power (full period): **{avg_power_kw:.1f} kW**  \n"
+                    f"Off-schedule hours: **{off_hours_val:.1f} h**  \n"
+                    f"Off-schedule energy = {avg_power_kw:.1f} kW x {off_hours_val:.1f} h = **{off_kwh:,.0f} kWh**  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh} = **{currency_sym}{cost_saved:,.0f}**"
                 )
 
             elif current_col and off_pct is not None:
@@ -374,6 +375,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 _hstart     = _sched.get("work_hour_start", 8)
                 _hend       = _sched.get("work_hour_end", 18)
                 _run_thresh = _sched.get("running_threshold", 0)
+                voltage     = _sched.get("voltage", 415.0)
+                pf          = _sched.get("power_factor", 0.85)
                 _df         = data.copy()
                 _df.index   = pd.to_datetime(_df.index)
                 in_sched     = (
@@ -415,15 +418,30 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e1.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
                 e2.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.0f}")
                 e3.metric("Period",                f"{duration_str}")
+                # Build scenario label based on what was measured vs assumed
+                if voltage_col and pf_col:
+                    scenario_label = "Scenario: Current + voltage + power factor all measured"
+                elif voltage_col:
+                    scenario_label = "Scenario: Current + voltage measured | Power factor entered by user"
+                elif pf_col:
+                    scenario_label = "Scenario: Current + power factor measured | Voltage entered by user"
+                else:
+                    scenario_label = "Scenario: Current only | Voltage and power factor entered by user"
+                v_source  = f"measured from `{voltage_col}`" if voltage_col else f"user input ({avg_voltage:.0f} V)"
+                pf_source = f"measured from `{pf_col}`"     if pf_col      else f"user input ({avg_pf:.2f})"
                 calc_note = (
-                    f"**Energy calculation method:** 3-phase power from off-schedule running current.  \n"
-                    f"Step 1 — Off-schedule AND running (current > {_run_thresh} A): **{len(off_run_data):,} readings** ({current_src}).  \n"
-                    f"Step 2 — Avg current: **{avg_current:.1f} A**  \n"
-                    f"Step 3 — Power = 1.732 × {avg_voltage:.0f}V × {avg_current:.1f}A × {avg_pf:.2f} / 1000 = **{power_kw:.1f} kW**  \n"
-                    f"Step 4 — Off-schedule running hours: **{off_run_hours:.1f} h**  \n"
-                    f"Step 5 — Energy = {power_kw:.1f} kW x {off_run_hours:.1f} h = **{off_kwh:,.0f} kWh**  \n"
-                    f"Step 6 — Cost = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}**  \n"
-                    f"{assumptions}"
+                    f"**{scenario_label}**  \n"
+                    f"**Method:** 3-phase power formula on off-schedule running readings only.  \n"
+                    f"---  \n"
+                    f"Off-schedule running readings (current > {_run_thresh} A): **{len(off_run_data):,}** ({current_src})  \n"
+                    f"Avg current (off-schedule running): **{avg_current:.1f} A** — from `{current_col}`  \n"
+                    f"Voltage: **{avg_voltage:.0f} V** — {v_source}  \n"
+                    f"Power factor: **{avg_pf:.2f}** — {pf_source}  \n"
+                    f"---  \n"
+                    f"Power = 1.732 x {avg_voltage:.0f}V x {avg_current:.1f}A x {avg_pf:.2f} / 1000 = **{power_kw:.1f} kW**  \n"
+                    f"Off-schedule running hours: **{off_run_hours:.1f} h**  \n"
+                    f"Off-schedule energy = {power_kw:.1f} kW x {off_run_hours:.1f} h = **{off_kwh:,.0f} kWh**  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh} = **{currency_sym}{cost_saved:,.0f}**"
                 )
 
             if calc_note:
@@ -789,6 +807,57 @@ with tab_analysis:
                         help="Your electricity tariff per kWh"
                     )
 
+                    # Detect what energy-related columns exist in the loaded data
+                    _data_now = db.get_data(selected_id)
+                    _cols     = list(_data_now.columns) if _data_now is not None else []
+
+                    _has_kwh     = any(any(k in c.lower() for k in ["kwh","kw_h","energy","consumption"]) for c in _cols)
+                    _has_power   = any(any(k in c.lower() for k in ["kw","power"]) for c in _cols) and not _has_kwh
+                    _has_current = any(any(k in c.lower() for k in ["current","amp"]) for c in _cols)
+                    _has_voltage = any(any(k in c.lower() for k in ["voltage","volt","_v","volts"]) for c in _cols)
+                    _has_pf      = any(any(k in c.lower() for k in ["power_factor","pf","cos_phi","cosphi"]) for c in _cols)
+
+                    user_voltage = 415.0
+                    user_pf      = 0.85
+
+                    if _has_kwh:
+                        st.success("Energy column detected — no electrical parameters needed.")
+                    elif _has_power:
+                        st.success("Power (kW) column detected — no electrical parameters needed.")
+                    elif _has_current:
+                        st.markdown("**Electrical parameters**")
+                        if _has_voltage and _has_pf:
+                            st.success("Voltage and power factor columns detected — no manual input needed.")
+                        elif _has_voltage:
+                            st.info("Voltage column detected. Power factor not found in data — please enter below.")
+                            user_pf = st.number_input(
+                                "Power factor",
+                                min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f",
+                                help="Motor power factor (0–1). Typical induction motor: 0.80–0.90."
+                            )
+                        elif _has_pf:
+                            st.info("Power factor column detected. Voltage not found in data — please enter below.")
+                            user_voltage = st.number_input(
+                                "Supply voltage (V)",
+                                min_value=1.0, value=415.0, step=1.0, format="%.0f",
+                                help="Line-to-line voltage e.g. 415V (India/EU), 400V (EU), 480V (US)."
+                            )
+                        else:
+                            st.warning("Neither voltage nor power factor found in data. Please enter both below.")
+                            elec_col1, elec_col2 = st.columns(2)
+                            user_voltage = elec_col1.number_input(
+                                "Supply voltage (V)",
+                                min_value=1.0, value=415.0, step=1.0, format="%.0f",
+                                help="Line-to-line voltage e.g. 415V (India/EU), 400V (EU), 480V (US)."
+                            )
+                            user_pf = elec_col2.number_input(
+                                "Power factor",
+                                min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f",
+                                help="Motor power factor (0–1). Typical induction motor: 0.80–0.90."
+                            )
+                    else:
+                        st.warning("No energy, power, or current column detected in data. Energy calculation will not be available.")
+
                     day_map = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
                     schedule = {
                         "work_days":         [day_map[d] for d in selected_days],
@@ -798,6 +867,8 @@ with tab_analysis:
                         "running_threshold": float(run_threshold),
                         "currency_symbol":   currency_symbol,
                         "rate_per_kwh":      float(rate_per_kwh),
+                        "voltage":           float(user_voltage),
+                        "power_factor":      float(user_pf),
                     }
 
             extra_context = st.text_area(
