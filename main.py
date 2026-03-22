@@ -44,23 +44,58 @@ st.markdown("""
 # (defined first so it can be called from anywhere below)
 # ------------------------------------------------------------------ #
 
-def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer):
+def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
+                    analysis_type: str = ""):
     """Render KPIs, narrative, anomalies, key insights, and Plotly charts."""
 
     # ML tier badge
     tier       = insights.get("_ml_tier", 0)
     tier_label = insights.get("_ml_tier_label", "")
-    tier_colors = {1: "blue", 2: "green", 3: "orange", 4: "red"}
     if tier_label:
-        st.caption(
-            f"Analysis engine — **Tier {tier}:** {tier_label}"
-        )
+        st.caption(f"Analysis engine — Tier {tier}: {tier_label}")
 
-    score = insights.get("health_score")
-    if score is not None:
-        colour = "green" if score >= 80 else "orange" if score >= 60 else "red"
-        st.markdown(f"### Health score: :{colour}[{score} / 100]")
-        st.progress(int(score) / 100)
+    # Off-schedule runtime banner (Schedule Compliance only)
+    if analysis_type == "Operational Schedule Compliance":
+        off_pct = None
+        on_pct  = None
+        for kpi in insights.get("kpis", []):
+            label = kpi.get("label", "").lower()
+            val   = kpi.get("value", "")
+            if "off" in label or "non-complian" in label:
+                try:
+                    off_pct = float(str(val).replace("%","").strip().split()[0])
+                except Exception:
+                    pass
+            if "complian" in label and "off" not in label and "non" not in label:
+                try:
+                    on_pct = float(str(val).replace("%","").strip().split()[0])
+                except Exception:
+                    pass
+        if off_pct is None:
+            score_val = insights.get("health_score")
+            if score_val is not None:
+                on_pct  = score_val
+                off_pct = 100 - score_val
+        if off_pct is not None:
+            on_pct = on_pct if on_pct is not None else round(100 - off_pct, 1)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Off-schedule runtime", f"{off_pct:.1f}% of total time")
+            c2.metric("Scheduled runtime",    f"{on_pct:.1f}% of total time")
+            if data is not None and not data.empty:
+                total_hours = (data.index.max() - data.index.min()).total_seconds() / 3600
+                off_hours   = total_hours * off_pct / 100
+                c3.metric("Est. off-schedule hours", f"{off_hours:,.0f} hrs")
+            compliance_pct = min(100, max(0, on_pct))
+            bar_colour = "green" if compliance_pct >= 95 else "orange" if compliance_pct >= 80 else "red"
+            st.markdown(f"**Schedule compliance: :{bar_colour}[{compliance_pct:.1f}%]**")
+            st.progress(compliance_pct / 100)
+            st.markdown("---")
+    else:
+        score = insights.get("health_score")
+        if score is not None:
+            colour = "green" if score >= 80 else "orange" if score >= 60 else "red"
+            st.markdown(f"### Health score: :{colour}[{score} / 100]")
+            st.progress(int(score) / 100)
 
     kpis = insights.get("kpis", [])
     if kpis:
@@ -103,6 +138,8 @@ if "last_insights" not in st.session_state:
     st.session_state["last_insights"] = None
 if "last_data" not in st.session_state:
     st.session_state["last_data"] = None
+if "last_multi_results" not in st.session_state:
+    st.session_state["last_multi_results"] = None
 
 
 # ------------------------------------------------------------------ #
@@ -326,18 +363,32 @@ with tab_analysis:
         left, right = st.columns([1, 3])
 
         with left:
-            analysis_type = st.selectbox(
-                "Analysis type",
-                [
-                    "Overall Health Assessment",
-                    "Trend & Drift Analysis",
-                    "Anomaly Detection",
-                    "Correlation Analysis",
-                    "Parameter Distribution",
-                    "Cross-Parameter Comparison",
-                    "Operational Schedule Compliance",
-                ],
-            )
+            st.markdown("**Select analyses to run**")
+            select_all = st.checkbox("Select All", value=False, key="select_all")
+
+            analysis_options = [
+                ("Overall Health Assessment",       "Comprehensive health score and parameter review"),
+                ("Trend & Drift Analysis",           "Gradual changes and degradation over time"),
+                ("Anomaly Detection",                "Outliers, spikes, and out-of-range values"),
+                ("Correlation Analysis",             "Relationships between parameters"),
+                ("Parameter Distribution",           "Statistical spread and distribution shape"),
+                ("Cross-Parameter Comparison",       "Imbalances between related parameters"),
+                ("Operational Schedule Compliance",  "Running outside permitted hours or days"),
+            ]
+
+            selected_analyses = []
+            for name, desc in analysis_options:
+                checked = st.checkbox(
+                    f"**{name}**",
+                    value=select_all,
+                    key=f"chk_{name}",
+                    help=desc,
+                )
+                if checked:
+                    selected_analyses.append(name)
+
+            # Keep backward compat — use first selected for schedule UI trigger
+            analysis_type = selected_analyses[0] if selected_analyses else ""
 
             min_d, max_d = data.index.min().date(), data.index.max().date()
             if min_d < max_d:
@@ -352,9 +403,9 @@ with tab_analysis:
             else:
                 date_range = (min_d, max_d)
 
-            # Schedule config — only shown for compliance analysis
+            # Schedule config — only shown when compliance is selected
             schedule = None
-            if analysis_type == "Operational Schedule Compliance":
+            if "Operational Schedule Compliance" in selected_analyses:
                 with st.expander("Schedule configuration", expanded=True):
                     day_options = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
                     selected_days = st.multiselect(
@@ -389,48 +440,65 @@ with tab_analysis:
                 height=100,
             )
 
-            has_key = bool(os.getenv("ANTHROPIC_API_KEY"))
+            has_key    = bool(os.getenv("ANTHROPIC_API_KEY"))
+            no_selection = len(selected_analyses) == 0
             analyze_clicked = st.button(
                 "Analyze",
                 type="primary",
                 use_container_width=True,
-                disabled=not has_key,
+                disabled=not has_key or no_selection,
             )
             if not has_key:
-                st.caption("! Add your API key in the sidebar first.")
+                st.caption("Add your API key in the sidebar first.")
+            if no_selection and has_key:
+                st.caption("Select at least one analysis type above.")
 
         with right:
             if analyze_clicked:
-                with st.spinner("Claude is analysing your data…"):
-                    analyzer = Analyzer()
-                    logs_text = db.get_logs_text(selected_id)
-                    result = analyzer.analyze(
+                logs_text    = db.get_logs_text(selected_id)
+                analyzer_obj = Analyzer()
+                all_results  = {}
+                progress_bar = st.progress(0)
+                status_text  = st.empty()
+
+                for i, atype in enumerate(selected_analyses):
+                    status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
+                    result = analyzer_obj.analyze(
                         machine_info=machine_info,
                         data=data,
-                        analysis_type=analysis_type,
+                        analysis_type=atype,
                         date_range=date_range,
                         extra_context=extra_context,
-                        schedule=schedule,
+                        schedule=schedule if atype == "Operational Schedule Compliance" else None,
                         logs_text=logs_text,
                     )
+                    if result["success"]:
+                        all_results[atype] = result["insights"]
+                        db.save_analysis(selected_id, atype, result["insights"])
+                    else:
+                        all_results[atype] = {"error": result["error"]}
+                    progress_bar.progress((i + 1) / len(selected_analyses))
 
-                if result["success"]:
-                    db.save_analysis(selected_id, analysis_type, result["insights"])
-                    st.session_state["last_insights"] = result["insights"]
-                    st.session_state["last_data"]     = data
-                    st.rerun()
-                else:
-                    st.error(f"Analysis failed: {result['error']}")
+                status_text.empty()
+                progress_bar.empty()
+                st.session_state["last_multi_results"] = all_results
+                st.session_state["last_data"]          = data
+                st.rerun()
 
-            if st.session_state["last_insights"] is not None:
-                render_insights(
-                    st.session_state["last_insights"],
-                    st.session_state["last_data"],
-                    viz,
-                )
+            # Display results — one section per analysis type
+            multi_results = st.session_state.get("last_multi_results")
+            if multi_results:
+                for atype, insights in multi_results.items():
+                    st.markdown("---")
+                    st.subheader(atype)
+                    if "error" in insights:
+                        st.error(f"Failed: {insights['error']}")
+                    else:
+                        render_insights(insights, st.session_state.get("last_data"), viz,
+                                        analysis_type=atype)
             else:
                 st.markdown(
-                    "_Select an analysis type and press **Analyze** to generate insights._"
+                    "_Select one or more analysis types and press **Analyze** to generate insights._"
                 )
 
 
