@@ -853,7 +853,7 @@ with tab_analysis:
                         selected_analyses.append(name)
 
             # ── Additional analytics ───────────────────────────
-            with st.expander("Additional analytics", expanded=False):
+            with st.expander("Additional analyses", expanded=False):
                 st.caption("Use for focused investigation of a specific relationship or pattern.")
                 additional_options = [
                     ("Correlation Analysis",        "Statistical relationships and dependencies between parameters"),
