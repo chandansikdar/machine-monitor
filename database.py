@@ -1,5 +1,5 @@
 """
-database.py — Data persistence layer (DuckDB + flat CSV files)
+database.py â€” Data persistence layer (DuckDB + flat CSV files)
 
 Architecture:
   - machines table: machine profiles and specs
@@ -51,6 +51,15 @@ class Database:
                 analysis_type VARCHAR,
                 insights      JSON,
                 created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS maintenance_logs (
+                machine_id   VARCHAR,
+                filename     VARCHAR,
+                file_type    VARCHAR,
+                content      TEXT,
+                uploaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -196,3 +205,42 @@ class Database:
             {"analysis_type": r[0], "insights": json.loads(r[1]), "timestamp": r[2]}
             for r in rows
         ]
+
+    # ------------------------------------------------------------------ #
+    # Maintenance logs
+    # ------------------------------------------------------------------ #
+
+    def save_log(self, machine_id: str, filename: str, file_type: str, content: str):
+        self.conn.execute(
+            "INSERT INTO maintenance_logs (machine_id, filename, file_type, content) VALUES (?, ?, ?, ?)",
+            [machine_id, filename, file_type, content],
+        )
+
+    def get_logs(self, machine_id: str) -> list:
+        rows = self.conn.execute("""
+            SELECT filename, file_type, content, uploaded_at
+            FROM maintenance_logs
+            WHERE machine_id = ?
+            ORDER BY uploaded_at DESC
+            LIMIT 20
+        """, [machine_id]).fetchall()
+        return [
+            {"filename": r[0], "file_type": r[1], "content": r[2], "uploaded_at": r[3]}
+            for r in rows
+        ]
+
+    def get_logs_text(self, machine_id: str) -> str:
+        """Return all log content concatenated â€” for inclusion in Claude prompts."""
+        logs = self.get_logs(machine_id)
+        if not logs:
+            return ""
+        parts = []
+        for log in logs:
+            parts.append(f"--- {log['filename']} (uploaded {log['uploaded_at']}) ---\n{log['content']}")
+        return "\n\n".join(parts)
+
+    def delete_log(self, machine_id: str, filename: str):
+        self.conn.execute(
+            "DELETE FROM maintenance_logs WHERE machine_id = ? AND filename = ?",
+            [machine_id, filename],
+        )
