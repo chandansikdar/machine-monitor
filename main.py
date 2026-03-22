@@ -478,6 +478,10 @@ with tab_analysis:
                 progress_bar = st.progress(0)
                 status_text  = st.empty()
 
+                # Filter data by date range for display consistency
+                from analyzer import Analyzer as _A
+                filtered_data = _A._filter_by_date(data, date_range)
+
                 for i, atype in enumerate(selected_analyses):
                     status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
                     result = analyzer_obj.analyze(
@@ -499,7 +503,7 @@ with tab_analysis:
                 status_text.empty()
                 progress_bar.empty()
                 st.session_state["last_multi_results"] = all_results
-                st.session_state["last_data"]          = data
+                st.session_state["last_data"]          = filtered_data
                 st.rerun()
 
             # Display results — one section per analysis type
