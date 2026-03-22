@@ -124,6 +124,11 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             voltage = 415  # standard 3-phase voltage (V) — adjust if needed
             pf      = 0.85  # typical power factor for induction motor
 
+            # Get currency settings from schedule (set in schedule config)
+            _schedule     = st.session_state.get("_last_schedule", {})
+            currency_sym  = _schedule.get("currency_symbol", "$")
+            rate_kwh      = _schedule.get("rate_per_kwh", 0.15)
+
             # Auto-detect energy source: kWh column > power column > current calculation
             kwh_col   = next(
                 (c for c in data.columns if any(k in c.lower() for k in ["kwh", "kw_h", "energy", "consumption"])),
@@ -153,8 +158,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e1.metric("Energy source",         "kWh meter")
                 e2.metric("Total energy (period)", f"{total_kwh:,.1f} kWh")
                 e3.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
-                e4.metric("Energy saving potential",
-                          f"{off_kwh:,.0f} kWh",
+                cost_saved = off_kwh * rate_kwh
+                e4.metric(f"Cost saving potential",
+                          f"{currency_sym}{cost_saved:,.2f}",
                           delta="if schedule enforced",
                           delta_color="inverse")
                 calc_note = (
@@ -162,6 +168,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     f"Total energy recorded in the selected period: **{total_kwh:,.1f} kWh**.  \n"
                     f"Off-schedule energy = Total energy × Off-schedule % "
                     f"({total_kwh:,.1f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**).  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.2f}**.  \n"
                     f"No assumptions required — measured data used directly."
                 )
 
@@ -173,8 +180,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e1.metric("Energy source",         "Power (kW) column")
                 e2.metric("Avg power draw",        f"{avg_power_kw:.1f} kW")
                 e3.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
-                e4.metric("Energy saving potential",
-                          f"{off_kwh:,.0f} kWh",
+                cost_saved = off_kwh * rate_kwh
+                e4.metric(f"Cost saving potential",
+                          f"{currency_sym}{cost_saved:,.2f}",
                           delta="if schedule enforced",
                           delta_color="inverse")
                 calc_note = (
@@ -182,6 +190,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     f"Formula: Energy (kWh) = Average power (kW) × Time (h)  \n"
                     f"= {avg_power_kw:.1f} kW × {total_hours:.1f} h = **{total_kwh:,.0f} kWh** total.  \n"
                     f"Off-schedule energy = {total_kwh:,.0f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**.  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.2f}**.  \n"
                     f"**Assumption:** Average power assumed constant across the period. "
                     f"Actual energy may vary if load fluctuates significantly."
                 )
@@ -222,8 +231,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e1.metric("Avg motor current",      f"{avg_current:.1f} A")
                 e2.metric("Est. power draw",         f"{power_kw:.1f} kW")
                 e3.metric("Off-schedule energy",     f"{off_kwh:,.0f} kWh")
-                e4.metric("Energy saving potential",
-                          f"{off_kwh:,.0f} kWh",
+                cost_saved = off_kwh * rate_kwh
+                e4.metric(f"Cost saving potential",
+                          f"{currency_sym}{cost_saved:,.2f}",
                           delta="if schedule enforced",
                           delta_color="inverse")
                 calc_note = (
@@ -231,7 +241,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     f"Formula: Power (kW) = √3 × V × I × PF ÷ 1000  \n"
                     f"= 1.732 × {avg_voltage:.0f} V × {avg_current:.1f} A × {avg_pf:.2f} ÷ 1000 = **{power_kw:.1f} kW**  \n"
                     f"Off-schedule energy = {power_kw:.1f} kW × {off_hours_val:.1f} h = **{off_kwh:,.0f} kWh**  \n"
-                    f"{assumptions}"
+                    f"{assumptions}  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.2f}**."
                 )
 
             if calc_note:
@@ -575,6 +586,22 @@ with tab_analysis:
                     run_threshold = st.number_input(
                         "Running threshold (value above = running)", value=0.0
                     )
+                    st.markdown("**Energy cost settings**")
+                    cur_col1, cur_col2 = st.columns(2)
+                    currency_symbol = cur_col1.text_input(
+                        "Currency symbol",
+                        value="$",
+                        help="e.g. $, €, £, CHF, INR ₹"
+                    )
+                    rate_per_kwh = cur_col2.number_input(
+                        "Rate per kWh",
+                        min_value=0.0,
+                        value=0.15,
+                        step=0.01,
+                        format="%.4f",
+                        help="Your electricity tariff per kWh"
+                    )
+
                     day_map = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
                     schedule = {
                         "work_days":         [day_map[d] for d in selected_days],
@@ -582,6 +609,8 @@ with tab_analysis:
                         "work_hour_end":     int(hour_end),
                         "indicator_col":     indicator_col,
                         "running_threshold": float(run_threshold),
+                        "currency_symbol":   currency_symbol,
+                        "rate_per_kwh":      float(rate_per_kwh),
                     }
 
             extra_context = st.text_area(
@@ -614,6 +643,9 @@ with tab_analysis:
                 # Filter data by date range for display consistency
                 from analyzer import Analyzer as _A
                 filtered_data = _A._filter_by_date(data, date_range)
+
+                # Store schedule for use in energy display
+                st.session_state["_last_schedule"] = schedule or {}
 
                 for i, atype in enumerate(selected_analyses):
                     status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
