@@ -328,8 +328,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e3.metric("Cost saving potential",
                           f"{currency_sym}{cost_saved:,.0f}")
                 calc_note = (
-                    f"**Scenario: Energy meter data available**  \n"
-                    f"**Method:** Direct summation of column `{kwh_col}`. No assumptions required.  \n"
+                    f"Scenario: Energy meter data available  \n"
+                    f"Method: Direct summation of column `{kwh_col}`. No assumptions required.  \n"
                     f"---  \n"
                     f"Total energy in period ({duration_str}): **{total_kwh:,.1f} kWh**  \n"
                     f"Off-schedule energy = {total_kwh:,.1f} kWh x {off_pct:.1f}% = **{off_kwh:,.0f} kWh**  \n"
@@ -347,9 +347,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e3.metric("Cost saving potential",
                           f"{currency_sym}{cost_saved:,.0f}")
                 calc_note = (
-                    f"**Scenario: Power (kW) data available, no energy meter**  \n"
-                    f"**Method:** Power x time from column `{power_col}`.  \n"
-                    f"**Assumption:** Average power assumed constant. Actual energy may vary if load fluctuates.  \n"
+                    f"Scenario: Power (kW) data available, no energy meter  \n"
+                    f"Method: Power x time from column `{power_col}`.  \n"
+                    f"Assumption: Average power assumed constant. Actual energy may vary if load fluctuates.  \n"
                     f"---  \n"
                     f"Average power (full period): **{avg_power_kw:.1f} kW**  \n"
                     f"Off-schedule hours: **{off_hours_val:.1f} h**  \n"
@@ -430,16 +430,16 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 v_source  = f"measured from `{voltage_col}`" if voltage_col else f"user input ({avg_voltage:.0f} V)"
                 pf_source = f"measured from `{pf_col}`"     if pf_col      else f"user input ({avg_pf:.2f})"
                 calc_note = (
-                    f"**{scenario_label}**  \n"
-                    f"**Method:** 3-phase power formula on off-schedule running readings only.  \n"
+                    f"{scenario_label}  \n"
+                    f"Method: 3-phase power formula on off-schedule running readings only.  \n"
                     f"---  \n"
                     f"Off-schedule running readings (current > {_run_thresh} A): **{len(off_run_data):,}** ({current_src})  \n"
-                    f"Avg current (off-schedule running): **{avg_current:.1f} A** — from `{current_col}`  \n"
-                    f"Voltage: **{avg_voltage:.0f} V** — {v_source}  \n"
-                    f"Power factor: **{avg_pf:.2f}** — {pf_source}  \n"
+                    f"Avg current (off-schedule running): {avg_current:.1f} A — from `{current_col}`  \n"
+                    f"Voltage: {avg_voltage:.0f} V — {v_source}  \n"
+                    f"Power factor: {avg_pf:.2f} — {pf_source}  \n"
                     f"---  \n"
-                    f"Power = 1.732 x {avg_voltage:.0f}V x {avg_current:.1f}A x {avg_pf:.2f} / 1000 = **{power_kw:.1f} kW**  \n"
-                    f"Off-schedule running hours: **{off_run_hours:.1f} h**  \n"
+                    f"Power = 1.732 x {avg_voltage:.0f}V x {avg_current:.1f}A x {avg_pf:.2f} / 1000 = {power_kw:.1f} kW  \n"
+                    f"Off-schedule running hours: {off_run_hours:.1f} h  \n"
                     f"Off-schedule energy = {power_kw:.1f} kW x {off_run_hours:.1f} h = **{off_kwh:,.0f} kWh**  \n"
                     f"Cost saving = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh} = **{currency_sym}{cost_saved:,.0f}**"
                 )
