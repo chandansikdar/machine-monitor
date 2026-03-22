@@ -400,7 +400,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                           delta=f"over {duration_str} — if schedule enforced",
                           delta_color="inverse")
                 e3.metric("Est. power draw (running)", f"{power_kw:.1f} kW",
-                          help=f"3-phase calc ({source_note}) — running periods only")
+                          help=f"3-phase: √3 × {avg_voltage:.0f}V × {avg_current:.1f}A × {avg_pf:.2f} PF ÷ 1000")
                 calc_note = (
                     f"**Energy calculation method:** 3-phase power estimation from motor current.  \n"
                     f"Formula: Power (kW) = √3 × V × I × PF ÷ 1000  \n"
