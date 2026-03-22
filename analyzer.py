@@ -251,8 +251,11 @@ class Analyzer:
     def _filter_by_date(data: pd.DataFrame, date_range) -> pd.DataFrame:
         if not date_range or len(date_range) < 2:
             return data
-        start, end = pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])
-        mask = (data.index >= start) & (data.index <= end)
+        # Start: beginning of start date (00:00:00)
+        # End: end of end date (23:59:59) — makes end date fully inclusive
+        start = pd.Timestamp(date_range[0]).normalize()
+        end   = pd.Timestamp(date_range[1]).normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+        mask  = (data.index >= start) & (data.index <= end)
         filtered = data.loc[mask]
         return filtered if not filtered.empty else data
 
