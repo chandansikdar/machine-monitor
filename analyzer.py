@@ -411,6 +411,7 @@ Time range  : {data.index.min()} → {data.index.max()}
 Total rows  : {len(data):,}
 {schedule_section}
 {f'=== ENGINEER NOTES ==={chr(10)}{extra_context}' if extra_context.strip() else ''}
+{f'=== DATA QUALITY ==={chr(10)}{dq_context}{chr(10)}IMPORTANT: Where data quality issues flagged (flatlines, frozen sensors, shifts), factor this into your analysis. Do not treat flatlined values as valid readings. Flag affected parameters explicitly.' if dq_context.strip() else ''}
 
 === REQUESTED ANALYSIS ===
 Type: Operational Schedule Compliance
@@ -447,6 +448,7 @@ Type: {analysis_type}
 Task: {analysis_desc}
 
 {f'=== ENGINEER NOTES ==={chr(10)}{extra_context}' if extra_context.strip() else ''}
+{f'=== DATA QUALITY ==={chr(10)}{dq_context}{chr(10)}IMPORTANT: Where data quality issues flagged (flatlines, frozen sensors, shifts), factor this into your analysis. Do not treat flatlined values as valid readings. Flag affected parameters explicitly.' if dq_context.strip() else ''}
 
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
