@@ -548,20 +548,29 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
 
         elif analysis_type == "Anomaly Detection":
             # Always show control charts for anomaly detection
-            from analyzer import _parse_thresholds
-            _desc       = st.session_state.get("_machine_desc", "")
-            _thresholds = _parse_thresholds(_desc) or {}
-            _cc_figs    = viz.generate_control_charts(data, _thresholds, max_cols=6) if hasattr(viz, "generate_control_charts") else []
-            if _cc_figs:
-                st.caption(
-                    "Control chart lines: "
-                    "UCL/LCL = mean ± 3σ (red solid) — Rule 1 zone.  "
-                    "UWL/LWL = mean ± 2σ (amber dashed) — Rule 4 zone.  "
-                    "Red circles = |Z| > 3 anomalies.  "
-                    "Purple dotted = engineering thresholds (if defined)."
-                )
-                for fig in _cc_figs:
-                    st.plotly_chart(fig, use_container_width=True)
+            try:
+                from analyzer import _parse_thresholds
+                _desc       = st.session_state.get("_machine_desc", "")
+                _thresholds = _parse_thresholds(_desc) or {}
+                # Use data passed in — fall back to session state if None
+                _chart_data = data if (data is not None and not data.empty) else st.session_state.get("last_data")
+                if _chart_data is not None and not _chart_data.empty:
+                    _cc_figs = viz.generate_control_charts(_chart_data, _thresholds, max_cols=6)
+                    if _cc_figs:
+                        st.caption(
+                            "UCL/LCL = mean ± 3σ (red solid).  "
+                            "UWL/LWL = mean ± 2σ (amber dashed).  "
+                            "Red circles = |Z| > 3 anomalies.  "
+                            "Purple dotted = engineering thresholds."
+                        )
+                        for fig in _cc_figs:
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No control charts generated — check data has numeric columns.")
+                else:
+                    st.info("No data available for control charts.")
+            except Exception as _e:
+                st.error(f"Control chart error: {_e}")
 
         elif recs:
             for fig in viz.generate_charts(data, recs):
