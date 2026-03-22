@@ -34,6 +34,15 @@ st.markdown("""
         border-radius: 8px;
         padding: 8px 12px;
     }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+        font-size: 1rem !important;
+        overflow: visible !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+    [data-testid="metric-container"] [data-testid="stMetricLabel"] {
+        font-size: 0.78rem !important;
+    }
     .block-container { padding-top: 1.5rem; }
 </style>
 """, unsafe_allow_html=True)
@@ -79,12 +88,12 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
         if off_pct is not None:
             on_pct = on_pct if on_pct is not None else round(100 - off_pct, 1)
             c1, c2, c3 = st.columns(3)
-            c1.metric("Off-schedule runtime", f"{off_pct:.1f}% of total time")
-            c2.metric("Scheduled runtime",    f"{on_pct:.1f}% of total time")
+            c1.metric("Off-schedule", f"{off_pct:.1f}%")
+            c2.metric("Scheduled", f"{on_pct:.1f}%")
             if data is not None and not data.empty:
                 total_hours = (data.index.max() - data.index.min()).total_seconds() / 3600
                 off_hours   = total_hours * off_pct / 100
-                c3.metric("Est. off-schedule hours", f"{off_hours:,.0f} hrs")
+                c3.metric("Off-schedule hours", f"{off_hours:,.0f} hrs")
             compliance_pct = min(100, max(0, on_pct))
             bar_colour = "green" if compliance_pct >= 95 else "orange" if compliance_pct >= 80 else "red"
             st.markdown(f"**Schedule compliance: :{bar_colour}[{compliance_pct:.1f}%]**")
