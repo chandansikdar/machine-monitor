@@ -393,8 +393,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e1.metric("Off-schedule energy",    f"{off_kwh:,.0f} kWh")
                 e2.metric("Cost saving potential",
                           f"{currency_sym}{cost_saved:,.0f}")
-                e3.metric("Period", f"{duration_str}",
-                          help=f"3-phase: √3 × {avg_voltage:.0f}V × {avg_current:.1f}A × {avg_pf:.2f} PF ÷ 1000")
+                e3.metric("Period", f"{duration_str}")
                 calc_note = (
                     f"**Energy calculation method:** 3-phase power estimation from motor current.  \n"
                     f"Formula: Power (kW) = √3 × V × I × PF ÷ 1000  \n"
