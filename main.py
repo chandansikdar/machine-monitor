@@ -566,7 +566,16 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         for fig in _cc_figs:
                             st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.info("No control charts generated — check data has numeric columns.")
+                        # Debug: show what data looks like
+                        numeric_cols = _chart_data.select_dtypes(include="number").columns.tolist()
+                        st.warning(f"No charts produced. Data shape: {_chart_data.shape}, numeric cols: {numeric_cols[:5]}")
+                        # Try building one chart directly and catch the specific error
+                        if numeric_cols:
+                            try:
+                                fig = viz._control_chart(_chart_data, numeric_cols[0], {})
+                                st.plotly_chart(fig, use_container_width=True)
+                            except Exception as _ce:
+                                st.error(f"Control chart build error: {_ce}")
                 else:
                     st.info("No data available for control charts.")
             except Exception as _e:
