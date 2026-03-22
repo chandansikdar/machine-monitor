@@ -16,6 +16,137 @@ from visualizer import Visualizer
 
 load_dotenv()
 
+import plotly.graph_objects as go
+import numpy as np
+
+def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
+    """
+    Build a compliance chart showing:
+    - The best available energy/power/current column as the main trace
+    - Green shading for permitted schedule windows
+    - Red shading for off-schedule periods
+    """
+    if data is None or data.empty:
+        return []
+
+    # Auto-detect best column to plot (same priority as energy calc)
+    kwh_col   = next((c for c in data.columns if any(k in c.lower()
+                      for k in ["kwh","kw_h","energy","consumption"])), None)
+    power_col = next((c for c in data.columns if any(k in c.lower()
+                      for k in ["kw","power"]) and c != kwh_col), None)
+    current_col = next((c for c in data.columns if any(k in c.lower()
+                        for k in ["current","amp"])), None)
+    plot_col  = kwh_col or power_col or current_col
+    if not plot_col:
+        # Fall back to first numeric column
+        numeric = data.select_dtypes(include="number").columns
+        plot_col = numeric[0] if len(numeric) else None
+    if not plot_col:
+        return []
+
+    work_days  = schedule.get("work_days", list(range(5)))
+    hour_start = schedule.get("work_hour_start", 8)
+    hour_end   = schedule.get("work_hour_end", 18)
+
+    df = data.copy()
+    df.index = pd.to_datetime(df.index)
+
+    # Determine permitted mask
+    in_schedule = (
+        df.index.dayofweek.isin(work_days) &
+        (df.index.hour >= hour_start) &
+        (df.index.hour < hour_end)
+    )
+
+    # Build shading shapes — find contiguous blocks
+    def _blocks(mask):
+        blocks = []
+        in_block = False
+        for i, val in enumerate(mask):
+            if val and not in_block:
+                start = df.index[i]
+                in_block = True
+            elif not val and in_block:
+                blocks.append((start, df.index[i]))
+                in_block = False
+        if in_block:
+            blocks.append((start, df.index[-1]))
+        return blocks
+
+    scheduled_blocks   = _blocks(in_schedule)
+    offschedule_blocks = _blocks(~in_schedule)
+
+    shapes = []
+    # Green bands for scheduled periods
+    for s, e in scheduled_blocks[:200]:
+        shapes.append(dict(
+            type="rect", xref="x", yref="paper",
+            x0=s, x1=e, y0=0, y1=1,
+            fillcolor="rgba(0,180,80,0.10)",
+            line=dict(width=0),
+            layer="below"
+        ))
+    # Red bands for off-schedule periods
+    for s, e in offschedule_blocks[:200]:
+        shapes.append(dict(
+            type="rect", xref="x", yref="paper",
+            x0=s, x1=e, y0=0, y1=1,
+            fillcolor="rgba(220,50,50,0.10)",
+            line=dict(width=0),
+            layer="below"
+        ))
+
+    # Main trace — colour points by schedule status
+    colors = ["rgba(0,150,60,0.8)" if v else "rgba(200,40,40,0.8)"
+              for v in in_schedule]
+
+    col_label = plot_col.replace("_", " ").title()
+    source    = ("kWh" if plot_col == kwh_col
+                 else "Power (kW)" if plot_col == power_col
+                 else "Motor Current (A)")
+
+    fig = go.Figure()
+
+    # Shaded area under line
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df[plot_col],
+        fill="tozeroy",
+        fillcolor="rgba(100,100,200,0.08)",
+        line=dict(color="rgba(100,100,200,0.5)", width=1),
+        name=col_label,
+        hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + col_label + ": %{y:.2f}<extra></extra>"
+    ))
+
+    # Schedule boundary lines
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode="markers",
+        marker=dict(color="rgba(0,150,60,0.6)", size=10, symbol="square"),
+        name=f"Scheduled ({', '.join(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d] for d in work_days)} {hour_start:02d}:00-{hour_end:02d}:00)"
+    ))
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode="markers",
+        marker=dict(color="rgba(200,40,40,0.6)", size=10, symbol="square"),
+        name="Off-schedule"
+    ))
+
+    fig.update_layout(
+        title=f"{col_label} — Schedule Compliance ({source})",
+        xaxis_title="Time",
+        yaxis_title=col_label,
+        shapes=shapes,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=40, r=20, t=50, b=40),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        font=dict(size=12),
+    )
+
+    return [fig]
+
+
 # ------------------------------------------------------------------ #
 # Page config
 # ------------------------------------------------------------------ #
@@ -285,10 +416,16 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             st.markdown(f"- {point}")
 
     recs = insights.get("chart_recommendations", [])
-    if recs and data is not None:
+    if data is not None:
         st.subheader("Charts")
-        for fig in viz.generate_charts(data, recs):
-            st.plotly_chart(fig, use_container_width=True)
+        if analysis_type == "Operational Schedule Compliance":
+            _schedule    = st.session_state.get("_last_schedule", {})
+            _figs = _build_compliance_chart(data, _schedule)
+            for fig in _figs:
+                st.plotly_chart(fig, use_container_width=True)
+        elif recs:
+            for fig in viz.generate_charts(data, recs):
+                st.plotly_chart(fig, use_container_width=True)
 
 
 # ------------------------------------------------------------------ #
