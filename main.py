@@ -91,9 +91,15 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             c1.metric("Off-schedule", f"{off_pct:.1f}%")
             c2.metric("Scheduled", f"{on_pct:.1f}%")
             if data is not None and not data.empty:
-                total_hours = (data.index.max() - data.index.min()).total_seconds() / 3600
-                off_hours   = total_hours * off_pct / 100
-                c3.metric("Off-schedule hours", f"{off_hours:,.0f} hrs")
+                # Add one reading interval so end date is fully included
+                interval_secs = 900  # default 15 min
+                if len(data) > 1:
+                    interval_secs = (data.index[1] - data.index[0]).total_seconds()
+                total_hours = (
+                    (data.index.max() - data.index.min()).total_seconds() + interval_secs
+                ) / 3600
+                off_hours = total_hours * off_pct / 100
+                c3.metric("Off-schedule hours", f"{off_hours:,.1f} hrs")
             compliance_pct = min(100, max(0, on_pct))
             bar_colour = "green" if compliance_pct >= 95 else "orange" if compliance_pct >= 80 else "red"
             st.markdown(f"**Schedule compliance: :{bar_colour}[{compliance_pct:.1f}%]**")
