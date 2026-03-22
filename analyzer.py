@@ -25,6 +25,14 @@ The JSON must exactly follow this schema:
 
 {
   "health_score": <integer 0–100, where 100 = perfect condition>,
+  "score_breakdown": [
+    {
+      "factor": "<short label for what drove the score, e.g. 'Vibration critical breach' or 'All parameters normal'>",
+      "impact": "positive" | "negative" | "neutral",
+      "detail": "<one sentence explaining the specific signal and magnitude, e.g. 'vibration_mm_s exceeded critical threshold (4.5 mm/s) in 23 readings (0.27% of period)'>",
+      "weight": "high" | "medium" | "low"
+    }
+  ],
   "kpis": [
     {
       "label": "<short parameter name>",
@@ -63,6 +71,14 @@ Rules:
 - FOCUS: You must ONLY perform the analysis type specified in the REQUESTED ANALYSIS section.
   Do not mix analysis types. If asked for Schedule Compliance, report only schedule findings.
   If asked for Anomaly Detection, report only anomalies. Do not include unrelated findings.
+- SCORE BREAKDOWN: Always include a score_breakdown array explaining what drove the health score.
+  List 3–6 factors maximum. Each factor must reference specific numbers from the pre-computed signals.
+  Use weight "high" for threshold breaches and critical violations, "medium" for warning-level findings
+  and significant trends, "low" for minor statistical signals. Always include at least one factor even
+  if all parameters are normal (e.g. "All parameters within normal range" with impact "positive").
+  The score_breakdown must be honest — if the score is 65, the breakdown must show what prevented it
+  from being higher. Never list vague factors like "overall condition" — always cite specific parameters
+  and values.
 - THRESHOLDS: If the machine profile contains a PARAMETER THRESHOLDS section, use those
   exact warning and critical limits to classify KPI status and flag anomalies. For parameters
   WITHOUT defined thresholds, use the pre-computed statistical signals. Always state whether
