@@ -547,25 +547,48 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 st.plotly_chart(fig, use_container_width=True)
 
         elif analysis_type == "Anomaly Detection":
-            # Always show control charts for anomaly detection
             try:
+                import plotly.graph_objects as _go
                 from analyzer import _parse_thresholds
                 _desc       = st.session_state.get("_machine_desc", "")
                 _thresholds = _parse_thresholds(_desc) or {}
-                # Use data passed in — fall back to session state if None
                 _chart_data = data if (data is not None and not data.empty) else st.session_state.get("last_data")
                 if _chart_data is not None and not _chart_data.empty:
-                    _cc_figs = viz.generate_control_charts(_chart_data, _thresholds, max_cols=6)
-                    if _cc_figs:
-                        st.caption(
-                            "UCL/LCL = mean ± 3σ (red solid).  "
-                            "UWL/LWL = mean ± 2σ (amber dashed).  "
-                            "Red circles = |Z| > 3 anomalies.  "
-                            "Purple dotted = engineering thresholds."
-                        )
-                        for fig in _cc_figs:
-                            st.plotly_chart(fig, use_container_width=True)
-
+                    _numeric = _chart_data.select_dtypes(include="number").columns.tolist()[:6]
+                    st.caption("UCL/LCL = mean \u00b13\u03c3 (red solid).  UWL/LWL = mean \u00b12\u03c3 (amber dashed).  Red circles = |Z|>3 anomalies.  Purple dotted = engineering thresholds.")
+                    for _col in _numeric:
+                        _s = _chart_data[_col].dropna()
+                        _mu = float(_s.mean()); _sd = float(_s.std()) or 1e-9
+                        _ucl = _mu+3*_sd; _uwl = _mu+2*_sd; _lwl = _mu-2*_sd; _lcl = _mu-3*_sd
+                        _z = (_s-_mu)/_sd; _anom = _s[_z.abs()>3]
+                        _xs = [str(i) for i in _chart_data.index]
+                        _ax = [str(i) for i in _anom.index]
+                        _fig = _go.Figure()
+                        _fig.add_hrect(y0=_uwl, y1=_ucl, fillcolor="rgba(192,57,43,0.07)", line_width=0, layer="below")
+                        _fig.add_hrect(y0=_lcl, y1=_lwl, fillcolor="rgba(192,57,43,0.07)", line_width=0, layer="below")
+                        _fig.add_hrect(y0=_lwl, y1=_uwl, fillcolor="rgba(230,126,34,0.07)", line_width=0, layer="below")
+                        _x0, _x1 = _xs[0], _xs[-1]
+                        for _yv,_lc,_ld,_lw,_ln in [
+                            (_ucl,"#C0392B","solid",1.5,f"UCL {_ucl:.3f} (mean+3\u03c3)"),
+                            (_uwl,"#E67E22","dash", 1.0,f"UWL {_uwl:.3f} (mean+2\u03c3)"),
+                            (_mu, "#2C3E50","solid",1.5,f"Mean {_mu:.3f}"),
+                            (_lwl,"#E67E22","dash", 1.0,f"LWL {_lwl:.3f} (mean-2\u03c3)"),
+                            (_lcl,"#C0392B","solid",1.5,f"LCL {_lcl:.3f} (mean-3\u03c3)"),
+                        ]:
+                            _fig.add_shape(type="line",x0=_x0,x1=_x1,y0=_yv,y1=_yv,line=dict(color=_lc,width=_lw,dash=_ld))
+                            _fig.add_trace(_go.Scatter(x=[None],y=[None],mode="lines",line=dict(color=_lc,width=_lw,dash=_ld),name=_ln,showlegend=True))
+                        if _col in _thresholds:
+                            for _tk,_tc in [("warning","#8E44AD"),("critical","#641E16")]:
+                                _tv = _thresholds[_col].get(_tk)
+                                if _tv is not None:
+                                    _fig.add_shape(type="line",x0=_x0,x1=_x1,y0=_tv,y1=_tv,line=dict(color=_tc,width=1.5,dash="dot"))
+                                    _fig.add_trace(_go.Scatter(x=[None],y=[None],mode="lines",line=dict(color=_tc,width=1.5,dash="dot"),name=f"{_tk.title()} {_tv}",showlegend=True))
+                        _fig.add_trace(_go.Scatter(x=_xs,y=_chart_data[_col].values.tolist(),mode="lines",line=dict(color="#185FA5",width=1.2),name=_col,hovertemplate="%{x}<br>"+_col+": %{y:.3f}<extra></extra>"))
+                        if len(_anom):
+                            _fig.add_trace(_go.Scatter(x=_ax,y=_anom.values.tolist(),mode="markers",marker=dict(color="#C0392B",size=7,symbol="circle-open",line=dict(width=2,color="#C0392B")),name=f"Anomalies (|Z|>3) n={len(_anom)}"))
+                        _cl = _col.replace("_"," ").title()
+                        _fig.update_layout(title=dict(text=f"Control chart \u2014 {_cl}",font=dict(size=14)),xaxis_title="Time",yaxis_title=_cl,legend=dict(orientation="h",yanchor="top",y=-0.22,xanchor="left",x=0,bgcolor="rgba(0,0,0,0)",borderwidth=0),plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",margin=dict(l=40,r=20,t=55,b=110),hovermode="x unified",font=dict(size=12))
+                        st.plotly_chart(_fig, use_container_width=True)
                 else:
                     st.info("No data available for control charts.")
             except Exception as _e:
