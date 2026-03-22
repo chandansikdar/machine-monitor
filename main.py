@@ -368,39 +368,62 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                      for k in ["power_factor", "pf", "cos_phi", "cosphi", "cos phi"])),
                     None
                 )
-                avg_current = float(data[current_col].mean())
-
+                # Build off-schedule + running mask
+                _sched      = st.session_state.get("_last_schedule", {})
+                _wdays      = _sched.get("work_days", list(range(5)))
+                _hstart     = _sched.get("work_hour_start", 8)
+                _hend       = _sched.get("work_hour_end", 18)
+                _run_thresh = _sched.get("running_threshold", 0)
+                _df         = data.copy()
+                _df.index   = pd.to_datetime(_df.index)
+                in_sched     = (
+                    _df.index.dayofweek.isin(_wdays) &
+                    (_df.index.hour >= _hstart) &
+                    (_df.index.hour < _hend)
+                )
+                off_sched_mask = ~in_sched
+                running_mask   = _df[current_col] > _run_thresh
+                off_run_mask   = off_sched_mask & running_mask
+                off_run_data   = _df[off_run_mask]
+                if len(off_run_data) > 0:
+                    avg_current   = float(off_run_data[current_col].mean())
+                    off_run_hours = len(off_run_data) * interval_secs / 3600
+                    current_src   = f"avg of {len(off_run_data):,} off-schedule running readings"
+                else:
+                    avg_current   = float(_df[off_sched_mask][current_col].mean()) if off_sched_mask.any() else float(_df[current_col].mean())
+                    off_run_hours = off_hours_val
+                    current_src   = "all off-schedule readings (running threshold not matched)"
                 if voltage_col and pf_col:
-                    avg_voltage = float(data[voltage_col].mean())
-                    avg_pf      = float(data[pf_col].mean())
-                    assumptions = "No assumptions — voltage, current and power factor all measured."
+                    avg_voltage = float(off_run_data[voltage_col].mean()) if len(off_run_data) > 0 else float(_df[voltage_col].mean())
+                    avg_pf      = float(off_run_data[pf_col].mean()) if len(off_run_data) > 0 else float(_df[pf_col].mean())
+                    assumptions = "No assumptions — V, I and PF all measured from off-schedule running periods."
                 elif voltage_col:
-                    avg_voltage = float(data[voltage_col].mean())
+                    avg_voltage = float(off_run_data[voltage_col].mean()) if len(off_run_data) > 0 else float(_df[voltage_col].mean())
                     avg_pf      = pf
-                    assumptions = f"Voltage measured ({avg_voltage:.0f} V). **Power factor assumed = {pf}** (typical induction motor). Provide a `power_factor` column for higher accuracy."
+                    assumptions = f"Voltage measured ({avg_voltage:.0f} V from off-schedule running). PF assumed = {pf}."
                 elif pf_col:
                     avg_voltage = voltage
-                    avg_pf      = float(data[pf_col].mean())
-                    assumptions = f"Power factor measured ({avg_pf:.2f}). **Voltage assumed = {voltage} V** (standard 3-phase). Provide a `voltage` column for higher accuracy."
+                    avg_pf      = float(off_run_data[pf_col].mean()) if len(off_run_data) > 0 else float(_df[pf_col].mean())
+                    assumptions = f"PF measured ({avg_pf:.2f} from off-schedule running). Voltage assumed = {voltage} V."
                 else:
                     avg_voltage = voltage
                     avg_pf      = pf
-                    assumptions = f"**Both voltage and power factor assumed** — voltage = {voltage} V (standard 3-phase), power factor = {pf} (typical induction motor). Provide `voltage` and `power_factor` columns for higher accuracy."
-
-                power_kw = (1.732 * avg_voltage * avg_current * avg_pf) / 1000
-                off_kwh  = power_kw * off_hours_val
+                    assumptions = f"Both assumed — {voltage} V, PF={pf}. Add voltage and power_factor columns for higher accuracy."
+                power_kw   = (1.732 * avg_voltage * avg_current * avg_pf) / 1000
+                off_kwh    = power_kw * off_run_hours
                 cost_saved = off_kwh * rate_kwh
-                e1.metric("Off-schedule energy",    f"{off_kwh:,.0f} kWh")
-                e2.metric("Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.0f}")
-                e3.metric("Period", f"{duration_str}")
+                e1.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
+                e2.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.0f}")
+                e3.metric("Period",                f"{duration_str}")
                 calc_note = (
-                    f"**Energy calculation method:** 3-phase power estimation from motor current.  \n"
-                    f"Formula: Power (kW) = √3 × V × I × PF ÷ 1000  \n"
-                    f"= 1.732 × {avg_voltage:.0f} V × {avg_current:.1f} A × {avg_pf:.2f} ÷ 1000 = **{power_kw:.1f} kW**  \n"
-                    f"Off-schedule energy = {power_kw:.1f} kW × {off_hours_val:.1f} h = **{off_kwh:,.0f} kWh**  \n"
-                    f"{assumptions}  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}** (over {duration_str})."
+                    f"**Energy calculation method:** 3-phase power from off-schedule running current.  \n"
+                    f"Step 1 — Off-schedule AND running (current > {_run_thresh} A): **{len(off_run_data):,} readings** ({current_src}).  \n"
+                    f"Step 2 — Avg current: **{avg_current:.1f} A**  \n"
+                    f"Step 3 — Power = 1.732 × {avg_voltage:.0f}V × {avg_current:.1f}A × {avg_pf:.2f} / 1000 = **{power_kw:.1f} kW**  \n"
+                    f"Step 4 — Off-schedule running hours: **{off_run_hours:.1f} h**  \n"
+                    f"Step 5 — Energy = {power_kw:.1f} kW x {off_run_hours:.1f} h = **{off_kwh:,.0f} kWh**  \n"
+                    f"Step 6 — Cost = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}**  \n"
+                    f"{assumptions}"
                 )
 
             if calc_note:
