@@ -797,13 +797,64 @@ with tab_analysis:
                         "Running threshold (value above = running)", value=0.0
                     )
                     st.markdown("**Energy cost settings**")
-                    cur_col1, cur_col2 = st.columns(2)
-                    currency_symbol = cur_col1.text_input(
-                        "Currency symbol",
-                        value="$",
-                        help="e.g. $, €, £, CHF, INR ₹"
+                    CURRENCIES = [
+                        "$ — USD (US Dollar)",
+                        "€ — EUR (Euro)",
+                        "£ — GBP (British Pound)",
+                        "¥ — JPY (Japanese Yen)",
+                        "¥ — CNY (Chinese Yuan)",
+                        "₹ — INR (Indian Rupee)",
+                        "CHF — CHF (Swiss Franc)",
+                        "A$ — AUD (Australian Dollar)",
+                        "C$ — CAD (Canadian Dollar)",
+                        "S$ — SGD (Singapore Dollar)",
+                        "HK$ — HKD (Hong Kong Dollar)",
+                        "kr — SEK (Swedish Krona)",
+                        "kr — NOK (Norwegian Krone)",
+                        "kr — DKK (Danish Krone)",
+                        "₩ — KRW (South Korean Won)",
+                        "R — ZAR (South African Rand)",
+                        "R$ — BRL (Brazilian Real)",
+                        "₺ — TRY (Turkish Lira)",
+                        "₽ — RUB (Russian Ruble)",
+                        "﷼ — SAR (Saudi Riyal)",
+                        "د.إ — AED (UAE Dirham)",
+                        "₪ — ILS (Israeli Shekel)",
+                        "Mex$ — MXN (Mexican Peso)",
+                        "Rp — IDR (Indonesian Rupiah)",
+                        "₱ — PHP (Philippine Peso)",
+                        "฿ — THB (Thai Baht)",
+                        "zł — PLN (Polish Zloty)",
+                        "Kč — CZK (Czech Koruna)",
+                        "Ft — HUF (Hungarian Forint)",
+                        "RM — MYR (Malaysian Ringgit)",
+                        "NZ$ — NZD (New Zealand Dollar)",
+                        "CLP — CLP (Chilean Peso)",
+                        "Col$ — COP (Colombian Peso)",
+                        "S/. — PEN (Peruvian Sol)",
+                        "Ksh — KES (Kenyan Shilling)",
+                        "₦ — NGN (Nigerian Naira)",
+                        "EGP — EGP (Egyptian Pound)",
+                        "PKR — PKR (Pakistani Rupee)",
+                        "৳ — BDT (Bangladeshi Taka)",
+                        "Other — (type below)",
+                    ]
+                    selected_currency = st.selectbox(
+                        "Currency",
+                        options=CURRENCIES,
+                        index=0,
+                        help="Select your local currency"
                     )
-                    rate_per_kwh = cur_col2.number_input(
+                    if selected_currency.startswith("Other"):
+                        currency_symbol = st.text_input(
+                            "Enter currency symbol",
+                            value="$",
+                            help="Type your currency symbol"
+                        )
+                    else:
+                        currency_symbol = selected_currency.split(" — ")[0].strip()
+
+                    rate_per_kwh = st.number_input(
                         "Rate per kWh",
                         min_value=0.0,
                         value=0.15,
