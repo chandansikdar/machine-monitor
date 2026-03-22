@@ -222,8 +222,11 @@ class Visualizer:
                 xanchor="left", x=0,
                 bgcolor="rgba(0,0,0,0)", borderwidth=0,
             ),
-            **_LAYOUT,
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=40, r=20, t=55, b=110),
+            hovermode="x unified",
+            font=dict(size=12),
         )
         return fig
 
