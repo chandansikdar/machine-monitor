@@ -542,10 +542,27 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     if data is not None:
         st.subheader("Charts")
         if analysis_type == "Operational Schedule Compliance":
-            _schedule    = st.session_state.get("_last_schedule", {})
-            _figs = _build_compliance_chart(data, _schedule)
-            for fig in _figs:
+            _schedule = st.session_state.get("_last_schedule", {})
+            for fig in _build_compliance_chart(data, _schedule):
                 st.plotly_chart(fig, use_container_width=True)
+
+        elif analysis_type == "Anomaly Detection":
+            # Always show control charts for anomaly detection
+            from analyzer import _parse_thresholds
+            _desc       = st.session_state.get("_machine_desc", "")
+            _thresholds = _parse_thresholds(_desc) or {}
+            _cc_figs    = viz.generate_control_charts(data, _thresholds, max_cols=6)
+            if _cc_figs:
+                st.caption(
+                    "Control chart lines: "
+                    "UCL/LCL = mean ± 3σ (red solid) — Rule 1 zone.  "
+                    "UWL/LWL = mean ± 2σ (amber dashed) — Rule 4 zone.  "
+                    "Red circles = |Z| > 3 anomalies.  "
+                    "Purple dotted = engineering thresholds (if defined)."
+                )
+                for fig in _cc_figs:
+                    st.plotly_chart(fig, use_container_width=True)
+
         elif recs:
             for fig in viz.generate_charts(data, recs):
                 st.plotly_chart(fig, use_container_width=True)
@@ -1010,7 +1027,8 @@ with tab_analysis:
                 filtered_data = _A._filter_by_date(data, date_range)
 
                 # Store schedule for use in energy display
-                st.session_state["_last_schedule"] = schedule or {}
+                st.session_state["_last_schedule"]   = schedule or {}
+                st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
                 for i, atype in enumerate(selected_analyses):
                     status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
