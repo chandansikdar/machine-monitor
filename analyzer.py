@@ -1,5 +1,5 @@
 """
-analyzer.py â€” Claude analysis engine with adaptive ML pre-processing
+analyzer.py — Claude analysis engine with adaptive ML pre-processing
 
 Flow:
   1. ml_engine.run() selects tier and computes pre-processed signals
@@ -19,12 +19,12 @@ import ml_engine
 
 SYSTEM_PROMPT = """You are an expert industrial machine health analyst with deep knowledge of rotating equipment, process machinery, and condition monitoring.
 
-Your job is to analyse time-series sensor data from industrial machines and return ONLY a valid JSON object â€” no preamble, no markdown code blocks, no explanation outside the JSON.
+Your job is to analyse time-series sensor data from industrial machines and return ONLY a valid JSON object — no preamble, no markdown code blocks, no explanation outside the JSON.
 
 The JSON must exactly follow this schema:
 
 {
-  "health_score": <integer 0â€“100, where 100 = perfect condition>,
+  "health_score": <integer 0–100, where 100 = perfect condition>,
   "kpis": [
     {
       "label": "<short parameter name>",
@@ -49,13 +49,13 @@ The JSON must exactly follow this schema:
       "note": "<optional interpretation hint>"
     }
   ],
-  "narrative": "<2â€“3 sentence plain-language summary an engineer can act on immediately>"
+  "narrative": "<2–3 sentence plain-language summary an engineer can act on immediately>"
 }
 
 Rules:
 - health_score must reflect the actual data, not be optimistic by default.
 - Only reference column names that appear in the dataset.
-- kpis should cover the 3â€“5 most critical parameters for this machine type.
+- kpis should cover the 3–5 most critical parameters for this machine type.
 - insights should be specific (include values, trends, percentages) not generic.
 - anomalies array may be empty [] if none are detected.
 - Always recommend at least one chart_recommendation.
@@ -144,7 +144,7 @@ class Analyzer:
 
             response = self.client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=2048,
+                max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -217,7 +217,7 @@ class Analyzer:
         return {
             "permitted_schedule": {
                 "work_days": [["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d] for d in work_days],
-                "hours": f"{hour_start:02d}:00 â€“ {hour_end:02d}:00",
+                "hours": f"{hour_start:02d}:00 – {hour_end:02d}:00",
             },
             "total_readings":           len(df),
             "running_readings":         running_rows,
@@ -267,27 +267,46 @@ class Analyzer:
 === MAINTENANCE LOG HISTORY ===
 {logs_text.strip()}
 """
+        # Build compact ML signals — only flags and key numbers, not full raw stats
+        stat_flags = {}
+        for col, sig in ml_signals.get("statistical", {}).items():
+            flags = sig.get("flags", [])
+            if flags or abs(sig.get("trend_pct", 0)) > 2 or sig.get("z_outliers", 0) > 0:
+                stat_flags[col] = {
+                    "mean": sig.get("mean"),
+                    "trend_pct": sig.get("trend_pct"),
+                    "z_outliers": sig.get("z_outliers"),
+                    "recent_max_z": sig.get("recent_max_z"),
+                    "flags": flags,
+                }
+
+        cc_violations = {}
+        for col, cc in ml_signals.get("control_charts", {}).items():
+            if cc.get("violations"):
+                cc_violations[col] = cc.get("violations")
+
         ml_section = f"""
 === PRE-COMPUTED SIGNALS (Tier {ml_signals.get('tier', '?')}: {ml_signals.get('tier_label', '')}) ===
 Data volume: {ml_signals.get('data_days', '?')} days
 Guidance: {ml_signals.get('guidance', '')}
 
-Statistical signals:
-{json.dumps(ml_signals.get('statistical', {}), indent=2, default=str)}
+Statistical flags (parameters with anomalies or trends only):
+{json.dumps(stat_flags, indent=2, default=str)}
 """
-        if "control_charts" in ml_signals:
+        if cc_violations:
             ml_section += f"""
-Control chart analysis (Western Electric rules):
-{json.dumps(ml_signals.get('control_charts', {}), indent=2, default=str)}
+Control chart violations:
+{json.dumps(cc_violations, indent=2, default=str)}
 """
         if "isolation_forest" in ml_signals:
+            iso = ml_signals["isolation_forest"]
             ml_section += f"""
-Isolation Forest anomaly detection:
-{json.dumps(ml_signals.get('isolation_forest', {}), indent=2, default=str)}
+Isolation Forest: {iso.get('interpretation', '')}
+Worst timestamps: {iso.get('worst_timestamps', [])}
 """
         if "threshold_breaches" in ml_signals:
             ml_section += f"""
-Threshold breach counts (engineer-defined limits):
+Threshold breach counts:
 {json.dumps(ml_signals.get('threshold_breaches', {}), indent=2, default=str)}
 """
 
@@ -300,7 +319,7 @@ Specs/Notes : {machine_info.get('description', 'Not provided')}
 === DATASET OVERVIEW ===
 Total rows  : {len(data):,}
 Parameters  : {', '.join(numeric_cols) if numeric_cols else 'None detected'}
-Time range  : {data.index.min()} â†’ {data.index.max()}
+Time range  : {data.index.min()} → {data.index.max()}
 
 === STATISTICAL SUMMARY ===
 {json.dumps(stats, indent=2, default=str)}
