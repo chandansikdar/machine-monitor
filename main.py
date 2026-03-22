@@ -228,7 +228,49 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     if tier_label:
         st.caption(f"Analysis engine — Tier {tier}: {tier_label}")
 
+    # Score breakdown (Overall Health Assessment only)
+    if analysis_type not in ("Operational Schedule Compliance",) and score is not None:
+        breakdown = insights.get("score_breakdown", [])
+        if breakdown:
+            with st.expander("Score explanation — what drove this score", expanded=True):
+                impact_icon  = {"positive": "↑", "negative": "↓", "neutral": "—"}
+                impact_color = {"positive": "green", "negative": "red", "neutral": "gray"}
+                weight_style = {"high": "font-weight:600", "medium": "", "low": "color:#888"}
+
+                rows_html = ""
+                for f in breakdown:
+                    impact  = f.get("impact", "neutral")
+                    weight  = f.get("weight", "low")
+                    icon    = impact_icon.get(impact, "—")
+                    color   = impact_color.get(impact, "gray")
+                    wstyle  = weight_style.get(weight, "")
+                    factor  = f.get("factor", "")
+                    detail  = f.get("detail", "")
+                    rows_html += (
+                        f'<tr>'
+                        f'<td style="padding:6px 10px;color:{color};font-size:1.1em;text-align:center">{icon}</td>'
+                        f'<td style="padding:6px 10px;{wstyle};font-size:0.88em">{factor}</td>'
+                        f'<td style="padding:6px 10px;font-size:0.82em;color:#555">{detail}</td>'
+                        f'<td style="padding:6px 10px;font-size:0.78em;color:#888;text-align:center">{weight.title()}</td>'
+                        f'</tr>'
+                    )
+
+                st.markdown(
+                    f'<table style="width:100%;border-collapse:collapse;border:1px solid #dde">'
+                    f'<thead><tr style="background:#f0f4f8">'
+                    f'<th style="padding:6px 10px;font-size:0.82em;width:40px"></th>'
+                    f'<th style="padding:6px 10px;font-size:0.82em;text-align:left">Factor</th>'
+                    f'<th style="padding:6px 10px;font-size:0.82em;text-align:left">Signal detail</th>'
+                    f'<th style="padding:6px 10px;font-size:0.82em;width:80px">Weight</th>'
+                    f'</tr></thead>'
+                    f'<tbody>{rows_html}</tbody>'
+                    f'</table>',
+                    unsafe_allow_html=True
+                )
+
     # Off-schedule runtime banner (Schedule Compliance only)
+    if analysis_type not in ("Operational Schedule Compliance",) and False:
+        pass
     if analysis_type == "Operational Schedule Compliance":
         off_pct = None
         on_pct  = None
@@ -755,7 +797,7 @@ with tab_analysis:
                         selected_analyses.append(name)
 
             # ── Additional analytics ───────────────────────────
-            with st.expander("Additional analyses", expanded=False):
+            with st.expander("Additional analytics", expanded=False):
                 st.caption("Use for focused investigation of a specific relationship or pattern.")
                 additional_options = [
                     ("Correlation Analysis",        "Statistical relationships and dependencies between parameters"),
