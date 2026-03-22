@@ -305,6 +305,14 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             total_hours   = ((data.index.max() - data.index.min()).total_seconds() + interval_secs) / 3600
             off_hours_val = total_hours * (off_pct / 100) if off_pct else 0
 
+            # Format duration string
+            total_days  = int(total_hours // 24)
+            rem_hours   = int(total_hours % 24)
+            if total_days > 0:
+                duration_str = f"{total_days}d {rem_hours}h" if rem_hours else f"{total_days} days"
+            else:
+                duration_str = f"{int(total_hours)}h"
+
             e1, e2, e3, e4 = st.columns(4)
 
             calc_note = ""
@@ -318,16 +326,16 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e2.metric("Total energy (period)", f"{total_kwh:,.1f} kWh")
                 e3.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
                 cost_saved = off_kwh * rate_kwh
-                e4.metric(f"Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.2f}",
-                          delta="if schedule enforced",
+                e4.metric("Cost saving potential",
+                          f"{currency_sym}{cost_saved:,.0f}",
+                          delta=f"over {duration_str} — if schedule enforced",
                           delta_color="inverse")
                 calc_note = (
                     f"**Energy calculation method:** Direct metering from column `{kwh_col}`.  \n"
                     f"Total energy recorded in the selected period: **{total_kwh:,.1f} kWh**.  \n"
                     f"Off-schedule energy = Total energy × Off-schedule % "
                     f"({total_kwh:,.1f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**).  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.2f}**.  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}** (over {duration_str}).  \n"
                     f"No assumptions required — measured data used directly."
                 )
 
@@ -340,16 +348,16 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e2.metric("Avg power draw",        f"{avg_power_kw:.1f} kW")
                 e3.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
                 cost_saved = off_kwh * rate_kwh
-                e4.metric(f"Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.2f}",
-                          delta="if schedule enforced",
+                e4.metric("Cost saving potential",
+                          f"{currency_sym}{cost_saved:,.0f}",
+                          delta=f"over {duration_str} — if schedule enforced",
                           delta_color="inverse")
                 calc_note = (
                     f"**Energy calculation method:** Power integration from column `{power_col}`.  \n"
                     f"Formula: Energy (kWh) = Average power (kW) × Time (h)  \n"
                     f"= {avg_power_kw:.1f} kW × {total_hours:.1f} h = **{total_kwh:,.0f} kWh** total.  \n"
                     f"Off-schedule energy = {total_kwh:,.0f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**.  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.2f}**.  \n"
+                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}** (over {duration_str}).  \n"
                     f"**Assumption:** Average power assumed constant across the period. "
                     f"Actual energy may vary if load fluctuates significantly."
                 )
@@ -391,9 +399,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e2.metric("Est. power draw",         f"{power_kw:.1f} kW")
                 e3.metric("Off-schedule energy",     f"{off_kwh:,.0f} kWh")
                 cost_saved = off_kwh * rate_kwh
-                e4.metric(f"Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.2f}",
-                          delta="if schedule enforced",
+                e4.metric("Cost saving potential",
+                          f"{currency_sym}{cost_saved:,.0f}",
+                          delta=f"over {duration_str} — if schedule enforced",
                           delta_color="inverse")
                 calc_note = (
                     f"**Energy calculation method:** 3-phase power estimation from motor current.  \n"
@@ -401,7 +409,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     f"= 1.732 × {avg_voltage:.0f} V × {avg_current:.1f} A × {avg_pf:.2f} ÷ 1000 = **{power_kw:.1f} kW**  \n"
                     f"Off-schedule energy = {power_kw:.1f} kW × {off_hours_val:.1f} h = **{off_kwh:,.0f} kWh**  \n"
                     f"{assumptions}  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.2f}**."
+                    f"Cost saving = {off_kwh:,.0f} kWh × {currency_sym}{rate_kwh}/kWh = **{currency_sym}{cost_saved:,.0f}** (over {duration_str})."
                 )
 
             if calc_note:
