@@ -553,6 +553,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 _desc       = st.session_state.get("_machine_desc", "")
                 _thresholds = _parse_thresholds(_desc) or {}
                 _chart_data = data if (data is not None and not data.empty) else st.session_state.get("last_data")
+                if _chart_data is not None: st.write(f"DEBUG index type={type(_chart_data.index).__name__} sample={str(_chart_data.index[0])!r} dtype={_chart_data.index.dtype}")
                 if _chart_data is not None and not _chart_data.empty:
                     _numeric = _chart_data.select_dtypes(include="number").columns.tolist()[:6]
                     st.caption("UCL/LCL = mean \u00b13\u03c3 (red solid).  UWL/LWL = mean \u00b12\u03c3 (amber dashed).  Red circles = |Z|>3 anomalies.  Purple dotted = engineering thresholds.")
@@ -561,6 +562,11 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         _mu = float(_s.mean()); _sd = float(_s.std()) or 1e-9
                         _ucl = _mu+3*_sd; _uwl = _mu+2*_sd; _lwl = _mu-2*_sd; _lcl = _mu-3*_sd
                         _z = (_s-_mu)/_sd; _anom = _s[_z.abs()>3]
+                        # Force datetime index
+                        import pandas as _pd
+                        if not isinstance(_chart_data.index, _pd.DatetimeIndex):
+                            try: _chart_data.index = _pd.to_datetime(_chart_data.index)
+                            except: pass
                         _xs = [str(i) for i in _chart_data.index]
                         _ax = [str(i) for i in _anom.index]
                         _fig = _go.Figure()
