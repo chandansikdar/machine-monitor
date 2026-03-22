@@ -82,8 +82,8 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         shapes.append(dict(
             type="rect", xref="x", yref="paper",
             x0=s, x1=e, y0=0, y1=1,
-            fillcolor="rgba(0,180,80,0.10)",
-            line=dict(width=0),
+            fillcolor="rgba(0,200,80,0.22)",
+            line=dict(width=0.5, color="rgba(0,160,60,0.3)"),
             layer="below"
         ))
     # Red bands for off-schedule periods
@@ -91,8 +91,8 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         shapes.append(dict(
             type="rect", xref="x", yref="paper",
             x0=s, x1=e, y0=0, y1=1,
-            fillcolor="rgba(220,50,50,0.10)",
-            line=dict(width=0),
+            fillcolor="rgba(230,40,40,0.18)",
+            line=dict(width=0.5, color="rgba(190,20,20,0.3)"),
             layer="below"
         ))
 
@@ -124,10 +124,10 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         x=[None], y=[None],
         mode="markers",
         marker=dict(
-            color="rgba(0,180,80,0.5)",
-            size=14,
+            color="rgba(0,200,80,0.85)",
+            size=16,
             symbol="square",
-            line=dict(color="rgba(0,150,60,0.8)", width=1.5)
+            line=dict(color="rgba(0,150,60,1.0)", width=1.5)
         ),
         name=sched_label,
     ))
@@ -135,10 +135,10 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         x=[None], y=[None],
         mode="markers",
         marker=dict(
-            color="rgba(220,50,50,0.5)",
-            size=14,
+            color="rgba(230,40,40,0.85)",
+            size=16,
             symbol="square",
-            line=dict(color="rgba(190,30,30,0.8)", width=1.5)
+            line=dict(color="rgba(180,20,20,1.0)", width=1.5)
         ),
         name="Off-schedule",
     ))
@@ -151,17 +151,19 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
             xanchor="left",
             font=dict(size=14),
         ),
-        xaxis_title="Time",
+        xaxis=dict(
+            title=dict(text="Time", standoff=30),
+        ),
         yaxis_title=col_label,
         shapes=shapes,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=40, r=20, t=90, b=40),
+        margin=dict(l=40, r=20, t=90, b=110),
         hovermode="x unified",
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.18,
+            y=-0.28,
             xanchor="left",
             x=0,
             bgcolor="rgba(0,0,0,0)",
