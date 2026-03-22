@@ -228,6 +228,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     if tier_label:
         st.caption(f"Analysis engine — Tier {tier}: {tier_label}")
 
+    # Assign score early so it's available for breakdown check
+    score = insights.get("health_score")
+
     # Score breakdown (Overall Health Assessment only)
     if analysis_type not in ("Operational Schedule Compliance",) and score is not None:
         breakdown = insights.get("score_breakdown", [])
@@ -313,7 +316,6 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             st.progress(compliance_pct / 100)
             st.markdown("---")
     else:
-        score = insights.get("health_score")
         if score is not None:
             colour = "green" if score >= 80 else "orange" if score >= 60 else "red"
             st.markdown(f"### Health score: :{colour}[{score} / 100]")
