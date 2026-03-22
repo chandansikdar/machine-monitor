@@ -740,48 +740,31 @@ with tab_analysis:
         left, right = st.columns([1, 3])
 
         with left:
-            # ── Primary analyses ──────────────────────────────────
-            st.markdown("**Primary analyses**")
-            select_all_primary = st.checkbox("Select all primary", value=False, key="select_all_primary")
-
-            primary_options = [
-                ("Overall Health Assessment",      "Comprehensive health score, KPIs, anomalies and narrative"),
-                ("Trend & Drift Analysis",          "How fast is each parameter degrading over time?"),
-                ("Anomaly Detection",               "Full catalogue of outliers and spikes with timestamps"),
-                ("Operational Schedule Compliance", "Running outside permitted hours or days"),
-            ]
-
             selected_analyses = []
-            for name, desc in primary_options:
-                checked = st.checkbox(
-                    f"**{name}**",
-                    value=select_all_primary,
-                    key=f"chk_{name}",
-                    help=desc,
-                )
-                if checked:
-                    selected_analyses.append(name)
+
+            # ── Primary analyses ──────────────────────────────────
+            with st.expander("Primary analyses", expanded=True):
+                primary_options = [
+                    ("Overall Health Assessment",      "Comprehensive health score, KPIs, anomalies and narrative"),
+                    ("Trend & Drift Analysis",          "How fast is each parameter degrading over time?"),
+                    ("Anomaly Detection",               "Full catalogue of outliers and spikes with timestamps"),
+                    ("Operational Schedule Compliance", "Running outside permitted hours or days"),
+                ]
+                for name, desc in primary_options:
+                    if st.checkbox(name, value=False, key=f"chk_{name}", help=desc):
+                        selected_analyses.append(name)
 
             # ── Additional analytics ───────────────────────────
-            st.markdown("**Additional analytics**")
-            st.caption("Use when you need to investigate a specific relationship or pattern in detail.")
-            select_all_additional = st.checkbox("Select all additional", value=False, key="select_all_additional")
-
-            additional_options = [
-                ("Correlation Analysis",        "Statistical relationships and dependencies between parameters"),
-                ("Parameter Distribution",      "Statistical spread, skewness and operating mode shape"),
-                ("Cross-Parameter Comparison",  "Ratios and balance between physically related parameters"),
-            ]
-
-            for name, desc in additional_options:
-                checked = st.checkbox(
-                    f"{name}",
-                    value=select_all_additional,
-                    key=f"chk_{name}",
-                    help=desc,
-                )
-                if checked:
-                    selected_analyses.append(name)
+            with st.expander("Additional analytics", expanded=False):
+                st.caption("Use for focused investigation of a specific relationship or pattern.")
+                additional_options = [
+                    ("Correlation Analysis",        "Statistical relationships and dependencies between parameters"),
+                    ("Parameter Distribution",      "Statistical spread, skewness and operating mode shape"),
+                    ("Cross-Parameter Comparison",  "Ratios and balance between physically related parameters"),
+                ]
+                for name, desc in additional_options:
+                    if st.checkbox(name, value=False, key=f"chk_{name}", help=desc):
+                        selected_analyses.append(name)
 
             # Keep backward compat — use first selected for schedule UI trigger
             analysis_type = selected_analyses[0] if selected_analyses else ""
