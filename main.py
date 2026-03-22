@@ -551,7 +551,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             from analyzer import _parse_thresholds
             _desc       = st.session_state.get("_machine_desc", "")
             _thresholds = _parse_thresholds(_desc) or {}
-            _cc_figs    = viz.generate_control_charts(data, _thresholds, max_cols=6)
+            _cc_figs    = viz.generate_control_charts(data, _thresholds, max_cols=6) if hasattr(viz, "generate_control_charts") else []
             if _cc_figs:
                 st.caption(
                     "Control chart lines: "
@@ -585,7 +585,7 @@ if "last_multi_results" not in st.session_state:
 # ------------------------------------------------------------------ #
 
 @st.cache_resource
-def get_services():
+def get_services(_version=2):
     return Database(), Visualizer()
 
 db, viz = get_services()
