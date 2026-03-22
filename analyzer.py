@@ -60,6 +60,9 @@ Rules:
 - anomalies array may be empty [] if none are detected.
 - Always recommend at least one chart_recommendation.
 - narrative must name the machine type and highlight the single most important finding.
+- FOCUS: You must ONLY perform the analysis type specified in the REQUESTED ANALYSIS section.
+  Do not mix analysis types. If asked for Schedule Compliance, report only schedule findings.
+  If asked for Anomaly Detection, report only anomalies. Do not include unrelated findings.
 - THRESHOLDS: If the machine profile contains a PARAMETER THRESHOLDS section, use those
   exact warning and critical limits to classify KPI status and flag anomalies. For parameters
   WITHOUT defined thresholds, use the pre-computed statistical signals. Always state whether
@@ -69,6 +72,10 @@ Rules:
   percentages, control chart violations, Isolation Forest results) in your insights.
 - DATA VOLUME: Calibrate your confidence to the amount of data available. With less than
   30 days, avoid strong predictive claims. With more data, be more definitive.
+- SCHEDULE COMPLIANCE: When analysis type is Operational Schedule Compliance, the health_score
+  should reflect schedule adherence (100 = fully compliant, 0 = running entirely off-schedule).
+  Anomalies should only reference off-schedule running events, not sensor anomalies.
+  KPIs should cover: compliance percentage, off-schedule hours, weekend running, after-hours running.
 """
 
 ANALYSIS_DESCRIPTIONS = {
@@ -129,8 +136,11 @@ class Analyzer:
             # Parse thresholds from machine description
             thresholds = _parse_thresholds(machine_info.get("description", ""))
 
-            # Run adaptive ML pre-processing
-            ml_signals = ml_engine.run(filtered, thresholds)
+            # Run adaptive ML pre-processing (skip for schedule compliance)
+            if analysis_type == "Operational Schedule Compliance":
+                ml_signals = {"tier": 0, "tier_label": "", "data_days": 0, "guidance": "", "statistical": {}}
+            else:
+                ml_signals = ml_engine.run(filtered, thresholds)
 
             # Schedule compliance stats
             schedule_stats = None
@@ -310,7 +320,31 @@ Threshold breach counts:
 {json.dumps(ml_signals.get('threshold_breaches', {}), indent=2, default=str)}
 """
 
-        prompt = f"""
+        # For Schedule Compliance — only send schedule data, no sensor stats
+        if analysis_type == "Operational Schedule Compliance":
+            prompt = f"""
+=== MACHINE PROFILE ===
+Type        : {machine_info.get('machine_type', 'Unknown')}
+ID          : {machine_info.get('machine_id', 'Unknown')}
+Time range  : {data.index.min()} → {data.index.max()}
+Total rows  : {len(data):,}
+{schedule_section}
+{f'=== ENGINEER NOTES ==={chr(10)}{extra_context}' if extra_context.strip() else ''}
+
+=== REQUESTED ANALYSIS ===
+Type: Operational Schedule Compliance
+Task: {analysis_desc}
+
+IMPORTANT: Report ONLY schedule compliance findings. Do NOT report on sensor health,
+vibration, temperature, pressure, or any other parameter conditions.
+KPIs must cover only: compliance %, off-schedule hours, weekend running, after-hours running.
+Anomalies must reference only off-schedule running events, not sensor readings.
+Health score = schedule compliance percentage (100 = fully compliant).
+
+Return your analysis as a single JSON object following the schema in the system prompt.
+"""
+        else:
+            prompt = f"""
 === MACHINE PROFILE ===
 Type        : {machine_info.get('machine_type', 'Unknown')}
 ID          : {machine_info.get('machine_id', 'Unknown')}
@@ -326,7 +360,7 @@ Time range  : {data.index.min()} → {data.index.max()}
 
 === RECENT 10 READINGS ===
 {json.dumps(sample, indent=2, default=str)}
-{ml_section}{schedule_section}{logs_section}
+{ml_section}{logs_section}
 === REQUESTED ANALYSIS ===
 Type: {analysis_type}
 Task: {analysis_desc}
