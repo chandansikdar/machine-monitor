@@ -446,7 +446,12 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
 
             if calc_note:
                 with st.expander("Calculation details", expanded=False):
-                    st.markdown(calc_note)
+                    st.markdown(
+                        f'<div style="font-size:0.78rem;line-height:1.7;color:var(--text-color);">'
+                        f'{calc_note.replace(chr(10), "<br>")}'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
             else:
                 # No current column — show hours breakdown instead
                 if kpis:
