@@ -122,7 +122,15 @@ class Visualizer:
         col: str,
         thresholds: dict,
     ) -> go.Figure:
-        s    = data[col].dropna()
+        # Ensure index is datetime
+        df = data.copy()
+        if not isinstance(df.index, pd.DatetimeIndex):
+            try:
+                df.index = pd.to_datetime(df.index)
+            except Exception:
+                pass
+
+        s    = df[col].dropna()
         mean = float(s.mean())
         std  = float(s.std())
         if std == 0:
@@ -140,18 +148,15 @@ class Visualizer:
         fig = go.Figure()
 
         # ── Shaded zones ─────────────────────────────────────────────
-        # Between UCL and UWL (upper 2σ–3σ zone)
         fig.add_hrect(y0=uwl, y1=ucl, fillcolor=_CC["zone1"],
                       line_width=0, layer="below")
-        # Between LCL and LWL (lower 2σ–3σ zone)
         fig.add_hrect(y0=lcl, y1=lwl, fillcolor=_CC["zone1"],
                       line_width=0, layer="below")
-        # Between UWL and LWL (inner ±2σ zone — subtle)
         fig.add_hrect(y0=lwl, y1=uwl, fillcolor=_CC["zone2"],
                       line_width=0, layer="below")
 
         # ── Limit lines ───────────────────────────────────────────────
-        x0, x1 = data.index.min(), data.index.max()
+        x0, x1 = str(df.index.min()), str(df.index.max())
 
         def hline(y, color, dash, name, width=1.2):
             fig.add_shape(type="line", x0=x0, x1=x1, y0=y, y1=y,
@@ -192,18 +197,22 @@ class Visualizer:
                 ))
 
         # ── Data line ─────────────────────────────────────────────────
+        # Convert index to list of strings to ensure plotly reads them as dates
+        x_vals   = [str(i) for i in df.index]
+        anom_x   = [str(i) for i in anom.index]
+
         fig.add_trace(go.Scatter(
-            x=data.index, y=data[col],
+            x=x_vals, y=df[col].values.tolist(),
             mode="lines",
             line=dict(color=_CC["data"], width=1.2),
             name=col,
-            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + col + ": %{y:.3f}<extra></extra>",
+            hovertemplate="%{x}<br>" + col + ": %{y:.3f}<extra></extra>",
         ))
 
         # ── Anomaly markers (|Z| > 3) ─────────────────────────────────
         if len(anom):
             fig.add_trace(go.Scatter(
-                x=anom.index, y=anom.values,
+                x=anom_x, y=anom.values,
                 mode="markers",
                 marker=dict(color=_CC["ucl"], size=7, symbol="circle-open",
                             line=dict(width=2, color=_CC["ucl"])),
