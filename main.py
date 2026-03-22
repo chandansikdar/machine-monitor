@@ -117,30 +117,56 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + col_label + ": %{y:.2f}<extra></extra>"
     ))
 
-    # Schedule boundary lines
+    # Legend entries matching actual shading colors
+    day_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+    sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {hour_start:02d}:00-{hour_end:02d}:00)"
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode="markers",
-        marker=dict(color="rgba(0,150,60,0.6)", size=10, symbol="square"),
-        name=f"Scheduled ({', '.join(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d] for d in work_days)} {hour_start:02d}:00-{hour_end:02d}:00)"
+        marker=dict(
+            color="rgba(0,180,80,0.5)",
+            size=14,
+            symbol="square",
+            line=dict(color="rgba(0,150,60,0.8)", width=1.5)
+        ),
+        name=sched_label,
     ))
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode="markers",
-        marker=dict(color="rgba(200,40,40,0.6)", size=10, symbol="square"),
-        name="Off-schedule"
+        marker=dict(
+            color="rgba(220,50,50,0.5)",
+            size=14,
+            symbol="square",
+            line=dict(color="rgba(190,30,30,0.8)", width=1.5)
+        ),
+        name="Off-schedule",
     ))
 
     fig.update_layout(
-        title=f"{col_label} — Schedule Compliance ({source})",
+        title=dict(
+            text=f"{col_label} — Schedule Compliance ({source})",
+            y=0.97,
+            x=0,
+            xanchor="left",
+            font=dict(size=14),
+        ),
         xaxis_title="Time",
         yaxis_title=col_label,
         shapes=shapes,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=40, r=20, t=50, b=40),
+        margin=dict(l=40, r=20, t=90, b=40),
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.18,
+            xanchor="left",
+            x=0,
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+        ),
         font=dict(size=12),
     )
 
