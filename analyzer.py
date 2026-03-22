@@ -75,11 +75,12 @@ Rules:
 - SCHEDULE COMPLIANCE: When analysis type is Operational Schedule Compliance, the health_score
   should reflect schedule adherence (100 = fully compliant, 0 = running entirely off-schedule).
   Anomalies should only reference off-schedule running events, not sensor anomalies.
-  KPIs must use PERCENTAGES not raw counts. Use these exact labels:
+  KPIs must use PERCENTAGES not raw counts. Keep values SHORT (under 8 chars). Use these exact labels and formats:
     "Schedule Compliance" — value like "30.0%"
-    "Off-Schedule Runtime" — value like "70.0%"
-    "Weekend Running" — value like "28.0% of total"
-    "After-Hours Running" — value like "42.0% of total"
+    "Off-Schedule" — value like "70.0%"
+    "Weekend" — value like "28.1%"
+    "After-Hours" — value like "41.9%"
+  Never use words like "of total", "runtime", "running" in the value field. Percentage only.
   Never use raw reading counts like "5,985 readings" in KPI values.
 """
 
