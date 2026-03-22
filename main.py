@@ -326,9 +326,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e1.metric("Off-schedule energy",    f"{off_kwh:,.0f} kWh")
                 e2.metric("Total energy (period)",  f"{total_kwh:,.1f} kWh")
                 e3.metric("Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.0f}",
-                          delta=f"over {duration_str} — if schedule enforced",
-                          delta_color="inverse")
+                          f"{currency_sym}{cost_saved:,.0f}")
                 calc_note = (
                     f"**Energy calculation method:** Direct metering from column `{kwh_col}`.  \n"
                     f"Total energy recorded in the selected period: **{total_kwh:,.1f} kWh**.  \n"
@@ -347,9 +345,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 e1.metric("Off-schedule energy",    f"{off_kwh:,.0f} kWh")
                 e2.metric("Off-schedule hours",     f"{off_hours_val:,.1f} hrs")
                 e3.metric("Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.0f}",
-                          delta=f"over {duration_str} — if schedule enforced",
-                          delta_color="inverse")
+                          f"{currency_sym}{cost_saved:,.0f}")
                 calc_note = (
                     f"**Energy calculation method:** Power integration from column `{power_col}`.  \n"
                     f"Formula: Energy (kWh) = Average power (kW) × Time (h)  \n"
@@ -396,10 +392,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 cost_saved = off_kwh * rate_kwh
                 e1.metric("Off-schedule energy",    f"{off_kwh:,.0f} kWh")
                 e2.metric("Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.0f}",
-                          delta=f"over {duration_str} — if schedule enforced",
-                          delta_color="inverse")
-                e3.metric("Est. power draw (running)", f"{power_kw:.1f} kW",
+                          f"{currency_sym}{cost_saved:,.0f}")
+                e3.metric("Period", f"{duration_str}",
                           help=f"3-phase: √3 × {avg_voltage:.0f}V × {avg_current:.1f}A × {avg_pf:.2f} PF ÷ 1000")
                 calc_note = (
                     f"**Energy calculation method:** 3-phase power estimation from motor current.  \n"
