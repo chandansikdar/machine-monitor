@@ -849,13 +849,12 @@ with tab_analysis:
                             )
                         else:
                             st.warning("Neither voltage nor power factor found in data. Please enter both below.")
-                            elec_col1, elec_col2 = st.columns(2)
-                            user_voltage = elec_col1.number_input(
+                            user_voltage = st.number_input(
                                 "Supply voltage (V)",
                                 min_value=1.0, value=415.0, step=1.0, format="%.0f",
                                 help="Line-to-line voltage e.g. 415V (India/EU), 400V (EU), 480V (US)."
                             )
-                            user_pf = elec_col2.number_input(
+                            user_pf = st.number_input(
                                 "Power factor",
                                 min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f",
                                 help="Motor power factor (0–1). Typical induction motor: 0.80–0.90."
