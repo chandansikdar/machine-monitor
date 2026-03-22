@@ -113,23 +113,150 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             st.progress(int(score) / 100)
 
     kpis = insights.get("kpis", [])
-    if kpis:
+    if analysis_type == "Operational Schedule Compliance":
+        # Replace duplicate KPI row with energy saving potential
+        if data is not None and not data.empty:
+            # Find motor current column
+            current_col = next(
+                (c for c in data.columns if "current" in c.lower() or "amp" in c.lower()),
+                None
+            )
+            voltage = 415  # standard 3-phase voltage (V) — adjust if needed
+            pf      = 0.85  # typical power factor for induction motor
+
+            # Auto-detect energy source: kWh column > power column > current calculation
+            kwh_col   = next(
+                (c for c in data.columns if any(k in c.lower() for k in ["kwh", "kw_h", "energy", "consumption"])),
+                None
+            )
+            power_col = next(
+                (c for c in data.columns if any(k in c.lower() for k in ["kw", "power"]) and c != kwh_col),
+                None
+            )
+
+            # Calculate time span
+            interval_secs = 900
+            if len(data) > 1:
+                interval_secs = (data.index[1] - data.index[0]).total_seconds()
+            total_hours   = ((data.index.max() - data.index.min()).total_seconds() + interval_secs) / 3600
+            off_hours_val = total_hours * (off_pct / 100) if off_pct else 0
+
+            e1, e2, e3, e4 = st.columns(4)
+
+            calc_note = ""
+
+            if kwh_col:
+                # Use cumulative or interval kWh column directly
+                total_kwh     = float(data[kwh_col].sum())
+                off_kwh       = total_kwh * (off_pct / 100) if off_pct else 0
+                avg_power     = total_kwh / total_hours if total_hours > 0 else 0
+                e1.metric("Energy source",         "kWh meter")
+                e2.metric("Total energy (period)", f"{total_kwh:,.1f} kWh")
+                e3.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
+                e4.metric("Energy saving potential",
+                          f"{off_kwh:,.0f} kWh",
+                          delta="if schedule enforced",
+                          delta_color="inverse")
+                calc_note = (
+                    f"**Energy calculation method:** Direct metering from column `{kwh_col}`.  \n"
+                    f"Total energy recorded in the selected period: **{total_kwh:,.1f} kWh**.  \n"
+                    f"Off-schedule energy = Total energy × Off-schedule % "
+                    f"({total_kwh:,.1f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**).  \n"
+                    f"No assumptions required — measured data used directly."
+                )
+
+            elif power_col:
+                # Use power (kW) column — integrate over time
+                avg_power_kw  = float(data[power_col].mean())
+                total_kwh     = avg_power_kw * total_hours
+                off_kwh       = total_kwh * (off_pct / 100) if off_pct else 0
+                e1.metric("Energy source",         "Power (kW) column")
+                e2.metric("Avg power draw",        f"{avg_power_kw:.1f} kW")
+                e3.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
+                e4.metric("Energy saving potential",
+                          f"{off_kwh:,.0f} kWh",
+                          delta="if schedule enforced",
+                          delta_color="inverse")
+                calc_note = (
+                    f"**Energy calculation method:** Power integration from column `{power_col}`.  \n"
+                    f"Formula: Energy (kWh) = Average power (kW) × Time (h)  \n"
+                    f"= {avg_power_kw:.1f} kW × {total_hours:.1f} h = **{total_kwh:,.0f} kWh** total.  \n"
+                    f"Off-schedule energy = {total_kwh:,.0f} kWh × {off_pct:.1f}% = **{off_kwh:,.0f} kWh**.  \n"
+                    f"**Assumption:** Average power assumed constant across the period. "
+                    f"Actual energy may vary if load fluctuates significantly."
+                )
+
+            elif current_col and off_pct is not None:
+                # Current-based 3-phase calculation
+                voltage_col = next(
+                    (c for c in data.columns if any(k in c.lower()
+                     for k in ["voltage", "volt", "_v", "volts"])),
+                    None
+                )
+                pf_col = next(
+                    (c for c in data.columns if any(k in c.lower()
+                     for k in ["power_factor", "pf", "cos_phi", "cosphi", "cos phi"])),
+                    None
+                )
+                avg_current = float(data[current_col].mean())
+
+                if voltage_col and pf_col:
+                    avg_voltage = float(data[voltage_col].mean())
+                    avg_pf      = float(data[pf_col].mean())
+                    assumptions = "No assumptions — voltage, current and power factor all measured."
+                elif voltage_col:
+                    avg_voltage = float(data[voltage_col].mean())
+                    avg_pf      = pf
+                    assumptions = f"Voltage measured ({avg_voltage:.0f} V). **Power factor assumed = {pf}** (typical induction motor). Provide a `power_factor` column for higher accuracy."
+                elif pf_col:
+                    avg_voltage = voltage
+                    avg_pf      = float(data[pf_col].mean())
+                    assumptions = f"Power factor measured ({avg_pf:.2f}). **Voltage assumed = {voltage} V** (standard 3-phase). Provide a `voltage` column for higher accuracy."
+                else:
+                    avg_voltage = voltage
+                    avg_pf      = pf
+                    assumptions = f"**Both voltage and power factor assumed** — voltage = {voltage} V (standard 3-phase), power factor = {pf} (typical induction motor). Provide `voltage` and `power_factor` columns for higher accuracy."
+
+                power_kw = (1.732 * avg_voltage * avg_current * avg_pf) / 1000
+                off_kwh  = power_kw * off_hours_val
+                e1.metric("Avg motor current",      f"{avg_current:.1f} A")
+                e2.metric("Est. power draw",         f"{power_kw:.1f} kW")
+                e3.metric("Off-schedule energy",     f"{off_kwh:,.0f} kWh")
+                e4.metric("Energy saving potential",
+                          f"{off_kwh:,.0f} kWh",
+                          delta="if schedule enforced",
+                          delta_color="inverse")
+                calc_note = (
+                    f"**Energy calculation method:** 3-phase power estimation from motor current.  \n"
+                    f"Formula: Power (kW) = √3 × V × I × PF ÷ 1000  \n"
+                    f"= 1.732 × {avg_voltage:.0f} V × {avg_current:.1f} A × {avg_pf:.2f} ÷ 1000 = **{power_kw:.1f} kW**  \n"
+                    f"Off-schedule energy = {power_kw:.1f} kW × {off_hours_val:.1f} h = **{off_kwh:,.0f} kWh**  \n"
+                    f"{assumptions}"
+                )
+
+            if calc_note:
+                with st.expander("Calculation details", expanded=False):
+                    st.markdown(calc_note)
+            else:
+                # No current column — show hours breakdown instead
+                if kpis:
+                    cols = st.columns(min(len(kpis), 4))
+                    for i, kpi in enumerate(kpis[:4]):
+                        status    = kpi.get("status", "normal")
+                        delta_map = {"normal": None, "warning": "Warning", "critical": "Critical"}
+                        delta_col = "inverse" if status == "critical" else "off" if status == "warning" else "normal"
+                        cols[i].metric(kpi.get("label","—"), kpi.get("value","—"),
+                                       delta=delta_map.get(status), delta_color=delta_col)
+    elif kpis:
         n_cols = min(len(kpis), 4)
-        cols = st.columns(n_cols)
+        cols   = st.columns(n_cols)
         for i, kpi in enumerate(kpis[:4]):
             status = kpi.get("status", "normal")
             value  = kpi.get("value", "—")
             label  = kpi.get("label", "—")
-            if analysis_type == "Operational Schedule Compliance":
-                # Show status as delta arrow, not prefix text
-                delta_map = {"normal": None, "warning": "Warning", "critical": "Critical"}
-                delta     = delta_map.get(status)
-                delta_col = "inverse" if status == "critical" else "off" if status == "warning" else "normal"
-                cols[i].metric(label, value, delta=delta, delta_color=delta_col)
-            else:
-                status_colour = {"normal": "green", "warning": "orange", "critical": "red"}
-                colour = status_colour.get(status, "gray")
-                cols[i].metric(label, f":{colour}[{value}]")
+            status_colour = {"normal": "green", "warning": "orange", "critical": "red"}
+            colour = status_colour.get(status, "gray")
+            cols[i].metric(label, f":{colour}[{value}]")
 
     if insights.get("narrative"):
         st.info(insights["narrative"])
