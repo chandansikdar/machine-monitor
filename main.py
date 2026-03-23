@@ -856,7 +856,7 @@ with st.sidebar:
             for _fi in file_info:
                 _fc1, _fc2 = st.columns([0.75, 0.25])
                 with _fc1:
-                    st.caption(f"📄 {_fi['file']}  ·  {_fi['rows']:,} rows  ·  {_fi['ingested_at'][:10]}")
+                    st.caption(f"📄 {_fi['file']}  ·  {_fi['rows']:,} rows  ·  {str(_fi['ingested_at'])[:10]}")
                 with _fc2:
                     if st.button("Delete", key=f"del_file_{_fi['file']}", type="secondary"):
                         db.delete_file(selected_id, _fi['file'])
