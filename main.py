@@ -18,7 +18,7 @@ try:
 except ImportError:
     REPORT_AVAILABLE = False
 try:
-    from data_checker import run_data_quality_checks, format_quality_report_for_claude
+    from data_checker import run_data_quality_checks, format_quality_report_for_claude, check_timestamp_format
     DQ_AVAILABLE = True
 except ImportError:
     DQ_AVAILABLE = False
@@ -773,6 +773,64 @@ with st.sidebar:
         help="Any column named timestamp/date/time is auto-detected as the time axis.",
     )
     if uploaded_file:
+        # ── Timestamp format pre-check ──────────────────────────────
+        if DQ_AVAILABLE:
+            import tempfile, os as _os
+            _ext  = uploaded_file.name.split(".")[-1]
+            _tmp  = tempfile.NamedTemporaryFile(delete=False, suffix=f".{_ext}")
+            _tmp.write(uploaded_file.read())
+            _tmp.close()
+            uploaded_file.seek(0)  # reset for ingest
+            _ts_check = check_timestamp_format(_tmp.name)
+            _os.unlink(_tmp.name)
+
+            if not _ts_check["parseable"]:
+                st.warning(
+                    f"⚠️ **Timestamp format issue detected** in column `{_ts_check['col'] or 'unknown'}`  \n"
+                    f"{_ts_check['suggestion']}"
+                )
+                if _ts_check["sample_raw"]:
+                    st.caption(f"Sample raw values: {', '.join(_ts_check['sample_raw'][:3])}")
+                if _ts_check.get("corrected_df") is not None:
+                    st.success(
+                        "✅ Timestamps can be auto-corrected to YYYY-MM-DD HH:MM:SS format.  \n"
+                        "Click **Fix timestamps and ingest** to correct and load in one step, "
+                        "or download the corrected file to keep a copy."
+                    )
+                    _ts_buf = _ts_check["corrected_df"].to_csv(index=False).encode("utf-8")
+                    _fix_col, _dl_col = st.columns(2)
+                    with _fix_col:
+                        if st.button("✅ Fix timestamps and ingest", type="primary",
+                                     key="fix_ts_ingest_btn", width="stretch"):
+                            with st.spinner("Correcting timestamps and ingesting…"):
+                                import io as _io2
+                                _fixed_buf = _io2.BytesIO(_ts_buf)
+                                _fixed_buf.name = uploaded_file.name.rsplit(".",1)[0] + "_fixed.csv"
+                                _res2 = db.ingest_file(_fixed_buf, selected_id)
+                            if _res2["success"]:
+                                st.success(
+                                    f"✓ {_res2['rows']:,} rows ingested with corrected timestamps."
+                                )
+                                st.caption("Columns: " + ", ".join(_res2["columns"]))
+                                st.rerun()
+                            else:
+                                st.error(f"Ingest failed: {_res2['error']}")
+                    with _dl_col:
+                        st.download_button(
+                            label="⬇️ Download corrected file",
+                            data=_ts_buf,
+                            file_name=f"{uploaded_file.name.rsplit('.',1)[0]}_ts_fixed.csv",
+                            mime="text/csv",
+                            key="dl_ts_fixed",
+                            width="stretch",
+                            help="Save a copy of the timestamp-corrected file"
+                        )
+                else:
+                    st.info("Auto-correction was not possible. Please fix the timestamp column manually before uploading.")
+            else:
+                if _ts_check["sample_raw"]:
+                    st.caption(f"✅ Timestamps OK · sample: {_ts_check['sample_raw'][0]}")
+
         if st.button("Ingest", width='stretch'):
             with st.spinner("Reading and storing data…"):
                 result = db.ingest_file(uploaded_file, selected_id)
