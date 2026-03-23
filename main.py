@@ -1166,44 +1166,81 @@ with tab_analysis:
                 _warns   = [x for x in _dq.get("issues",[]) if x["severity"]=="warning"]
 
                 if _crits:
+                    # ── Header ───────────────────────────────────────────────
                     st.error(
                         f"**Data quality check — {len(_crits)} critical issue(s) detected.**  \n"
-                        "Acknowledge each issue below, then click **Continue Analysis**."
+                        "Please choose one of the two options below before continuing."
                     )
-                    _ignored = {}
+
+                    # ── Issue cards ───────────────────────────────────────────
                     for _iss in _crits:
-                        _key = f"dq_ack_{_iss['col']}_{_iss['check'].replace(' ','_')}"
-                        _c1, _c2 = st.columns([0.06, 0.94])
-                        with _c1:
-                            _ignored[_key] = st.checkbox("", key=_key, value=False)
-                        with _c2:
-                            _bg = "#F0FFF4" if _ignored[_key] else "#FFF0F0"
-                            _bc = "#2E7D32" if _ignored[_key] else "#A32D2D"
-                            _icon = "✅" if _ignored[_key] else "❌"
-                            _lbl  = "Acknowledged" if _ignored[_key] else "Blocking"
-                            st.markdown(
-                                f'<div style="background:{_bg};border-left:5px solid {_bc};padding:8px 12px;margin-bottom:4px;border-radius:3px;">' +
-                                f'<span style="font-weight:700;color:{_bc}">{_icon} {_iss["check"]}</span>' +
-                                f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code>' +
-                                f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.82em">{_iss["affected_pct"]}% affected &nbsp;\u00b7&nbsp; <i>{_lbl}</i></span><br>' +
-                                f'<span style="font-size:0.87em;color:#444">{_iss["detail"]}</span></div>',
-                                unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div style="background:#FFF0F0;border-left:5px solid #A32D2D;padding:8px 12px;margin-bottom:6px;border-radius:3px;">' +
+                            f'<span style="font-weight:700;color:#A32D2D">❌ {_iss["check"]}</span>' +
+                            f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code>' +
+                            f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.82em">{_iss["affected_pct"]}% affected</span><br>' +
+                            f'<span style="font-size:0.87em;color:#444">{_iss["detail"]}</span></div>',
+                            unsafe_allow_html=True)
 
-                    # ── Action area directly below critical issues ────
                     st.markdown("---")
-                    _all_acked = all(_ignored.values())
-                    _n_remain  = sum(1 for v in _ignored.values() if not v)
-                    if not _all_acked:
-                        st.warning(f"{_n_remain} critical issue(s) still unacknowledged. Tick all checkboxes above to enable **Continue Analysis**.")
-                    else:
-                        st.success("All critical issues acknowledged.")
-                        if st.button("Continue Analysis", type="primary", key="dq_continue_btn", use_container_width=True):
-                            st.session_state["_pending_analysis"] = False
-                            _run_analysis(_meta, _dq_ctx, db, selected_id)
 
-                    # ── Secondary info below button ───────────────────
+                    # ── Two options side by side ──────────────────────────────
+                    _opt1, _opt2 = st.columns(2)
+
+                    with _opt1:
+                        st.markdown(
+                            '<div style="background:#EAF4FF;border:1.5px solid #185FA5;border-radius:6px;padding:14px 16px;">' +
+                            '<span style="font-weight:700;color:#185FA5;font-size:1em">⭐ Option 1 — Recommended</span><br>' +
+                            '<span style="font-size:0.9em;color:#1A1A2E;">Correct the data and re-upload for accurate analysis results.</span>' +
+                            '</div>',
+                            unsafe_allow_html=True)
+                        st.markdown("")
+                        with st.expander("📋 How to correct the data", expanded=True):
+                            st.markdown(
+                                "1. Download your original data file  \n"
+                                "2. Correct or remove the affected rows/columns  \n"
+                                "3. In the **Data** tab, delete the existing uploaded file  \n"
+                                "4. Re-upload the corrected file  \n"
+                                "5. Press **Analyze** again"
+                            )
+
+                    with _opt2:
+                        st.markdown(
+                            '<div style="background:#FFF8F0;border:1.5px solid #BA7517;border-radius:6px;padding:14px 16px;">' +
+                            '<span style="font-weight:700;color:#BA7517;font-size:1em">⚠️ Option 2 — Ignore and continue</span><br>' +
+                            '<span style="font-size:0.9em;color:#1A1A2E;">Tick each issue below to acknowledge it. Analysis may be affected by the data issues.</span>' +
+                            '</div>',
+                            unsafe_allow_html=True)
+                        st.markdown("")
+                        _ignored = {}
+                        for _iss in _crits:
+                            _key = f"dq_ack_{_iss['col']}_{_iss['check'].replace(' ','_')}"
+                            _c1, _c2 = st.columns([0.12, 0.88])
+                            with _c1:
+                                _ignored[_key] = st.checkbox("", key=_key, value=False)
+                            with _c2:
+                                _bc   = "#2E7D32" if _ignored[_key] else "#A32D2D"
+                                _icon = "✅" if _ignored[_key] else "❌"
+                                _lbl  = "Acknowledged" if _ignored[_key] else "Unacknowledged"
+                                st.markdown(
+                                    f'<span style="color:{_bc};font-size:0.88em;font-weight:600">{_icon} {_iss["check"]} &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code> &nbsp;\u00b7&nbsp; <i>{_lbl}</i></span>',
+                                    unsafe_allow_html=True)
+
+                        st.markdown("")
+                        _all_acked = all(_ignored.values()) if _ignored else False
+                        _n_remain  = sum(1 for v in _ignored.values() if not v)
+                        if not _all_acked:
+                            st.caption(f"{_n_remain} issue(s) still unacknowledged. Tick all checkboxes to enable Continue Analysis.")
+                        else:
+                            st.success("All issues acknowledged.")
+                            if st.button("Continue Analysis", type="primary", key="dq_continue_btn", use_container_width=True):
+                                st.session_state["_pending_analysis"] = False
+                                _run_analysis(_meta, _dq_ctx, db, selected_id)
+
+                    # ── Warnings (if any) below both options ──────────────────
                     if _warns:
-                        with st.expander(f"⚠️ {len(_warns)} warning(s) — informational only", expanded=False):
+                        st.markdown("")
+                        with st.expander(f"⚠️ {len(_warns)} additional warning(s) — informational only", expanded=False):
                             for _iss in _warns:
                                 st.markdown(
                                     f'<div style="background:#FFFBF0;border-left:4px solid #BA7517;padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
@@ -1212,18 +1249,11 @@ with tab_analysis:
                                     f'<span style="font-size:0.88em">{_iss["detail"]}</span></div>',
                                     unsafe_allow_html=True)
 
-                    with st.expander("How to correct the data", expanded=False):
-                        st.markdown(
-                            "1. Download your original data file  \n"
-                            "2. Correct or remove the affected rows/columns  \n"
-                            "3. In the **Data** tab, delete the existing file and re-upload  \n"
-                            "4. Press **Analyze** again"
-                        )
-
                 else:
                     # No critical issues — run immediately
                     st.session_state["_pending_analysis"] = False
                     _run_analysis(_meta, _dq_ctx, db, selected_id)
+
 
             # Display results only when no pending DQ gate
             # Show results only when DQ gate is not active
