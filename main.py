@@ -1243,6 +1243,8 @@ with tab_analysis:
 
 
             # ── DQ gate UI + analysis runner ──────────────────────────
+            if not DQ_AVAILABLE:
+                st.warning("Data quality module not loaded — install data_checker.py")
             if st.session_state.get("_pending_analysis"):
                 _dq      = st.session_state.get("last_dq_report", {})
                 _meta    = st.session_state.get("_pending_meta", {})
