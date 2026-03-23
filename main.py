@@ -1164,18 +1164,25 @@ with tab_analysis:
                                 "5. Press **Analyze** again"
                             )
 
-                        # Block if ANY critical issue is not ignored
+                        # Show Continue Analysis button only when all are ticked
                         all_ignored = all(ignored.values())
                         n_remaining = sum(1 for v in ignored.values() if not v)
+                        st.markdown("---")
                         if not all_ignored:
                             st.warning(
-                                f"{n_remaining} critical issue(s) still blocking analysis. "
-                                "Tick the checkbox next to each issue to ignore it, or correct the data."
+                                f"**{n_remaining} critical issue(s) still unacknowledged.** "
+                                "Tick the checkbox next to each issue above to acknowledge it, "
+                                "then the **Continue Analysis** button will appear."
                             )
                             st.stop()
                         else:
-                            st.success("All critical issues acknowledged — proceeding with analysis. "
-                                       "Findings may be affected by the data quality issues noted above.")
+                            st.success(
+                                "All critical issues acknowledged. "
+                                "Click **Continue Analysis** below to proceed. "
+                                "Findings may be affected by the data quality issues noted above."
+                            )
+                            if not st.button("Continue Analysis", type="primary", key="dq_continue"):
+                                st.stop()
 
                     status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
                     result = analyzer_obj.analyze(
