@@ -147,7 +147,7 @@ class Database:
     # Data retrieval
     # ------------------------------------------------------------------ #
 
-    def get_data(self, machine_id: str, limit: int = 10_000) -> Optional[pd.DataFrame]:
+    def get_data(self, machine_id: str, limit: int = 0) -> Optional[pd.DataFrame]:
         """
         Return all uploaded data for a machine as a DataFrame indexed by timestamp.
         DuckDB unions multiple CSV files automatically.
@@ -161,7 +161,7 @@ class Database:
                 SELECT *
                 FROM read_csv_auto('{pattern}', union_by_name=true)
                 ORDER BY timestamp
-                LIMIT {limit}
+                {f"LIMIT {limit}" if limit > 0 else ""}
             """).df()
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.set_index("timestamp")
