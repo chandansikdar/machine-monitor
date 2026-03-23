@@ -677,7 +677,7 @@ if "last_multi_results" not in st.session_state:
 # ------------------------------------------------------------------ #
 
 @st.cache_resource
-def get_services(_version=3):
+def get_services(_version=4):
     return Database(), Visualizer()
 
 db, viz = get_services()
