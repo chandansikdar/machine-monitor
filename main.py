@@ -850,6 +850,24 @@ with st.sidebar:
     file_info = db.get_file_info(selected_id)
     if file_info:
         st.caption(f"{len(file_info)} file(s) stored for this machine")
+        with st.expander("Manage stored files", expanded=len(file_info) > 1):
+            if len(file_info) > 1:
+                st.warning(f"{len(file_info)} files stored — duplicates may cause incorrect row counts.")
+            for _fi in file_info:
+                _fc1, _fc2 = st.columns([0.75, 0.25])
+                with _fc1:
+                    st.caption(f"📄 {_fi['file']}  ·  {_fi['rows']:,} rows  ·  {_fi['ingested_at'][:10]}")
+                with _fc2:
+                    if st.button("Delete", key=f"del_file_{_fi['file']}", type="secondary"):
+                        db.delete_file(selected_id, _fi['file'])
+                        st.success(f"Deleted {_fi['file']}")
+                        st.rerun()
+            st.markdown("")
+            if st.button("Delete ALL files for this machine", type="primary",
+                         key="del_all_files", use_container_width=True):
+                db.delete_all_files(selected_id)
+                st.success("All data files deleted. Please re-upload.")
+                st.rerun()
 
     st.divider()
     st.subheader("Maintenance logs")
