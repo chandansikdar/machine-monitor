@@ -1088,6 +1088,37 @@ with tab_analysis:
             if no_selection and has_key:
                 st.caption("Select at least one analysis type above.")
 
+        def _run_analysis(meta, dq_ctx, db, selected_id):
+            """Run the actual analysis loop and store results in session state."""
+            _analyzer    = Analyzer()
+            _all_results = {}
+            _progress    = st.progress(0)
+            _status      = st.empty()
+            _sel         = meta["selected_analyses"]
+            for _i, _atype in enumerate(_sel):
+                _status.text(f"Running {_atype} ({_i+1} of {len(_sel)})...")
+                _result = _analyzer.analyze(
+                    machine_info         = meta["machine_info"],
+                    data                 = db.get_data(meta["machine_info"]["machine_id"]),
+                    analysis_type        = _atype,
+                    date_range           = meta["date_range"],
+                    extra_context        = meta["extra_context"],
+                    schedule             = meta["schedule"] if _atype == "Operational Schedule Compliance" else None,
+                    logs_text            = meta["logs_text"],
+                    data_quality_context = dq_ctx,
+                )
+                if _result["success"]:
+                    _all_results[_atype] = _result["insights"]
+                    db.save_analysis(selected_id, _atype, _result["insights"])
+                else:
+                    _all_results[_atype] = {"error": _result["error"]}
+                _progress.progress((_i + 1) / len(_sel))
+            _status.empty()
+            _progress.empty()
+            st.session_state["last_multi_results"] = _all_results
+            st.session_state["last_data"]          = meta["filtered_data"]
+            st.rerun()
+
         with right:
             if analyze_clicked:
                 logs_text    = db.get_logs_text(selected_id)
@@ -1104,109 +1135,91 @@ with tab_analysis:
                 st.session_state["_last_schedule"]   = schedule or {}
                 st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
-                # ── Data quality gate before analysis ───────────────────
-                # ── Data quality gate before analysis ───────────────────
+                # ── Data quality check ─────────────────────────────────
                 _dq_ctx = ""
                 if data is not None and not data.empty:
                     _dq = run_data_quality_checks(data)
-                    st.session_state["last_dq_report"] = _dq
-                    _dq_ctx = format_quality_report_for_claude(_dq)
+                    st.session_state["last_dq_report"]     = _dq
+                    st.session_state["_dq_ctx"]            = format_quality_report_for_claude(_dq)
+                    st.session_state["_pending_analysis"]  = True
+                    st.session_state["_pending_meta"]      = {
+                        "selected_analyses": selected_analyses,
+                        "machine_info":      machine_info,
+                        "date_range":        date_range,
+                        "extra_context":     extra_context,
+                        "schedule":          schedule,
+                        "logs_text":         db.get_logs_text(selected_id),
+                        "filtered_data":     filtered_data,
+                    }
+                    st.rerun()
 
-                    critical_issues = [i for i in _dq["issues"] if i["severity"] == "critical"]
-                    warning_issues  = [i for i in _dq["issues"] if i["severity"] == "warning"]
 
-                    if critical_issues:
-                        st.error(
-                            f"**Data quality check — {len(critical_issues)} critical issue(s) detected.**  \n"
-                            "Review each issue below and choose whether to ignore it or correct the data before continuing."
-                        )
+            # ── DQ gate UI + analysis runner ──────────────────────────
+            if st.session_state.get("_pending_analysis"):
+                _dq      = st.session_state.get("last_dq_report", {})
+                _meta    = st.session_state.get("_pending_meta", {})
+                _dq_ctx  = st.session_state.get("_dq_ctx", "")
+                _crits   = [x for x in _dq.get("issues",[]) if x["severity"]=="critical"]
+                _warns   = [x for x in _dq.get("issues",[]) if x["severity"]=="warning"]
 
-                        # Per-issue ignore checkboxes
-                        ignored = {}
-                        for _iss in critical_issues:
-                            _key = f"dq_ignore_{_iss['col']}_{_iss['check'].replace(' ','_')}"
-                            cols_dq = st.columns([0.07, 0.93])
-                            with cols_dq[0]:
-                                ignored[_key] = st.checkbox("", key=_key, value=False,
-                                    help="Tick to ignore this issue and proceed")
-                            with cols_dq[1]:
-                                _bg = "#F0FFF4" if ignored[_key] else "#FFF0F0"
-                                _bc = "#2E7D32" if ignored[_key] else "#A32D2D"
-                                _icon = "✅" if ignored[_key] else "❌"
-                                _label = "Ignored — will proceed" if ignored[_key] else "Blocking analysis"
+                if _crits:
+                    st.error(
+                        f"**Data quality check — {len(_crits)} critical issue(s) detected.**  \n"
+                        "Acknowledge each issue below, then click **Continue Analysis**."
+                    )
+                    _ignored = {}
+                    for _iss in _crits:
+                        _key = f"dq_ack_{_iss['col']}_{_iss['check'].replace(' ','_')}"
+                        _c1, _c2 = st.columns([0.06, 0.94])
+                        with _c1:
+                            _ignored[_key] = st.checkbox("", key=_key, value=False)
+                        with _c2:
+                            _bg = "#F0FFF4" if _ignored[_key] else "#FFF0F0"
+                            _bc = "#2E7D32" if _ignored[_key] else "#A32D2D"
+                            _icon = "✅" if _ignored[_key] else "❌"
+                            _lbl  = "Acknowledged" if _ignored[_key] else "Blocking"
+                            st.markdown(
+                                f'<div style="background:{_bg};border-left:5px solid {_bc};padding:8px 12px;margin-bottom:4px;border-radius:3px;">' +
+                                f'<span style="font-weight:700;color:{_bc}">{_icon} {_iss["check"]}</span>' +
+                                f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code>' +
+                                f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.82em">{_iss["affected_pct"]}% affected &nbsp;\u00b7&nbsp; <i>{_lbl}</i></span><br>' +
+                                f'<span style="font-size:0.87em;color:#444">{_iss["detail"]}</span></div>',
+                                unsafe_allow_html=True)
+
+                    if _warns:
+                        with st.expander(f"⚠️ {len(_warns)} warning(s) — informational only", expanded=False):
+                            for _iss in _warns:
                                 st.markdown(
-                                    f'<div style="background:{_bg};border-left:5px solid {_bc};padding:8px 12px;margin-bottom:4px;border-radius:3px;">' +
-                                    f'<span style="font-weight:700;color:{_bc}">{_icon} {_iss["check"]}</span>' +
-                                    f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code>' +
-                                    f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.82em">{_iss["affected_pct"]}% affected</span>' +
-                                    f' &nbsp;\u00b7&nbsp; <span style="font-size:0.82em;color:{_bc};font-style:italic">{_label}</span><br>' +
-                                    f'<span style="font-size:0.87em;color:#444">{_iss["detail"]}</span></div>',
+                                    f'<div style="background:#FFFBF0;border-left:4px solid #BA7517;padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
+                                    f'<span style="font-weight:600;color:#BA7517">⚠️ {_iss["check"]}</span>' +
+                                    f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code><br>' +
+                                    f'<span style="font-size:0.88em">{_iss["detail"]}</span></div>',
                                     unsafe_allow_html=True)
 
-                        # Warnings (informational only)
-                        if warning_issues:
-                            with st.expander(f"⚠️ {len(warning_issues)} warning(s) — informational only, do not block analysis", expanded=False):
-                                for _iss in warning_issues:
-                                    st.markdown(
-                                        f'<div style="background:#FFFBF0;border-left:4px solid #BA7517;padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
-                                        f'<span style="font-weight:600;color:#BA7517">⚠️ {_iss["check"]}</span>' +
-                                        f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code><br>' +
-                                        f'<span style="font-size:0.88em">{_iss["detail"]}</span></div>',
-                                        unsafe_allow_html=True)
+                    with st.expander("How to correct the data", expanded=False):
+                        st.markdown(
+                            "1. Download your original data file  \n"
+                            "2. Correct or remove the affected rows/columns  \n"
+                            "3. In the **Data** tab, delete the existing file and re-upload  \n"
+                            "4. Press **Analyze** again"
+                        )
 
-                        # How to fix (collapsible)
-                        with st.expander("How to correct the data", expanded=False):
-                            st.markdown(
-                                "1. Download your original data file  \n"
-                                "2. Correct or remove the affected rows/columns  \n"
-                                "3. In the **Data** tab, delete the existing uploaded file  \n"
-                                "4. Re-upload the corrected file  \n"
-                                "5. Press **Analyze** again"
-                            )
-
-                        # Show Continue Analysis button only when all are ticked
-                        all_ignored = all(ignored.values())
-                        n_remaining = sum(1 for v in ignored.values() if not v)
-                        st.markdown("---")
-                        if not all_ignored:
-                            st.warning(
-                                f"**{n_remaining} critical issue(s) still unacknowledged.** "
-                                "Tick the checkbox next to each issue above to acknowledge it, "
-                                "then the **Continue Analysis** button will appear."
-                            )
-                            st.stop()
-                        else:
-                            st.success(
-                                "All critical issues acknowledged. "
-                                "Click **Continue Analysis** below to proceed. "
-                                "Findings may be affected by the data quality issues noted above."
-                            )
-                            if not st.button("Continue Analysis", type="primary", key="dq_continue"):
-                                st.stop()
-
-                    status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
-                    result = analyzer_obj.analyze(
-                        machine_info=machine_info,
-                        data=data,
-                        analysis_type=atype,
-                        date_range=date_range,
-                        extra_context=extra_context,
-                        schedule=schedule if atype == "Operational Schedule Compliance" else None,
-                        logs_text=logs_text,
-                        data_quality_context=_dq_ctx,
-                    )
-                    if result["success"]:
-                        all_results[atype] = result["insights"]
-                        db.save_analysis(selected_id, atype, result["insights"])
+                    st.markdown("---")
+                    _all_acked = all(_ignored.values())
+                    _n_remain  = sum(1 for v in _ignored.values() if not v)
+                    if not _all_acked:
+                        st.warning(f"{_n_remain} issue(s) still unacknowledged. Tick all checkboxes to enable Continue Analysis.")
                     else:
-                        all_results[atype] = {"error": result["error"]}
-                    progress_bar.progress((i + 1) / len(selected_analyses))
+                        st.success("All issues acknowledged.")
+                        if st.button("Continue Analysis", type="primary", key="dq_continue_btn"):
+                            st.session_state["_pending_analysis"] = False
+                            # Run actual analysis
+                            _run_analysis(_meta, _dq_ctx, db, selected_id)
 
-                status_text.empty()
-                progress_bar.empty()
-                st.session_state["last_multi_results"] = all_results
-                st.session_state["last_data"]          = filtered_data
-                st.rerun()
+                else:
+                    # No critical issues — run immediately
+                    st.session_state["_pending_analysis"] = False
+                    _run_analysis(_meta, _dq_ctx, db, selected_id)
 
             # Display results — one section per analysis type
             # ── Data quality report ────────────────────────────────────
