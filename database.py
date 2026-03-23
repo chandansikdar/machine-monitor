@@ -278,6 +278,18 @@ class Database:
         except Exception as e:
             return False
 
+    def delete_machine(self, machine_id: str):
+        """Delete a machine and all its data, logs, and analysis history."""
+        try:
+            # Delete all data files from disk
+            self.delete_all_files(machine_id)
+            # Delete from all tables
+            for table in ["machines", "data_files", "analysis_history", "maintenance_logs"]:
+                self.conn.execute(f"DELETE FROM {table} WHERE machine_id = ?", [machine_id])
+            return True
+        except Exception as e:
+            return False
+
     def delete_log(self, machine_id: str, filename: str):
         self.conn.execute(
             "DELETE FROM maintenance_logs WHERE machine_id = ? AND filename = ?",
