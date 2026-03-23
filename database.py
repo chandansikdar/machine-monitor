@@ -1,5 +1,5 @@
 """
-database.py â€” Data persistence layer (DuckDB + flat CSV files)
+database.py — Data persistence layer (DuckDB + flat CSV files)
 
 Architecture:
   - machines table: machine profiles and specs
@@ -167,7 +167,7 @@ class Database:
             df = df.set_index("timestamp")
             # Coerce any numeric-looking columns
             for col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="ignore")
+                df[col] = pd.to_numeric(df[col], errors="coerce")
             return df
         except Exception:
             return None
@@ -230,7 +230,7 @@ class Database:
         ]
 
     def get_logs_text(self, machine_id: str) -> str:
-        """Return all log content concatenated â€” for inclusion in Claude prompts."""
+        """Return all log content concatenated — for inclusion in Claude prompts."""
         logs = self.get_logs(machine_id)
         if not logs:
             return ""
