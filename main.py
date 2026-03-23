@@ -18,12 +18,18 @@ try:
 except ImportError:
     REPORT_AVAILABLE = False
 try:
-    from data_checker import run_data_quality_checks, format_quality_report_for_claude, check_timestamp_format
+    from data_checker import run_data_quality_checks, format_quality_report_for_claude
     DQ_AVAILABLE = True
 except ImportError:
     DQ_AVAILABLE = False
     def run_data_quality_checks(df, **kw): return {"issues":[],"summary":{"total":0,"critical":0,"warning":0,"info":0},"passed":True,"score":100}
     def format_quality_report_for_claude(r): return ""
+try:
+    from data_checker import check_timestamp_format
+    TS_CHECK_AVAILABLE = True
+except (ImportError, Exception):
+    TS_CHECK_AVAILABLE = False
+    def check_timestamp_format(path): return {"parseable":True,"col":None,"sample_raw":[],"sample_parsed":[],"n_failed":0,"n_total":0,"suggestion":"","corrected_df":None}
 try:
     from data_corrector import fix_duplicate_timestamps, fix_missing_gaps, \
         fix_isolated_spikes, fix_physical_impossibles, fix_flatline, CORRECTION_SUGGESTIONS
@@ -774,7 +780,7 @@ with st.sidebar:
     )
     if uploaded_file:
         # ── Timestamp format pre-check ──────────────────────────────
-        if DQ_AVAILABLE:
+        if TS_CHECK_AVAILABLE:
             import tempfile, os as _os
             _ext  = uploaded_file.name.split(".")[-1]
             _tmp  = tempfile.NamedTemporaryFile(delete=False, suffix=f".{_ext}")
