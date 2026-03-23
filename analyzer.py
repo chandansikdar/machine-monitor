@@ -227,7 +227,8 @@ class Analyzer:
 
             prompt = self._build_prompt(
                 machine_info, filtered, analysis_type,
-                extra_context, schedule_stats, logs_text, ml_signals
+                extra_context, schedule_stats, logs_text, ml_signals,
+                dq_context=dq_context
             )
 
             response = self.client.messages.create(
@@ -340,6 +341,7 @@ class Analyzer:
         schedule_stats: Optional[dict],
         logs_text: str,
         ml_signals: dict,
+        dq_context: str = "",
     ) -> str:
         numeric_cols = data.select_dtypes(include="number").columns.tolist()
         stats        = data[numeric_cols].describe().round(3).to_dict() if numeric_cols else {}
