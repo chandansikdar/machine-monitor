@@ -207,9 +207,11 @@ class Analyzer:
         extra_context: str = "",
         schedule: Optional[dict] = None,
         logs_text: str = "",
+        data_quality_context: str = "",
     ) -> dict:
         try:
-            filtered = self._filter_by_date(data, date_range)
+            filtered  = self._filter_by_date(data, date_range)
+            dq_context = data_quality_context or ""
 
             # Parse thresholds from machine description
             thresholds = _parse_thresholds(machine_info.get("description", ""))
