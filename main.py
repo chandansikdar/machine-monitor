@@ -1100,7 +1100,7 @@ with tab_analysis:
             if no_selection and has_key:
                 st.caption("Select at least one analysis type above.")
 
-        def _run_analysis(meta, dq_ctx, db, selected_id):
+        def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
             """Run the actual analysis loop and store results in session state."""
             _analyzer    = Analyzer()
             _all_results = {}
@@ -1109,9 +1109,11 @@ with tab_analysis:
             _sel         = meta["selected_analyses"]
             for _i, _atype in enumerate(_sel):
                 _status.text(f"Running {_atype} ({_i+1} of {len(_sel)})...")
+                # Use corrected data if provided, otherwise fetch from DB
+                _data_to_use = override_data if override_data is not None                                else db.get_data(meta["machine_info"]["machine_id"])
                 _result = _analyzer.analyze(
                     machine_info         = meta["machine_info"],
-                    data                 = db.get_data(meta["machine_info"]["machine_id"]),
+                    data                 = _data_to_use,
                     analysis_type        = _atype,
                     date_range           = meta["date_range"],
                     extra_context        = meta["extra_context"],
@@ -1128,7 +1130,7 @@ with tab_analysis:
             _status.empty()
             _progress.empty()
             st.session_state["last_multi_results"] = _all_results
-            st.session_state["last_data"]          = meta["filtered_data"]
+            st.session_state["last_data"]          = override_data if override_data is not None else meta["filtered_data"]
             st.rerun()
 
         with right:
@@ -1334,28 +1336,61 @@ with tab_analysis:
                             _corrected.to_csv(_buf)
                             st.session_state["_corrected_csv"]  = _buf.getvalue().encode("utf-8")
                             st.session_state["_correction_log"] = _log
+                            st.session_state["_corrected_df"]   = _corrected
+                            st.session_state["_confirm_pending"] = False
                             st.rerun()
 
                         if st.session_state.get("_corrected_csv"):
-                            st.success("Corrections applied.")
+                            st.success("Corrections applied successfully.")
                             for _entry in st.session_state.get("_correction_log", []):
                                 st.caption(_entry)
-                            _fname = f"{_meta['machine_info'].get('machine_id','machine')}_corrected.csv"
-                            st.download_button(
-                                label="⬇️ Download corrected data file",
-                                data=st.session_state["_corrected_csv"],
-                                file_name=_fname,
-                                mime="text/csv",
-                                key="dl_corrected_csv",
-                                width="stretch",
-                            )
-                            st.info(
-                                "After downloading:  \n"
-                                "1. Go to the **Data** tab  \n"
-                                "2. Delete the existing uploaded file  \n"
-                                "3. Upload the corrected file  \n"
-                                "4. Press **Analyze** again"
-                            )
+                            st.markdown("---")
+                            st.markdown("**What would you like to do with the corrected data?**")
+                            _dl_col, _use_col = st.columns(2)
+                            with _dl_col:
+                                _fname = f"{_meta['machine_info'].get('machine_id','machine')}_corrected.csv"
+                                st.download_button(
+                                    label="⬇️ Download corrected file",
+                                    data=st.session_state["_corrected_csv"],
+                                    file_name=_fname,
+                                    mime="text/csv",
+                                    key="dl_corrected_csv",
+                                    width="stretch",
+                                    help="Save corrected CSV to your computer"
+                                )
+                            with _use_col:
+                                if st.button(
+                                    "▶️ Use corrected data for analysis now",
+                                    key="use_corrected_btn",
+                                    type="primary",
+                                    width="stretch",
+                                    help="Run analysis immediately using the corrected data"
+                                ):
+                                    st.session_state["_confirm_pending"] = True
+                                    st.rerun()
+                            # Confirmation dialog
+                            if st.session_state.get("_confirm_pending"):
+                                st.warning(
+                                    "⚠️ **Confirm:** The corrected data will be used for analysis.  \n"
+                                    "The original uploaded file is unchanged — this only affects the current session.  \n"
+                                    "Download the corrected file too if you want to keep the corrections permanently."
+                                )
+                                _conf1, _conf2 = st.columns(2)
+                                with _conf1:
+                                    if st.button("✅ Yes, analyze with corrected data", key="confirm_yes_btn", type="primary", width="stretch"):
+                                        _corrected_df = st.session_state.get("_corrected_df")
+                                        if _corrected_df is not None:
+                                            # Override last_data and pending_meta with corrected df
+                                            _meta["filtered_data"] = _corrected_df
+                                            st.session_state["_pending_meta"]      = _meta
+                                            st.session_state["_pending_analysis"]  = False
+                                            st.session_state["_confirm_pending"]   = False
+                                            st.session_state["_corrected_csv"]     = None
+                                            _run_analysis(_meta, _dq_ctx, db, selected_id, override_data=_corrected_df)
+                                with _conf2:
+                                    if st.button("❌ Cancel", key="confirm_no_btn", width="stretch"):
+                                        st.session_state["_confirm_pending"] = False
+                                        st.rerun()
 
                     # ── Warnings ───────────────────────────────────────────────
                     if _warns:
