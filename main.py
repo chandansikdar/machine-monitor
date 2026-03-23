@@ -1136,6 +1136,8 @@ with tab_analysis:
                 # Clear old results so they don't show during DQ gate
                 st.session_state["last_multi_results"] = None
                 st.session_state["_pending_analysis"]  = False
+                st.session_state["_corrected_csv"]     = None
+                st.session_state["_correction_log"]    = []
                 logs_text    = db.get_logs_text(selected_id)
                 analyzer_obj = Analyzer()
                 all_results  = {}
@@ -1210,18 +1212,120 @@ with tab_analysis:
                         st.markdown(
                             '<div style="background:#EAF4FF;border:1.5px solid #185FA5;border-radius:6px;padding:14px 16px;">' +
                             '<span style="font-weight:700;color:#185FA5;font-size:1em">⭐ Option 1 — Recommended</span><br>' +
-                            '<span style="font-size:0.9em;color:#1A1A2E;">Correct the data and re-upload for accurate analysis results.</span>' +
+                            '<span style="font-size:0.9em;color:#1A1A2E;">Apply auto-corrections where available, then download the corrected file.</span>' +
                             '</div>',
                             unsafe_allow_html=True)
                         st.markdown("")
-                        with st.expander("📋 How to correct the data", expanded=True):
-                            st.markdown(
-                                "1. Download your original data file  \n"
-                                "2. Correct or remove the affected rows/columns  \n"
-                                "3. In the **Data** tab, delete the existing uploaded file  \n"
-                                "4. Re-upload the corrected file  \n"
-                                "5. Press **Analyze** again"
-                            )
+
+                        # Build list of auto-fixable issues
+                        _fixable = [
+                            i for i in _crits
+                            if CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
+                            and i["col"] != "[timestamp]"
+                        ]
+                        _manual = [
+                            i for i in _crits
+                            if not CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
+                            or i["col"] == "[timestamp]"
+                        ]
+
+                        # Get working data
+                        _raw_data = st.session_state.get("last_data") or                                     db.get_data(_meta["machine_info"]["machine_id"])
+
+                        if _fixable and _raw_data is not None:
+                            st.caption(f"{len(_fixable)} auto-correction(s) available:")
+                            _fix_keys = {}
+                            for _fi in _fixable:
+                                _fkey = f"apply_{_fi['col']}_{_fi['check'].replace(' ','_')}"
+                                _sugg = CORRECTION_SUGGESTIONS.get(_fi["check"],{}).get("suggestion","")
+                                _fix_keys[_fkey] = st.checkbox(
+                                    f"Fix: {_fi['check']} in `{_fi['col']}`",
+                                    key=_fkey, value=True,
+                                    help=_sugg
+                                )
+
+                            if st.button("🔧 Apply selected corrections & prepare download",
+                                         key="apply_fixes_btn", type="primary", width="stretch"):
+                                import io as _io
+                                _corrected = _raw_data.copy()
+                                _log = []
+                                for _fi in _fixable:
+                                    _fkey = f"apply_{_fi['col']}_{_fi['check'].replace(' ','_')}"
+                                    if not _fix_keys.get(_fkey, False):
+                                        continue
+                                    _fn_name = CORRECTION_SUGGESTIONS.get(_fi["check"],{}).get("fn")
+                                    _col     = _fi["col"]
+                                    try:
+                                        if _fn_name == "fix_flatline" or _fn_name == "fix_frozen_value_run":
+                                            _res = fix_flatline(_corrected, _col)
+                                        elif _fn_name == "fix_isolated_spikes":
+                                            _res = fix_isolated_spikes(_corrected, _col)
+                                        elif _fn_name == "fix_physical_impossibles":
+                                            _res = fix_physical_impossibles(_corrected, _col)
+                                        elif _fn_name == "fix_missing_gaps":
+                                            _res = fix_missing_gaps(_corrected)
+                                        elif _fn_name == "fix_duplicate_timestamps":
+                                            _res = fix_duplicate_timestamps(_corrected)
+                                        else:
+                                            continue
+                                        _corrected = _res["corrected_df"]
+                                        _log.append(f"✅ {_fi['check']} ({_col}): {_res['description']}")
+                                    except Exception as _fe:
+                                        _log.append(f"❌ {_fi['check']} ({_col}): Failed — {_fe}")
+
+                                # Store corrected data for download
+                                _buf = _io.StringIO()
+                                _corrected.to_csv(_buf)
+                                _csv_bytes = _buf.getvalue().encode("utf-8")
+                                st.session_state["_corrected_csv"]  = _csv_bytes
+                                st.session_state["_correction_log"] = _log
+                                st.rerun()
+
+                            # Show download if corrections were applied
+                            if st.session_state.get("_corrected_csv"):
+                                st.success("Corrections applied successfully.")
+                                for _entry in st.session_state.get("_correction_log", []):
+                                    _ic = "✅" if _entry.startswith("✅") else "❌"
+                                    st.caption(_entry)
+                                _fname = f"{_meta['machine_info'].get('machine_id','machine')}_corrected.csv"
+                                st.download_button(
+                                    label="⬇️ Download corrected data file",
+                                    data=st.session_state["_corrected_csv"],
+                                    file_name=_fname,
+                                    mime="text/csv",
+                                    key="dl_corrected_csv",
+                                    width="stretch",
+                                )
+                                st.info(
+                                    "After downloading:  \n"
+                                    "1. Go to the **Data** tab  \n"
+                                    "2. Delete the existing uploaded file  \n"
+                                    "3. Upload the corrected file  \n"
+                                    "4. Press **Analyze** again"
+                                )
+                        else:
+                            if _manual:
+                                st.info("The detected issues require manual correction.")
+                            with st.expander("📋 How to correct the data manually", expanded=True):
+                                st.markdown(
+                                    "1. Download your original data file  \n"
+                                    "2. Correct or remove the affected rows/columns  \n"
+                                    "3. In the **Data** tab, delete the existing uploaded file  \n"
+                                    "4. Re-upload the corrected file  \n"
+                                    "5. Press **Analyze** again"
+                                )
+
+                        # Manual-only issues shown as guidance
+                        if _manual:
+                            with st.expander(f"{len(_manual)} issue(s) requiring manual correction", expanded=False):
+                                for _mi in _manual:
+                                    _ms = CORRECTION_SUGGESTIONS.get(_mi["check"],{}).get("suggestion","Review manually.")
+                                    st.markdown(
+                                        f'<div style="background:#F0F4F8;border-left:3px solid #185FA5;padding:6px 10px;margin-bottom:6px;border-radius:2px;">' +
+                                        f'<span style="font-weight:600;font-size:0.88em">{_mi["check"]} · <code>{_mi["col"]}</code></span><br>' +
+                                        f'<span style="font-size:0.84em;color:#444">{_ms}</span></div>',
+                                        unsafe_allow_html=True)
+
 
                     with _opt2:
                         st.markdown(
