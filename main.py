@@ -751,7 +751,18 @@ with st.sidebar:
         "Active machine",
         options=list(machine_labels.keys()),
         format_func=lambda x: machine_labels[x],
+        key="active_machine_select",
     )
+    # Clear results when machine changes
+    if st.session_state.get("_last_active_machine") != selected_id:
+        st.session_state["last_multi_results"]  = None
+        st.session_state["last_dq_report"]      = None
+        st.session_state["last_data"]           = None
+        st.session_state["_pending_analysis"]   = False
+        st.session_state["_corrected_csv"]      = None
+        st.session_state["_corrected_df"]       = None
+        st.session_state["_confirm_pending"]    = False
+        st.session_state["_last_active_machine"] = selected_id
 
     st.divider()
 
