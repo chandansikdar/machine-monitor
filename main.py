@@ -563,7 +563,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
         if analysis_type == "Operational Schedule Compliance":
             _schedule = st.session_state.get("_last_schedule", {})
             for fig in _build_compliance_chart(data, _schedule):
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig, use_container_width=True)
 
         elif analysis_type == "Anomaly Detection":
             try:
@@ -642,7 +642,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                             margin=dict(l=40, r=20, t=55, b=110),
                             hovermode="x unified", font=dict(size=12),
                         )
-                        st.plotly_chart(_fig, width='stretch')
+                        st.plotly_chart(_fig, use_container_width=True)
                 else:
                     st.info("No data available for control charts.")
             except Exception as _e:
@@ -651,7 +651,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
 
         elif recs:
             for fig in viz.generate_charts(data, recs):
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig, use_container_width=True)
 
 
 # ------------------------------------------------------------------ #
@@ -724,7 +724,7 @@ with st.sidebar:
                 help="One parameter per line. Format: param_name: warning=X, critical=Y",
             )
 
-        if st.button("Register", type="primary", width='stretch'):
+        if st.button("Register", type="primary", use_container_width=True):
             if machine_type and machine_id:
                 # Append thresholds to description if provided
                 full_desc = machine_desc
@@ -801,7 +801,7 @@ with st.sidebar:
                     _fix_col, _dl_col = st.columns(2)
                     with _fix_col:
                         if st.button("✅ Fix timestamps and ingest", type="primary",
-                                     key="fix_ts_ingest_btn", width="stretch"):
+                                     key="fix_ts_ingest_btn", use_container_width=True):
                             with st.spinner("Correcting timestamps and ingesting…"):
                                 import io as _io2
                                 _fixed_buf = _io2.BytesIO(_ts_buf)
@@ -822,7 +822,7 @@ with st.sidebar:
                             file_name=f"{uploaded_file.name.rsplit('.',1)[0]}_ts_fixed.csv",
                             mime="text/csv",
                             key="dl_ts_fixed",
-                            width="stretch",
+                            use_container_width=True,
                             help="Save a copy of the timestamp-corrected file"
                         )
                 else:
@@ -831,7 +831,7 @@ with st.sidebar:
                 if _ts_check["sample_raw"]:
                     st.caption(f"✅ Timestamps OK · sample: {_ts_check['sample_raw'][0]}")
 
-        if st.button("Ingest", width='stretch'):
+        if st.button("Ingest", use_container_width=True):
             with st.spinner("Reading and storing data…"):
                 result = db.ingest_file(uploaded_file, selected_id)
             if result["success"]:
@@ -854,7 +854,7 @@ with st.sidebar:
         help="Handwritten or printed maintenance logs, service records, inspection reports.",
     )
     if log_file:
-        if st.button("Read & store log", width='stretch'):
+        if st.button("Read & store log", use_container_width=True):
             with st.spinner("Reading log file…"):
                 result = read_log(log_file, api_key=os.getenv("ANTHROPIC_API_KEY", ""))
             if result["success"]:
@@ -897,7 +897,7 @@ with st.expander("Edit parameter thresholds", expanded=False):
         height=120,
         label_visibility="collapsed",
     )
-    if st.button("Save thresholds", width='stretch'):
+    if st.button("Save thresholds", use_container_width=True):
         base_desc = desc.split("=== PARAMETER THRESHOLDS ===")[0].strip()
         if new_thresh.strip():
             updated_desc = base_desc + "\n\n=== PARAMETER THRESHOLDS ===\n" + new_thresh.strip()
@@ -929,10 +929,10 @@ with tab_data:
         c4.metric("To",         str(data.index.max().date()))
 
         st.subheader("Recent readings")
-        st.dataframe(data.tail(200), width='stretch', height=280)
+        st.dataframe(data.tail(200), use_container_width=True, height=280)
 
         st.subheader("Descriptive statistics")
-        st.dataframe(data[numeric_cols].describe().round(3), width='stretch')
+        st.dataframe(data[numeric_cols].describe().round(3), use_container_width=True)
 
         if numeric_cols:
             st.subheader("Sensor overview")
@@ -942,7 +942,7 @@ with tab_data:
                   "title": "All parameters",
                   "parameters": numeric_cols[:8]}],
             )
-            st.plotly_chart(figs[0], width='stretch')
+            st.plotly_chart(figs[0], use_container_width=True)
 
 
 # ------------------------------------------------------------------ #
@@ -1161,7 +1161,7 @@ with tab_analysis:
             analyze_clicked = st.button(
                 "Analyze",
                 type="primary",
-                width='stretch',
+                use_container_width=True,
                 disabled=not has_key or no_selection,
             )
             if not has_key:
@@ -1325,7 +1325,7 @@ with tab_analysis:
                             st.caption(f"{_n_remain} issue(s) still unacknowledged. Tick all to enable Continue Analysis.")
                         else:
                             st.success("All issues acknowledged.")
-                            if st.button("Continue Analysis", type="primary", key="dq_continue_btn", width="stretch"):
+                            if st.button("Continue Analysis", type="primary", key="dq_continue_btn", use_container_width=True):
                                 st.session_state["_pending_analysis"] = False
                                 _run_analysis(_meta, _dq_ctx, db, selected_id)
 
@@ -1374,7 +1374,7 @@ with tab_analysis:
 
                         st.markdown("")
                         if st.button("🔧 Apply selected corrections and prepare download",
-                                     key="apply_fixes_btn", type="secondary", width="stretch"):
+                                     key="apply_fixes_btn", type="secondary", use_container_width=True):
                             import io as _io
                             _corrected = _raw_data.copy()
                             _log = []
@@ -1424,7 +1424,7 @@ with tab_analysis:
                                     file_name=_fname,
                                     mime="text/csv",
                                     key="dl_corrected_csv",
-                                    width="stretch",
+                                    use_container_width=True,
                                     help="Save corrected CSV to your computer"
                                 )
                             with _use_col:
@@ -1432,7 +1432,7 @@ with tab_analysis:
                                     "▶️ Use corrected data for analysis now",
                                     key="use_corrected_btn",
                                     type="primary",
-                                    width="stretch",
+                                    use_container_width=True,
                                     help="Run analysis immediately using the corrected data"
                                 ):
                                     st.session_state["_confirm_pending"] = True
@@ -1446,7 +1446,7 @@ with tab_analysis:
                                 )
                                 _conf1, _conf2 = st.columns(2)
                                 with _conf1:
-                                    if st.button("✅ Yes, analyze with corrected data", key="confirm_yes_btn", type="primary", width="stretch"):
+                                    if st.button("✅ Yes, analyze with corrected data", key="confirm_yes_btn", type="primary", use_container_width=True):
                                         _corrected_df = st.session_state.get("_corrected_df")
                                         if _corrected_df is not None:
                                             # Override last_data and pending_meta with corrected df
@@ -1457,7 +1457,7 @@ with tab_analysis:
                                             st.session_state["_corrected_csv"]     = None
                                             _run_analysis(_meta, _dq_ctx, db, selected_id, override_data=_corrected_df)
                                 with _conf2:
-                                    if st.button("❌ Cancel", key="confirm_no_btn", width="stretch"):
+                                    if st.button("❌ Cancel", key="confirm_no_btn", use_container_width=True):
                                         st.session_state["_confirm_pending"] = False
                                         st.rerun()
 
@@ -1532,7 +1532,7 @@ with tab_analysis:
             # PDF download button — shown when results exist
             if st.session_state.get("last_multi_results") and REPORT_AVAILABLE:
                 st.divider()
-                if st.button("Download PDF report", type="secondary", width='stretch'):
+                if st.button("Download PDF report", type="secondary", use_container_width=True):
                     with st.spinner("Generating PDF report..."):
                         try:
                             _data = st.session_state.get("last_data")
@@ -1553,7 +1553,7 @@ with tab_analysis:
                                 data=pdf_bytes,
                                 file_name=f"{selected_id}_analytics_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                                 mime="application/pdf",
-                                width='stretch',
+                                use_container_width=True,
                             )
                         except Exception as e:
                             st.error(f"PDF generation failed: {e}")
