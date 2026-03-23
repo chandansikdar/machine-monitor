@@ -179,7 +179,7 @@ class Database:
             ORDER BY ingested_at
         """, [machine_id]).fetchall()
         return [
-            {"file": Path(r[0]).name, "rows": r[1], "columns": r[2], "ingested_at": r[3]}
+            {"file": Path(r[0]).name, "file_path": r[0], "rows": r[1], "columns": r[2], "ingested_at": r[3]}
             for r in rows
         ]
 
