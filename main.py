@@ -770,6 +770,34 @@ with st.sidebar:
         st.session_state["_confirm_pending"]    = False
         st.session_state["_last_active_machine"] = selected_id
 
+    # ── Delete machine ──────────────────────────────────────────────
+    with st.expander("🗑️ Delete this machine", expanded=False):
+        st.warning(
+            f"Permanently delete **{selected_id}** and all its data, "
+            "analysis history and maintenance logs. This cannot be undone."
+        )
+        _confirm_key = f"confirm_delete_{selected_id}"
+        _confirmed = st.checkbox(
+            f"I confirm I want to delete {selected_id}",
+            key=_confirm_key, value=False
+        )
+        if _confirmed:
+            if st.button(
+                f"🗑️ Delete {selected_id} permanently",
+                type="primary",
+                key=f"btn_delete_{selected_id}",
+                use_container_width=True,
+            ):
+                ok = db.delete_machine(selected_id)
+                if ok:
+                    st.session_state["last_multi_results"]   = None
+                    st.session_state["last_data"]            = None
+                    st.session_state["_last_active_machine"] = None
+                    st.success(f"{selected_id} deleted.")
+                    st.rerun()
+                else:
+                    st.error("Delete failed — check logs.")
+
     st.divider()
 
     st.subheader("Upload data")
