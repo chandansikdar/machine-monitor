@@ -1121,6 +1121,9 @@ with tab_analysis:
 
         with right:
             if analyze_clicked:
+                # Clear old results so they don't show during DQ gate
+                st.session_state["last_multi_results"] = None
+                st.session_state["_pending_analysis"]  = False
                 logs_text    = db.get_logs_text(selected_id)
                 analyzer_obj = Analyzer()
                 all_results  = {}
@@ -1222,47 +1225,54 @@ with tab_analysis:
                     st.session_state["_pending_analysis"] = False
                     _run_analysis(_meta, _dq_ctx, db, selected_id)
 
-            # Display results — one section per analysis type
-            # ── Data quality report ────────────────────────────────────
-            dq = st.session_state.get("last_dq_report")
-            if dq:
-                sev_color = {"critical":"#A32D2D","warning":"#BA7517","info":"#185FA5"}
-                sev_bg    = {"critical":"#FFF0F0","warning":"#FFFBF0","info":"#EAF4FF"}
-                n_crit = dq["summary"]["critical"]; n_warn = dq["summary"]["warning"]
-                score  = dq["score"]
-                label  = (f"  \u00b7  {n_crit} critical issue(s)" if n_crit else "") +                          (f"  \u00b7  {n_warn} warning(s)" if n_warn else "") +                          ("  \u00b7  All checks passed" if not dq["issues"] else "")
-                with st.expander(f"Data quality check \u2014 score {score}/100{label}", expanded=(n_crit>0)):
-                    if not dq["issues"]:
-                        st.success("All data quality checks passed.")
-                    else:
-                        for iss in dq["issues"]:
-                            sev   = iss["severity"]
-                            icon  = {"critical":"\u274c","warning":"\u26a0\ufe0f","info":"\u2139\ufe0f"}.get(sev,"\u2022")
-                            bg    = sev_bg.get(sev,"#F8F8F8")
-                            fc    = sev_color.get(sev,"#333")
-                            st.markdown(
-                                f'<div style="background:{bg};border-left:4px solid {fc};padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
-                                f'<span style="font-weight:600;color:{fc}">{icon} {iss["check"]}</span>' +
-                                f' &nbsp;\u00b7&nbsp; <code>{iss["col"]}</code>' +
-                                f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.85em">{iss["affected_pct"]}% affected</span><br>' +
-                                f'<span style="font-size:0.88em">{iss["detail"]}</span></div>',
-                                unsafe_allow_html=True)
-                st.markdown("")
+            # Display results only when no pending DQ gate
+            # Show results only when DQ gate is not active
+            _show_results = not st.session_state.get("_pending_analysis", False)
+            if _show_results:
+                dq = st.session_state.get("last_dq_report")
+                if dq:
+                    _sev_color = {"critical":"#A32D2D","warning":"#BA7517","info":"#185FA5"}
+                    _sev_bg    = {"critical":"#FFF0F0","warning":"#FFFBF0","info":"#EAF4FF"}
+                    _n_crit = dq["summary"]["critical"]
+                    _n_warn = dq["summary"]["warning"]
+                    _score  = dq["score"]
+                    _label  = (f"  \u00b7  {_n_crit} critical" if _n_crit else "") + \
+                              (f"  \u00b7  {_n_warn} warning(s)" if _n_warn else "") + \
+                              ("  \u00b7  All checks passed" if not dq["issues"] else "")
+                    with st.expander(f"Data quality check \u2014 score {_score}/100{_label}", expanded=(_n_crit>0)):
+                        if not dq["issues"]:
+                            st.success("All data quality checks passed.")
+                        else:
+                            for _iss2 in dq["issues"]:
+                                _sev2  = _iss2["severity"]
+                                _icon2 = {"critical":"\u274c","warning":"\u26a0\ufe0f","info":"\u2139\ufe0f"}.get(_sev2,"\u2022")
+                                _bg2   = _sev_bg.get(_sev2,"#F8F8F8")
+                                _fc2   = _sev_color.get(_sev2,"#333")
+                                st.markdown(
+                                    f'<div style="background:{_bg2};border-left:4px solid {_fc2};padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
+                                    f'<span style="font-weight:600;color:{_fc2}">{_icon2} {_iss2["check"]}</span>' +
+                                    f' &nbsp;\u00b7&nbsp; <code>{_iss2["col"]}</code>' +
+                                    f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.85em">{_iss2["affected_pct"]}% affected</span><br>' +
+                                    f'<span style="font-size:0.88em">{_iss2["detail"]}</span></div>',
+                                    unsafe_allow_html=True)
+                    st.markdown("")
 
-            multi_results = st.session_state.get("last_multi_results")
-            if multi_results:
-                for atype, insights in multi_results.items():
-                    st.markdown("---")
-                    st.subheader(atype)
-                    if "error" in insights:
-                        st.error(f"Failed: {insights['error']}")
-                    else:
-                        render_insights(insights, st.session_state.get("last_data"), viz,
-                                        analysis_type=atype)
-            else:
-                st.markdown(
-                    "_Select one or more analysis types and press **Analyze** to generate insights._"
-                )
+                multi_results = st.session_state.get("last_multi_results")
+                if multi_results:
+                    for atype, insights in multi_results.items():
+                        st.markdown("---")
+                        st.subheader(atype)
+                        if "error" in insights:
+                            st.error(f"Failed: {insights['error']}")
+                        else:
+                            render_insights(insights, st.session_state.get("last_data"), viz,
+                                            analysis_type=atype)
+                else:
+                    if not st.session_state.get("_pending_analysis"):
+                        st.markdown(
+                            "_Select one or more analysis types and press **Analyze** to generate insights._"
+                        )
+
 
             # PDF download button — shown when results exist
             if st.session_state.get("last_multi_results") and REPORT_AVAILABLE:
