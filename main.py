@@ -1186,6 +1186,19 @@ with tab_analysis:
                                 f'<span style="font-size:0.87em;color:#444">{_iss["detail"]}</span></div>',
                                 unsafe_allow_html=True)
 
+                    # ── Action area directly below critical issues ────
+                    st.markdown("---")
+                    _all_acked = all(_ignored.values())
+                    _n_remain  = sum(1 for v in _ignored.values() if not v)
+                    if not _all_acked:
+                        st.warning(f"{_n_remain} critical issue(s) still unacknowledged. Tick all checkboxes above to enable **Continue Analysis**.")
+                    else:
+                        st.success("All critical issues acknowledged.")
+                        if st.button("Continue Analysis", type="primary", key="dq_continue_btn", use_container_width=True):
+                            st.session_state["_pending_analysis"] = False
+                            _run_analysis(_meta, _dq_ctx, db, selected_id)
+
+                    # ── Secondary info below button ───────────────────
                     if _warns:
                         with st.expander(f"⚠️ {len(_warns)} warning(s) — informational only", expanded=False):
                             for _iss in _warns:
@@ -1203,18 +1216,6 @@ with tab_analysis:
                             "3. In the **Data** tab, delete the existing file and re-upload  \n"
                             "4. Press **Analyze** again"
                         )
-
-                    st.markdown("---")
-                    _all_acked = all(_ignored.values())
-                    _n_remain  = sum(1 for v in _ignored.values() if not v)
-                    if not _all_acked:
-                        st.warning(f"{_n_remain} issue(s) still unacknowledged. Tick all checkboxes to enable Continue Analysis.")
-                    else:
-                        st.success("All issues acknowledged.")
-                        if st.button("Continue Analysis", type="primary", key="dq_continue_btn"):
-                            st.session_state["_pending_analysis"] = False
-                            # Run actual analysis
-                            _run_analysis(_meta, _dq_ctx, db, selected_id)
 
                 else:
                     # No critical issues — run immediately
