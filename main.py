@@ -17,7 +17,13 @@ try:
     REPORT_AVAILABLE = True
 except ImportError:
     REPORT_AVAILABLE = False
-from data_checker import run_data_quality_checks, format_quality_report_for_claude
+try:
+    from data_checker import run_data_quality_checks, format_quality_report_for_claude
+    DQ_AVAILABLE = True
+except ImportError:
+    DQ_AVAILABLE = False
+    def run_data_quality_checks(df, **kw): return {"issues":[],"summary":{"total":0,"critical":0,"warning":0,"info":0},"passed":True,"score":100}
+    def format_quality_report_for_claude(r): return ""
 from database import Database
 from visualizer import Visualizer
 
@@ -1098,6 +1104,14 @@ with tab_analysis:
                 st.session_state["_last_schedule"]   = schedule or {}
                 st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
+                # Run data quality check before analysis
+                if data is not None and not data.empty:
+                    _dq = run_data_quality_checks(data)
+                    st.session_state["last_dq_report"] = _dq
+                    _dq_ctx = format_quality_report_for_claude(_dq)
+                else:
+                    _dq_ctx = ""
+
                 for i, atype in enumerate(selected_analyses):
                     status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
                     result = analyzer_obj.analyze(
@@ -1108,6 +1122,7 @@ with tab_analysis:
                         extra_context=extra_context,
                         schedule=schedule if atype == "Operational Schedule Compliance" else None,
                         logs_text=logs_text,
+                        data_quality_context=_dq_ctx,
                     )
                     if result["success"]:
                         all_results[atype] = result["insights"]
