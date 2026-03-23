@@ -854,10 +854,34 @@ with st.sidebar:
             if len(file_info) > 1:
                 st.warning(f"{len(file_info)} files stored — duplicates may cause incorrect row counts.")
             for _fi in file_info:
-                _fc1, _fc2 = st.columns([0.75, 0.25])
+                _fc1, _fc2, _fc3 = st.columns([0.60, 0.20, 0.20])
                 with _fc1:
                     st.caption(f"📄 {_fi['file']}  ·  {_fi['rows']:,} rows  ·  {str(_fi['ingested_at'])[:10]}")
                 with _fc2:
+                    # Download button — read from stored file path
+                    try:
+                        import pathlib as _pl
+                        _fp = _pl.Path(_fi.get('file_path', ''))
+                        if _fp.exists():
+                            _fdata = _fp.read_bytes()
+                        else:
+                            # Fallback: export from database
+                            import io as _io3
+                            _fdf = db.get_data(selected_id)
+                            _buf3 = _io3.StringIO()
+                            _fdf.to_csv(_buf3)
+                            _fdata = _buf3.getvalue().encode("utf-8")
+                        st.download_button(
+                            label="⬇️",
+                            data=_fdata,
+                            file_name=_fi['file'],
+                            mime="text/csv",
+                            key=f"dl_file_{_fi['file']}",
+                            help="Download this file",
+                        )
+                    except Exception:
+                        pass
+                with _fc3:
                     if st.button("Delete", key=f"del_file_{_fi['file']}", type="secondary"):
                         db.delete_file(selected_id, _fi['file'])
                         st.success(f"Deleted {_fi['file']}")
