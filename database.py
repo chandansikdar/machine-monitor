@@ -239,6 +239,45 @@ class Database:
             parts.append(f"--- {log['filename']} (uploaded {log['uploaded_at']}) ---\n{log['content']}")
         return "\n\n".join(parts)
 
+    def delete_file(self, machine_id: str, filename: str):
+        """Delete a specific ingested data file and remove its rows from data."""
+        try:
+            # Find the file path
+            rows = self.conn.execute(
+                "SELECT file_path FROM data_files WHERE machine_id=? AND file_path LIKE ?",
+                [machine_id, f"%{filename}%"]
+            ).fetchall()
+            for row in rows:
+                fp = Path(row[0])
+                if fp.exists():
+                    fp.unlink()
+            self.conn.execute(
+                "DELETE FROM data_files WHERE machine_id=? AND file_path LIKE ?",
+                [machine_id, f"%{filename}%"]
+            )
+            return True
+        except Exception as e:
+            return False
+
+    def delete_all_files(self, machine_id: str):
+        """Delete all ingested data files for a machine."""
+        try:
+            rows = self.conn.execute(
+                "SELECT file_path FROM data_files WHERE machine_id=?",
+                [machine_id]
+            ).fetchall()
+            for row in rows:
+                fp = Path(row[0])
+                if fp.exists():
+                    fp.unlink()
+            self.conn.execute(
+                "DELETE FROM data_files WHERE machine_id=?",
+                [machine_id]
+            )
+            return True
+        except Exception as e:
+            return False
+
     def delete_log(self, machine_id: str, filename: str):
         self.conn.execute(
             "DELETE FROM maintenance_logs WHERE machine_id = ? AND filename = ?",
