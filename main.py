@@ -1310,7 +1310,7 @@ with tab_analysis:
                             _key = f"dq_ack_{_iss['col']}_{_iss['check'].replace(' ','_')}"
                             _c1, _c2 = st.columns([0.12, 0.88])
                             with _c1:
-                                _ignored[_key] = st.checkbox("", key=_key, value=False)
+                                _ignored[_key] = st.checkbox(" ", key=_key, value=False, label_visibility="collapsed")
                             with _c2:
                                 _bc   = "#2E7D32" if _ignored[_key] else "#A32D2D"
                                 _icon = "✅" if _ignored[_key] else "❌"
