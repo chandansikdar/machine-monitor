@@ -1104,13 +1104,53 @@ with tab_analysis:
                 st.session_state["_last_schedule"]   = schedule or {}
                 st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
-                # Run data quality check before analysis
+                # ── Data quality gate before analysis ───────────────────
+                _dq_ctx = ""
                 if data is not None and not data.empty:
                     _dq = run_data_quality_checks(data)
                     st.session_state["last_dq_report"] = _dq
                     _dq_ctx = format_quality_report_for_claude(_dq)
-                else:
-                    _dq_ctx = ""
+
+                    if _dq["summary"]["critical"] > 0:
+                        st.error(
+                            f"**Data quality check failed — {_dq['summary']['critical']} critical issue(s) detected.**  \n"
+                            "Analysis has been paused. Please review the issues below, correct your data file and upload it again."
+                        )
+                        for _iss in _dq["issues"]:
+                            if _iss["severity"] == "critical":
+                                st.markdown(
+                                    f'<div style="background:#FFF0F0;border-left:5px solid #A32D2D;padding:10px 14px;margin-bottom:8px;border-radius:3px;">' +
+                                    f'<span style="font-weight:700;color:#A32D2D">\u274c {_iss["check"]}</span>' +
+                                    f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code>' +
+                                    f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.85em">{_iss["affected_pct"]}% of rows affected</span><br>' +
+                                    f'<span style="font-size:0.9em">{_iss["detail"]}</span></div>',
+                                    unsafe_allow_html=True)
+                        n_warn = _dq["summary"]["warning"]
+                        if n_warn > 0:
+                            with st.expander(f"{n_warn} additional warning(s) — do not block analysis", expanded=False):
+                                for _iss in _dq["issues"]:
+                                    if _iss["severity"] == "warning":
+                                        st.markdown(
+                                            f'<div style="background:#FFFBF0;border-left:4px solid #BA7517;padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
+                                            f'<span style="font-weight:600;color:#BA7517">\u26a0\ufe0f {_iss["check"]}</span>' +
+                                            f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code><br>' +
+                                            f'<span style="font-size:0.88em">{_iss["detail"]}</span></div>',
+                                            unsafe_allow_html=True)
+                        st.info(
+                            "**How to fix:**  \n"
+                            "1. Download your original data file  \n"
+                            "2. Correct or remove the affected rows/columns  \n"
+                            "3. In the **Data** tab, delete the uploaded file  \n"
+                            "4. Re-upload the corrected file  \n"
+                            "5. Press **Analyze** again"
+                        )
+                        st.markdown("---")
+                        st.caption("If you understand the data issues and want to continue anyway:")
+                        _override = st.checkbox(
+                            "Proceed with analysis despite critical data quality issues",
+                            key="dq_override", value=False)
+                        if not _override:
+                            st.stop()
 
                 for i, atype in enumerate(selected_analyses):
                     status_text.text(f"Running {atype} ({i+1} of {len(selected_analyses)})...")
