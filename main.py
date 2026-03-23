@@ -1012,13 +1012,66 @@ with tab_data:
 
         if numeric_cols:
             st.subheader("Sensor overview")
-            figs = viz.generate_charts(
-                data,
-                [{"type": "time_series",
-                  "title": "All parameters",
-                  "parameters": numeric_cols[:8]}],
-            )
-            st.plotly_chart(figs[0], use_container_width=True)
+
+            # ── Auto-group columns by unit type ──────────────────────
+            def _group_by_unit(cols):
+                groups = {
+                    "Pressure": [],
+                    "Temperature": [],
+                    "Current / Power": [],
+                    "Vibration / Velocity": [],
+                    "Speed / Frequency": [],
+                    "Flow / Volume": [],
+                    "Energy": [],
+                    "Other": [],
+                }
+                kw_map = [
+                    ("Pressure",            ["pressure","press","bar","psi","kpa","mbar","pa"]),
+                    ("Temperature",         ["temp","temperature","celsius","fahrenheit","kelvin","_c","_f","_k"]),
+                    ("Current / Power",     ["current","amp","power","kw","watt","volt","pf","cos_phi"]),
+                    ("Vibration / Velocity",["vibration","vibr","velocity","mm_s","acceleration","accel"]),
+                    ("Speed / Frequency",   ["speed","rpm","rps","freq","hz","frequency"]),
+                    ("Flow / Volume",       ["flow","volume","m3","litre","liter","gpm","cfm"]),
+                    ("Energy",              ["kwh","energy","consumption","kw_h"]),
+                ]
+                for col in cols:
+                    cl = col.lower()
+                    placed = False
+                    for group_name, keywords in kw_map:
+                        if any(kw in cl for kw in keywords):
+                            groups[group_name].append(col)
+                            placed = True
+                            break
+                    if not placed:
+                        groups["Other"].append(col)
+                return {k: v for k, v in groups.items() if v}
+
+            _groups = _group_by_unit(numeric_cols)
+
+            for _grp_name, _grp_cols in _groups.items():
+                st.markdown(f"**{_grp_name}**")
+                import plotly.graph_objects as _go2
+                _fig = _go2.Figure()
+                for _c in _grp_cols:
+                    _fig.add_trace(_go2.Scatter(
+                        x=data.index, y=data[_c],
+                        name=_c, mode="lines", line=dict(width=1.5),
+                        hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + _c + ": %{y:.3f}<extra></extra>",
+                    ))
+                _fig.update_layout(
+                    title=dict(text=_grp_name, font=dict(size=13)),
+                    xaxis_title="Time",
+                    yaxis_title=", ".join(_grp_cols[:2]) + (" ..." if len(_grp_cols) > 2 else ""),
+                    height=280,
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=40, r=20, t=40, b=40),
+                    hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="top", y=-0.25,
+                                xanchor="left", x=0, bgcolor="rgba(0,0,0,0)"),
+                    font=dict(size=11),
+                )
+                st.plotly_chart(_fig, use_container_width=True)
 
 
 # ------------------------------------------------------------------ #
