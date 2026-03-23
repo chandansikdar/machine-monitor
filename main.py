@@ -1026,13 +1026,14 @@ with tab_data:
                     "Other": [],
                 }
                 kw_map = [
-                    ("Pressure",            ["pressure","press","bar","psi","kpa","mbar","pa"]),
-                    ("Temperature",         ["temp","temperature","celsius","fahrenheit","kelvin","_c","_f","_k"]),
-                    ("Current / Power",     ["current","amp","power","kw","watt","volt","pf","cos_phi"]),
-                    ("Vibration / Velocity",["vibration","vibr","velocity","mm_s","acceleration","accel"]),
-                    ("Speed / Frequency",   ["speed","rpm","rps","freq","hz","frequency"]),
-                    ("Flow / Volume",       ["flow","volume","m3","litre","liter","gpm","cfm"]),
-                    ("Energy",              ["kwh","energy","consumption","kw_h"]),
+                    ("Energy",              ["kwh","kw_h","energy","consumption"]),
+                    ("Current / Power",     ["current","_a","amps","power_kw","kilowatt","watt","cos_phi","power_factor","pf"]),
+                    ("Pressure",            ["pressure","press","_bar","_psi","_kpa","_mbar"]),
+                    ("Temperature",         ["temp","temperature","_celsius","_fahrenheit","_c","_degc","deg_c"]),
+                    ("Vibration / Velocity",["vibration","vibr","velocity","mm_s","mm/s","acceleration","accel"]),
+                    ("Speed / Frequency",   ["speed","rpm","rps","frequency","_hz"]),
+                    ("Flow / Volume",       ["flow","volume","_m3","litre","liter","gpm","cfm"]),
+                    ("Voltage",             ["voltage","_v","volt"]),
                 ]
                 for col in cols:
                     cl = col.lower()
