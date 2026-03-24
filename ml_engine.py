@@ -1,14 +1,14 @@
 """
-ml_engine.py — Adaptive pre-processing engine
+ml_engine.py â€” Adaptive pre-processing engine
 
 Automatically selects the right analytical method based on data volume
 and feeds pre-computed signals to Claude for interpretation.
 
 Tiers:
-  TIER 1 — < 30 days   : Statistical only (Z-score, IQR, rolling mean)
-  TIER 2 — 30–180 days : Tier 1 + control charts (Western Electric rules)
-  TIER 3 — 180+ days   : Tier 2 + Isolation Forest unsupervised anomaly scoring
-  TIER 4 — labelled    : Tier 3 + supervised threshold breach scoring
+  TIER 1 â€” < 30 days   : Statistical only (Z-score, IQR, rolling mean)
+  TIER 2 â€” 30â€“180 days : Tier 1 + control charts (Western Electric rules)
+  TIER 3 â€” 180+ days   : Tier 2 + Isolation Forest unsupervised anomaly scoring
+  TIER 4 â€” labelled    : Tier 3 + supervised threshold breach scoring
 
 Claude always receives the pre-computed signals as structured context and
 provides the final interpretation. The signals make Claude's answers
@@ -25,7 +25,7 @@ import pandas as pd
 # Public interface
 # --------------------------------------------------------------------------- #
 
-def run(data: pd.DataFrame, thresholds: Optional[dict] = None) -> dict:
+def run(data: pd.DataFrame, thresholds: Optional[dict] = None, baseline_data: Optional[pd.DataFrame] = None) -> dict:
     """
     Entry point. Returns a structured dict that gets injected into the
     Claude prompt as === PRE-COMPUTED SIGNALS ===
@@ -50,7 +50,8 @@ def run(data: pd.DataFrame, thresholds: Optional[dict] = None) -> dict:
     }
 
     if tier >= 2:
-        result["control_charts"] = _control_charts(numeric)
+        baseline_numeric = baseline_data.select_dtypes(include="number") if baseline_data is not None else None
+        result["control_charts"] = _control_charts(numeric, baseline_numeric)
 
     if tier >= 3:
         result["isolation_forest"] = _isolation_forest(numeric)
@@ -86,7 +87,7 @@ def _select_tier(days: int, thresholds: Optional[dict]) -> tuple:
 
 
 # --------------------------------------------------------------------------- #
-# Tier 1 — Statistical signals
+# Tier 1 â€” Statistical signals
 # --------------------------------------------------------------------------- #
 
 def _statistical(numeric: pd.DataFrame, thresholds: Optional[dict]) -> dict:
@@ -139,16 +140,16 @@ def _statistical(numeric: pd.DataFrame, thresholds: Optional[dict]) -> dict:
         # Flag summary
         flags = []
         if outlier_pct > 1:
-            flags.append(f"{outlier_pct}% readings are Z-score outliers (>3σ)")
+            flags.append(f"{outlier_pct}% readings are Z-score outliers (>3Ïƒ)")
         if iqr_outliers > 0:
             flags.append(f"{iqr_outliers} IQR outliers detected")
         if abs(trend_pct) > 5:
             direction = "upward" if trend_pct > 0 else "downward"
             flags.append(f"{abs(trend_pct):.1f}% {direction} trend (recent vs early period)")
         if abs(recent_z) > 2.5:
-            flags.append(f"Recent maximum is {recent_z}σ from mean — potential spike")
+            flags.append(f"Recent maximum is {recent_z}Ïƒ from mean â€” potential spike")
         if abs(skew) > 2:
-            flags.append(f"Distribution is highly skewed ({skew:.2f}) — suggests outlier pull")
+            flags.append(f"Distribution is highly skewed ({skew:.2f}) â€” suggests outlier pull")
 
         sig["flags"] = flags
         signals[col] = sig
@@ -157,16 +158,18 @@ def _statistical(numeric: pd.DataFrame, thresholds: Optional[dict]) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Tier 2 — Control charts (Western Electric rules)
+# Tier 2 â€” Control charts (Western Electric rules)
 # --------------------------------------------------------------------------- #
 
-def _control_charts(numeric: pd.DataFrame) -> dict:
+def _control_charts(numeric: pd.DataFrame, baseline: Optional[pd.DataFrame] = None) -> dict:
     """
-    Apply 4 Western Electric rules to each parameter:
-      Rule 1: 1 point beyond 3σ
+    Apply 4 Western Electric rules to each parameter.
+    If baseline is provided, UCL/LCL are calculated from it;
+    otherwise from the analysis data itself.
+      Rule 1: 1 point beyond 3Ïƒ
       Rule 2: 9 consecutive points on same side of mean
       Rule 3: 6 consecutive points steadily increasing or decreasing
-      Rule 4: 2 of 3 consecutive points beyond 2σ on same side
+      Rule 4: 2 of 3 consecutive points beyond 2Ïƒ on same side
     """
     results = {}
     for col in numeric.columns:
@@ -174,7 +177,14 @@ def _control_charts(numeric: pd.DataFrame) -> dict:
         if len(s) < 20:
             continue
 
-        mean, std = s.mean(), s.std()
+        # Use baseline for limit calculation if available
+        if baseline is not None and col in baseline.columns:
+            bl = baseline[col].dropna()
+            mean = bl.mean() if len(bl) >= 10 else s.mean()
+            std  = bl.std()  if len(bl) >= 10 else s.std()
+        else:
+            mean, std = s.mean(), s.std()
+
         if std == 0:
             continue
 
@@ -184,7 +194,7 @@ def _control_charts(numeric: pd.DataFrame) -> dict:
         # Rule 1
         r1 = (z.abs() > 3).sum()
         if r1:
-            violations.append(f"Rule 1: {int(r1)} point(s) beyond 3σ control limit")
+            violations.append(f"Rule 1: {int(r1)} point(s) beyond 3Ïƒ control limit")
 
         # Rule 2: 9 consecutive same side
         side = (z > 0).astype(int).values
@@ -204,12 +214,12 @@ def _control_charts(numeric: pd.DataFrame) -> dict:
                 violations.append(f"Rule 3: 6 consecutive {direction} points at index {i}")
                 break
 
-        # Rule 4: 2 of 3 beyond 2σ same side
+        # Rule 4: 2 of 3 beyond 2Ïƒ same side
         z_vals = z.values
         for i in range(len(z_vals) - 2):
             w = z_vals[i:i+3]
             if ((w > 2).sum() >= 2) or ((w < -2).sum() >= 2):
-                violations.append(f"Rule 4: 2 of 3 consecutive points beyond 2σ at index {i}")
+                violations.append(f"Rule 4: 2 of 3 consecutive points beyond 2Ïƒ at index {i}")
                 break
 
         results[col] = {
@@ -225,7 +235,7 @@ def _control_charts(numeric: pd.DataFrame) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Tier 3 — Isolation Forest
+# Tier 3 â€” Isolation Forest
 # --------------------------------------------------------------------------- #
 
 def _isolation_forest(numeric: pd.DataFrame) -> dict:
@@ -289,13 +299,13 @@ def _isolation_forest(numeric: pd.DataFrame) -> dict:
         }
 
     except ImportError:
-        return {"error": "scikit-learn not installed — run: pip install scikit-learn"}
+        return {"error": "scikit-learn not installed â€” run: pip install scikit-learn"}
     except Exception as exc:
         return {"error": str(exc)}
 
 
 # --------------------------------------------------------------------------- #
-# Tier 4 — Threshold breach scoring
+# Tier 4 â€” Threshold breach scoring
 # --------------------------------------------------------------------------- #
 
 def _threshold_breaches(numeric: pd.DataFrame, thresholds: dict) -> dict:
