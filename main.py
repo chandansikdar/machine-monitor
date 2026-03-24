@@ -1128,6 +1128,73 @@ with tab_analysis:
             else:
                 date_range = (min_d, max_d)
 
+            # ── Normal operation baseline period ──────────────────────
+            with st.expander("📏 Normal operation baseline period", expanded=False):
+                st.markdown(
+                    "Define the period when the machine was running **normally** — "
+                    "ideally after commissioning and before any faults. "
+                    "This period is used to calculate control chart limits (UCL/LCL)."
+                )
+                _use_baseline = st.checkbox(
+                    "Specify normal operation baseline period",
+                    key="use_baseline_period", value=False
+                )
+                if _use_baseline:
+                    _total_days = (max_d - min_d).days
+                    _rec_min_days = 14
+                    _rec_ideal_days = max(21, int(_total_days * 0.20))
+                    st.caption(
+                        f"📋 **Minimum recommended:** {_rec_min_days} days · "
+                        f"**Ideal:** {_rec_ideal_days} days (20% of your dataset = "
+                        f"{_rec_ideal_days} days) · "
+                        f"Must be within {min_d} – {max_d}"
+                    )
+                    _bl_cols = st.columns(2)
+                    _bl_start = _bl_cols[0].date_input(
+                        "Baseline start",
+                        value=min_d,
+                        min_value=min_d,
+                        max_value=max_d,
+                        key="baseline_start",
+                    )
+                    _bl_end = _bl_cols[1].date_input(
+                        "Baseline end",
+                        value=min(min_d + __import__("datetime").timedelta(days=_rec_ideal_days), max_d),
+                        min_value=min_d,
+                        max_value=max_d,
+                        key="baseline_end",
+                    )
+                    _bl_days = (_bl_end - _bl_start).days
+                    if _bl_days < _rec_min_days:
+                        st.warning(
+                            f"⚠️ Baseline period is only {_bl_days} day(s). "
+                            f"A minimum of {_rec_min_days} days is recommended for reliable "
+                            f"control limits. Short baselines produce wide UCL/LCL bands that "
+                            f"may miss real anomalies."
+                        )
+                    elif _bl_days < _rec_ideal_days:
+                        st.info(
+                            f"ℹ️ {_bl_days} days selected. Acceptable — "
+                            f"{_rec_ideal_days} days or more is ideal for stable limits."
+                        )
+                    else:
+                        st.success(
+                            f"✅ {_bl_days}-day baseline period. "
+                            f"This is sufficient for reliable control limits."
+                        )
+                    baseline_period = (_bl_start, _bl_end)
+                else:
+                    _auto_days = max(14, int((max_d - min_d).days * 0.20))
+                    _auto_end  = min_d + __import__("datetime").timedelta(days=_auto_days)
+                    baseline_period = (min_d, _auto_end)
+                    st.info(
+                        f"ℹ️ **Default baseline will be used:** first {_auto_days} days "
+                        f"of your data ({min_d} – {_auto_end}).  \n"
+                        f"For more accurate control limits, tick the checkbox above and specify "
+                        f"a period when the machine was operating normally."
+                    )
+                st.session_state["baseline_period"] = baseline_period
+
             # Schedule config — only shown when compliance is selected
             schedule = None
             if "Operational Schedule Compliance" in selected_analyses:
@@ -1315,6 +1382,7 @@ with tab_analysis:
                     data                 = _data_to_use,
                     analysis_type        = _atype,
                     date_range           = meta["date_range"],
+                    baseline_period      = meta.get("baseline_period"),
                     extra_context        = meta["extra_context"],
                     schedule             = meta["schedule"] if _atype == "Operational Schedule Compliance" else None,
                     logs_text            = meta["logs_text"],
@@ -1364,6 +1432,7 @@ with tab_analysis:
                         "selected_analyses": selected_analyses,
                         "machine_info":      machine_info,
                         "date_range":        date_range,
+                        "baseline_period":   st.session_state.get("baseline_period", (min_d, min_d)),
                         "extra_context":     extra_context,
                         "schedule":          schedule,
                         "logs_text":         db.get_logs_text(selected_id),
