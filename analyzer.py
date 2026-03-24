@@ -204,6 +204,7 @@ class Analyzer:
         data: pd.DataFrame,
         analysis_type: str,
         date_range: Optional[tuple] = None,
+        baseline_period: Optional[tuple] = None,
         extra_context: str = "",
         schedule: Optional[dict] = None,
         logs_text: str = "",
@@ -213,6 +214,35 @@ class Analyzer:
             filtered  = self._filter_by_date(data, date_range)
             dq_context = data_quality_context or ""
 
+            # ── Baseline period for control limits ──────────────────
+            if baseline_period and baseline_period[0] != baseline_period[1]:
+                baseline_data = self._filter_by_date(data, baseline_period)
+                baseline_note = (
+                    f"Control chart limits (UCL/LCL) are calculated from the specified "
+                    f"normal operation baseline period: "
+                    f"{baseline_period[0]} to {baseline_period[1]} "
+                    f"({len(baseline_data)} readings). "
+                    f"This baseline was defined by the engineer as representing normal operation."
+                )
+            else:
+                # Default: first 20% of full dataset
+                _total = len(data)
+                _n_baseline = max(int(_total * 0.20), min(500, _total))
+                baseline_data = data.iloc[:_n_baseline]
+                _bl_start = data.index.min().date()
+                _bl_end   = baseline_data.index.max().date()
+                baseline_note = (
+                    f"No normal operation baseline was specified by the engineer. "
+                    f"Control chart limits (UCL/LCL) are calculated from the first 20% "
+                    f"of available data ({_bl_start} to {_bl_end}, {_n_baseline} readings) "
+                    f"as the default baseline. For more accurate limits, the engineer should "
+                    f"specify a known normal operation period."
+                )
+            if dq_context:
+                dq_context = baseline_note + "\n\n" + dq_context
+            else:
+                dq_context = baseline_note
+
             # Parse thresholds from machine description
             thresholds = _parse_thresholds(machine_info.get("description", ""))
 
@@ -220,7 +250,7 @@ class Analyzer:
             if analysis_type == "Operational Schedule Compliance":
                 ml_signals = {"tier": 0, "tier_label": "", "data_days": 0, "guidance": "", "statistical": {}}
             else:
-                ml_signals = ml_engine.run(filtered, thresholds)
+                ml_signals = ml_engine.run(filtered, thresholds, baseline_data=baseline_data)
 
             # Schedule compliance stats
             schedule_stats = None
