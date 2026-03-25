@@ -898,6 +898,12 @@ with st.sidebar:
         )
         machine_type = machine_type_sel if machine_type_sel != "-- Select machine type --" else ""
 
+        # Initialise drive_type early so physics badge can reference it
+        # (drive selectbox is rendered below — this reads current session value)
+        drive_type = st.session_state.get("reg_drive_type", "-- Select drive type --")
+        if drive_type == "-- Select drive type --":
+            drive_type = ""
+
         # Physics module status badge
         if machine_type:
             _phys = PHYSICS_MODULE_STATUS.get(machine_type)
