@@ -1476,7 +1476,7 @@ with tab_data:
             _groups = _group_by_unit(numeric_cols)
 
             # Build per-column issue lookup for chart overlays
-            _dq_now = st.session_state.get("last_dq_report", {})
+            _dq_now = st.session_state.get("last_dq_report") or {}
             _dq_issues_by_col = {}
             for _iss in (_dq_now.get("issues") or []):
                 _c2 = _iss.get("col","")
@@ -2146,7 +2146,7 @@ with tab_analysis:
             if not DQ_AVAILABLE:
                 st.warning("Data quality module not loaded — install data_checker.py")
             if st.session_state.get("_pending_analysis"):
-                _dq      = st.session_state.get("last_dq_report", {})
+                _dq      = st.session_state.get("last_dq_report") or {}
                 _meta    = st.session_state.get("_pending_meta", {})
                 _dq_ctx  = st.session_state.get("_dq_ctx", "")
                 _crits   = [x for x in _dq.get("issues",[]) if x["severity"]=="critical"]
@@ -2532,7 +2532,7 @@ with tab_analysis:
                                 _file_info_list[-1] if _file_info_list else {}
                             )
                             _logs_list      = db.get_logs(selected_id) if hasattr(db, "get_logs") else []
-                            _dq_report      = st.session_state.get("last_dq_report", {})
+                            _dq_report      = st.session_state.get("last_dq_report") or {}
                             _corr_log       = st.session_state.get("_correction_log", [])
                             _ml_tier        = st.session_state.get("last_multi_results", {})
                             _tier_label     = ""
@@ -2658,7 +2658,7 @@ with tab_analysis:
                                 "engine": {
                                     "model":            "Claude Sonnet 4 (Anthropic)",
                                     "tier_label":       _tier_label,
-                                    "analysis_types":   list(st.session_state.get("last_multi_results",{}).keys()),
+                                    "analysis_types":   list((st.session_state.get("last_multi_results") or {}).keys()),
                                     "analysis_date":    datetime.now().strftime("%d %b %Y %H:%M"),
                                     "platform_version": "AI Based Machine Analytics v1.0",
                                     "baseline_used":    f"{_bl_period[0]} to {_bl_period[1]}" if _bl_period else "Default (first 20% of dataset)",
