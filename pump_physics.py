@@ -82,6 +82,35 @@ def _interval_h_s(s):
     return 0.25
 
 
+def _running_mask(df, cols, np_d):
+    """
+    Build a boolean mask (True = machine running, False = shutdown/idle).
+
+    Uses the same approach as Phase 1/2: power above 5% of rated (and flow
+    above 5% of rated if available).  Simple, consistent, proven.
+    """
+    rated_kw = np_d.get("rated_power_kw") or 0
+    rated_q  = np_d.get("rated_flow_m3h") or 0
+
+    if cols.get("power"):
+        pw = df[cols["power"]].fillna(0)
+        thresh = 0.05 * rated_kw if rated_kw > 0 else float(pw[pw > 0].quantile(0.10)) if (pw > 0).any() else 0.1
+        mask = pw > thresh
+    elif cols.get("current"):
+        cur = df[cols["current"]].fillna(0)
+        thresh = float(cur[cur > 0].quantile(0.10)) if (cur > 0).any() else 0.1
+        mask = cur > thresh
+    else:
+        return pd.Series(True, index=df.index)
+
+    if cols.get("flow"):
+        fl = df[cols["flow"]].fillna(0)
+        fl_thresh = 0.05 * rated_q if rated_q > 0 else float(fl[fl > 0].quantile(0.10)) if (fl > 0).any() else 0.1
+        mask = mask & (fl > fl_thresh)
+
+    return mask
+
+
 def detect_phase(df):
     cols = {
         "power":   _find(df, KW_POWER),
@@ -261,6 +290,15 @@ def run_phase1(df, cols, np_d):
     res["metrics"]["Total energy (kWh)"]         = energy
     res["metrics"]["Running hours"]              = run_h
 
+    # Report shutdown exclusions (power + flow below running threshold)
+    run_mask = _running_mask(df, cols, np_d)
+    n_shutdown = int((~run_mask).sum())
+    if n_shutdown > 0:
+        shutdown_h = round(n_shutdown * dt_h, 1)
+        res["metrics"]["Confirmed shutdown readings"] = n_shutdown
+        res["metrics"]["Shutdown hours"]              = shutdown_h
+        res["metrics"]["Note"]                        = "All means and trends exclude confirmed shutdown periods"
+
     # Load factor
     if lf > 100:
         res["findings"].append({"finding": "Motor overloaded",
@@ -339,7 +377,10 @@ def run_phase1(df, cols, np_d):
 
     # Current imbalance
     if cols.get("i_a") and cols.get("i_b") and cols.get("i_c"):
-        ia = df[cols["i_a"]].dropna(); ib = df[cols["i_b"]].dropna(); ic = df[cols["i_c"]].dropna()
+        run_mask = _running_mask(df, cols, np_d)
+        ia = df[cols["i_a"]].where(run_mask).dropna()
+        ib = df[cols["i_b"]].where(run_mask).dropna()
+        ic = df[cols["i_c"]].where(run_mask).dropna()
         ci = ia.index.intersection(ib.index).intersection(ic.index)
         if len(ci) >= 10:
             ia_m, ib_m, ic_m = float(ia.loc[ci].mean()), float(ib.loc[ci].mean()), float(ic.loc[ci].mean())
@@ -642,8 +683,11 @@ def run_phase5(df, cols, np_d, bearing_freqs=None):
     n_vanes   = int(np_d.get("n_vanes") or 0)
     rated_spd = np_d.get("rated_speed_rpm") or np_d.get("pump_speed_rpm") or 0
 
-    vibr  = df[cols["vibr"]].dropna()
-    speed = df[cols["speed"]].dropna()
+    # Exclude confirmed shutdown periods (multi-parameter coincidence)
+    run_mask = _running_mask(df, cols, np_d)
+
+    vibr  = df[cols["vibr"]].where(run_mask).dropna()
+    speed = df[cols["speed"]].where(run_mask).dropna()
     if len(vibr) < 10:
         res["warnings"].append("Insufficient vibration data."); return res
 
@@ -845,18 +889,9 @@ def run_time_segmented(df, cols, np_d, baseline_period=None):
     # Window = ~2 days of readings (minimum 12 readings)
     window_sz  = max(12, int(48 / max(dt_h, 0.01)))
 
-    # Determine running mask: exclude shutdown periods
-    rated_kw = np_d.get("rated_power_kw") or 0
-    if cols.get("power"):
-        pw = df[cols["power"]]
-        min_run = 0.05 * rated_kw if rated_kw > 0 else float(pw.dropna().quantile(0.10))
-        running_mask = pw > min_run
-    elif cols.get("current"):
-        cur = df[cols["current"]]
-        min_run = float(cur.dropna().quantile(0.10))
-        running_mask = cur > min_run
-    else:
-        running_mask = pd.Series(True, index=df.index)
+    # Exclude shutdown periods (power + flow below running threshold)
+    # Uses shared _running_mask — same logic as Phase 1/2/5
+    running_mask = _running_mask(df, cols, np_d)
 
     # Parameters to scan \u2014 map logical name to column and label
     scan_params = []
