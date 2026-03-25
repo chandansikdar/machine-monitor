@@ -1053,7 +1053,8 @@ with st.expander("Edit parameter thresholds", expanded=False):
 # Load data from active file if one is selected, otherwise load all files
 _active_file = st.session_state.get(f"active_file_{selected_id}")
 if _active_file and db.get_file_info(selected_id) and len(db.get_file_info(selected_id)) > 1:
-    data = db.get_data_from_file(selected_id, _active_file) or db.get_data(selected_id)
+    _file_data = db.get_data_from_file(selected_id, _active_file)
+    data = _file_data if _file_data is not None else db.get_data(selected_id)
 else:
     data = db.get_data(selected_id)
 
