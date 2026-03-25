@@ -282,6 +282,22 @@ def run_data_quality_checks(
         if len(_sc) >= FROZEN_RUN_MIN:
             _all_frozen[_c] = _all_runs_of_identical(_sc, FROZEN_RUN_MIN)
 
+    # ── Pre-compute shutdown mask for Check 5/7 ──────────────────────────────
+    # Detect confirmed shutdowns: rows where 2+ numeric columns are
+    # simultaneously near-zero (below 5% of column running median).
+    # Shutdown transitions cause huge step changes that are normal
+    # operating events, not data quality issues.
+    _near_zero = pd.DataFrame(index=df.index)
+    for _c in numeric_cols:
+        _s = df[_c].fillna(0).abs()
+        _median = float(_s[_s > 0].median()) if (_s > 0).any() else 1.0
+        _near_zero[_c] = _s < 0.05 * _median
+    _shutdown_mask = _near_zero.sum(axis=1) >= min(2, len(numeric_cols))
+    # Also mark the first running row after each shutdown block (transition edge)
+    _shutdown_edge = _shutdown_mask & ~_shutdown_mask.shift(1, fill_value=False)
+    _startup_edge  = ~_shutdown_mask & _shutdown_mask.shift(1, fill_value=False)
+    _transition_mask = _shutdown_mask | _startup_edge
+
     # ── Per-column checks ─────────────────────────────────────────────────────
     for col in numeric_cols:
         s = df[col]
@@ -366,11 +382,18 @@ def run_data_quality_checks(
                     start_ts=run_start, end_ts=run_end))
 
         # ── 7. Spike / step change ────────────────────────────────────────────
-        q1, q3  = s_clean.quantile(0.25), s_clean.quantile(0.75)
+        # Exclude shutdown transitions — the step from running to off (and back)
+        # is a normal operating event, not a data quality issue.
+        s_running = s_clean.copy()
+        s_running[_transition_mask.reindex(s_running.index, fill_value=False)] = np.nan
+        s_running = s_running.dropna()
+        if len(s_running) < MIN_ROWS_FOR_CHECKS:
+            continue
+        q1, q3  = s_running.quantile(0.25), s_running.quantile(0.75)
         iqr     = q3 - q1
         if iqr > 0:
             step_thresh = iqr * STEP_IQR_MULTIPLIER
-            diffs_s     = s_clean.diff().abs()
+            diffs_s     = s_running.diff().abs()
             spikes      = diffs_s[diffs_s > step_thresh]
             if len(spikes) > 0:
                 worst_spike = spikes.idxmax()
@@ -380,7 +403,7 @@ def run_data_quality_checks(
                     f"{STEP_IQR_MULTIPLIER}x IQR ({step_thresh:.4f} units). "
                     f"Largest: {spikes.max():.4f} units at {_fmt_ts(worst_spike)}. "
                     f"May indicate sensor glitch, process upset, or data logging error.",
-                    len(spikes), len(s_clean),
+                    len(spikes), len(s_running),
                     point_ts=worst_spike,
                     start_ts=spikes.index.min() if len(spikes) > 1 else worst_spike,
                     end_ts=spikes.index.max() if len(spikes) > 1 else worst_spike))
