@@ -1,15 +1,22 @@
 """
 data_checker.py — Data quality module for Machine Analytics
 
-Runs before any statistical analysis. Detects:
-  1. Flatline / stuck sensor   — rolling std dev near zero
-  2. Frozen value runs         — N consecutive identical readings
-  3. Sudden step changes       — single-step jump > N x IQR
-  4. Physical impossibilities  — negative values where impossible
-  5. Missing data gaps         — timestamp gaps larger than expected interval
-  6. Duplicate timestamps      — same timestamp more than once
-  7. High null percentage      — column mostly missing
-  8. Baseline shift            — recent mean shifted by > 3σ from early mean
+Runs before any statistical analysis. Detects issues where sensor data
+is likely invalid, corrupted, or untrustworthy — NOT performance issues.
+
+Checks (7):
+  1. Duplicate timestamps      — same timestamp more than once
+  2. Missing data gaps         — timestamp gaps larger than expected interval
+  3. High null percentage      — column mostly missing
+  4. Physical impossibilities  — values below known physical minimums (e.g. negative pressure)
+  5. Flatline / stuck sensor   — rolling std dev near zero over sustained window
+  6. Frozen value runs         — N consecutive identical readings
+  7. Sudden spike / step       — single-step jump > N x IQR (sensor glitch)
+
+NOT included (these are performance findings, not data quality issues):
+  - Gradual mean shift or trend over time → handled by Trend & Drift Analysis
+  - Efficiency degradation → handled by physics modules (Phase 2/3)
+  - Process upsets → handled by AI anomaly detection
 
 Returns a structured report used by the UI and passed to Claude as context.
 """
@@ -29,8 +36,7 @@ STEP_IQR_MULTIPLIER  = 10      # step > N x IQR = spike
 NULL_PCT_WARN        = 10.0    # % nulls above which column is flagged
 NULL_PCT_CRITICAL    = 30.0    # % nulls above which column is critical
 GAP_MULTIPLIER       = 5       # gap > N x median interval = missing data
-BASELINE_SIGMA       = 3.0     # recent mean > N sigma from early = shift
-WINDOW_FRACTION      = 0.2     # fraction of data for early/recent windows
+
 MIN_ROWS_FOR_CHECKS  = 10      # minimum rows needed to run checks
 
 
@@ -211,7 +217,8 @@ def run_data_quality_checks(
 
     Returns:
         {
-            "issues":  [ {col, check, severity, detail, affected_rows, affected_pct} ],
+            "issues":  [ {col, check, severity, detail, affected_rows, affected_pct,
+                           start_ts, end_ts, point_ts} ],
             "summary": { "total": int, "critical": int, "warning": int, "info": int },
             "passed":  bool,   # True = no critical issues
             "score":   int,    # 0-100 data quality score
@@ -350,22 +357,6 @@ def run_data_quality_checks(
                     point_ts=worst_spike,
                     start_ts=spikes.index.min() if len(spikes) > 1 else worst_spike,
                     end_ts=spikes.index.max() if len(spikes) > 1 else worst_spike))
-
-        # ── 8. Baseline shift ─────────────────────────────────────────────────
-        n_window = max(int(len(s_clean) * WINDOW_FRACTION), MIN_ROWS_FOR_CHECKS)
-        early    = s_clean.iloc[:n_window]
-        recent   = s_clean.iloc[-n_window:]
-        if early.std() > 0:
-            shift_sigma = abs(recent.mean() - early.mean()) / early.std()
-            if shift_sigma > BASELINE_SIGMA:
-                direction = "upward" if recent.mean() > early.mean() else "downward"
-                issues.append(_issue(col, "Baseline shift", WARNING,
-                    f"Recent mean ({recent.mean():.4f}) differs from early mean "
-                    f"({early.mean():.4f}) by {shift_sigma:.1f}σ — a {direction} shift. "
-                    f"May indicate sensor drift, recalibration, process change, or "
-                    f"component replacement. Cross-check with maintenance logs.",
-                    n_window, len(s_clean),
-                    start_ts=recent.index[0], end_ts=recent.index[-1]))
 
     # ── Summary ───────────────────────────────────────────────────────────────
     n_critical = sum(1 for i in issues if i["severity"] == CRITICAL)
