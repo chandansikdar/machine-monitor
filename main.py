@@ -1516,16 +1516,27 @@ with tab_data:
                             _overlay_added = True
 
                         if p_ts is not None:
-                            # Vertical line for point events (spikes)
-                            # Note: add_vline annotation must use flat params, not dict
-                            _fig.add_vline(
-                                x=str(p_ts),
+                            # Use add_shape + add_annotation separately
+                            # (add_vline annotation args are version-dependent)
+                            _fig.add_shape(
+                                type="line",
+                                x0=str(p_ts), x1=str(p_ts),
+                                y0=0, y1=1,
+                                xref="x", yref="paper",
                                 line=dict(color=_mclr, width=1.5, dash="dash"),
-                                annotation_text=_label,
-                                annotation_position="top right",
-                                annotation_font_size=9,
-                                annotation_font_color=_mclr,
-                                annotation_bgcolor="rgba(255,255,255,0.7)",
+                            )
+                            _fig.add_annotation(
+                                x=str(p_ts),
+                                y=0.98,
+                                xref="x", yref="paper",
+                                text=_label,
+                                showarrow=False,
+                                font=dict(size=9, color=_mclr),
+                                bgcolor="rgba(255,255,255,0.75)",
+                                bordercolor=_mclr,
+                                borderwidth=1,
+                                xanchor="left",
+                                yanchor="top",
                             )
                             _overlay_added = True
 
