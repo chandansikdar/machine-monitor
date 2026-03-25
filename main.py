@@ -684,7 +684,7 @@ if "last_multi_results" not in st.session_state:
 # ------------------------------------------------------------------ #
 
 @st.cache_resource
-def get_services(_version=4):
+def get_services(_version=5):
     return Database(), Visualizer()
 
 db, viz = get_services()
@@ -886,21 +886,45 @@ with st.sidebar:
     if file_info:
         st.caption(f"{len(file_info)} file(s) stored for this machine")
         with st.expander("Manage stored files", expanded=len(file_info) > 1):
-            if len(file_info) > 1:
+            # Check for corrected/original pairs
+            _has_corrected = any("_corrected" in f["file"].lower() for f in file_info)
+            _has_original  = any("_corrected" not in f["file"].lower() for f in file_info)
+            if _has_corrected and _has_original:
+                st.info(
+                    "\u2139\ufe0f Both original and corrected files are stored. "
+                    "The corrected file (\U0001f527) contains auto-applied data quality fixes. "
+                    "Analysis always uses the most recently uploaded file unless you delete one."
+                )
+            elif len(file_info) > 1:
                 st.warning(f"{len(file_info)} files stored — duplicates may cause incorrect row counts.")
+
             for _fi in file_info:
-                _fc1, _fc2, _fc3 = st.columns([0.60, 0.20, 0.20])
+                _is_corrected = "_corrected" in _fi["file"].lower()
+                _fc1, _fc2, _fc3 = st.columns([0.62, 0.19, 0.19])
                 with _fc1:
-                    st.caption(f"\U0001f4c4 {_fi['file']}  ·  {_fi['rows']:,} rows  ·  {str(_fi['ingested_at'])[:10]}")
+                    _bg = "#EAF8F4" if _is_corrected else "#F8FAFC"
+                    _bc = "#0F6E56" if _is_corrected else "#CCDDEE"
+                    _tag_html = (
+                        '<span style="color:#0F6E56;font-weight:700">&nbsp;\u00b7&nbsp;\U0001f527 corrected</span>'
+                        if _is_corrected else
+                        '<span style="color:#888">&nbsp;\u00b7&nbsp;\U0001f4c2 original</span>'
+                    )
+                    st.markdown(
+                        f'<div style="background:{_bg};border-left:4px solid {_bc};' +
+                        f'padding:5px 10px;border-radius:3px;margin-bottom:4px;font-size:0.85em;">' +
+                        f'<b>{_fi["file"]}</b>' +
+                        f' &nbsp;\u00b7&nbsp; {_fi["rows"]:,} rows' +
+                        f' &nbsp;\u00b7&nbsp; {str(_fi["ingested_at"])[:10]}' +
+                        _tag_html + '</div>',
+                        unsafe_allow_html=True
+                    )
                 with _fc2:
-                    # Download button — read from stored file path
                     try:
                         import pathlib as _pl
-                        _fp = _pl.Path(_fi.get('file_path', ''))
+                        _fp = _pl.Path(_fi.get("file_path",""))
                         if _fp.exists():
                             _fdata = _fp.read_bytes()
                         else:
-                            # Fallback: export from database
                             import io as _io3
                             _fdf = db.get_data(selected_id)
                             _buf3 = _io3.StringIO()
@@ -909,19 +933,55 @@ with st.sidebar:
                         st.download_button(
                             label="\u2b07\ufe0f",
                             data=_fdata,
-                            file_name=_fi['file'],
+                            file_name=_fi["file"],
                             mime="text/csv",
                             key=f"dl_file_{_fi['file']}",
-                            help="Download this file",
+                            help=f"Download {'corrected' if _is_corrected else 'original'} file",
                         )
                     except Exception:
                         pass
                 with _fc3:
                     if st.button("Delete", key=f"del_file_{_fi['file']}", type="secondary"):
-                        db.delete_file(selected_id, _fi['file'])
+                        db.delete_file(selected_id, _fi["file"])
                         st.success(f"Deleted {_fi['file']}")
                         st.rerun()
             st.markdown("")
+
+            # ── Active file selector ─────────────────────────────────
+            if len(file_info) > 1:
+                st.markdown("---")
+                st.markdown("**📂 Choose which file to use for analysis:**")
+                _file_options = {
+                    _f["file"]: (
+                        f"🔧 {_f['file']} ({_f['rows']:,} rows · corrected)"
+                        if "_corrected" in _f["file"].lower()
+                        else f"📂 {_f['file']} ({_f['rows']:,} rows · original)"
+                    )
+                    for _f in file_info
+                }
+                _current_active = st.session_state.get(
+                    f"active_file_{selected_id}",
+                    file_info[-1]["file"]  # default: most recently ingested
+                )
+                # Ensure current active is still valid
+                if _current_active not in _file_options:
+                    _current_active = file_info[-1]["file"]
+                _selected_file = st.selectbox(
+                    "Active file for analysis",
+                    options=list(_file_options.keys()),
+                    format_func=lambda x: _file_options[x],
+                    index=list(_file_options.keys()).index(_current_active),
+                    key=f"active_file_select_{selected_id}",
+                )
+                if _selected_file != st.session_state.get(f"active_file_{selected_id}"):
+                    st.session_state[f"active_file_{selected_id}"] = _selected_file
+                    st.session_state["last_data"] = None  # force reload
+                    st.session_state["last_multi_results"] = None
+                    st.rerun()
+                st.caption(
+                    f"ℹ️ Analysis will use: **{_current_active}**. "
+                    f"Change selection above to switch files."
+                )
             if st.button("Delete ALL files for this machine", type="primary",
                          key="del_all_files", use_container_width=True):
                 db.delete_all_files(selected_id)
@@ -990,7 +1050,12 @@ with st.expander("Edit parameter thresholds", expanded=False):
         st.success("Thresholds saved.")
         st.rerun()
 
-data = db.get_data(selected_id)
+# Load data from active file if one is selected, otherwise load all files
+_active_file = st.session_state.get(f"active_file_{selected_id}")
+if _active_file and db.get_file_info(selected_id) and len(db.get_file_info(selected_id)) > 1:
+    data = db.get_data_from_file(selected_id, _active_file) or db.get_data(selected_id)
+else:
+    data = db.get_data(selected_id)
 
 tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "History", "Maintenance Logs"])
 
@@ -1704,29 +1769,60 @@ with tab_analysis:
                                     st.session_state["_confirm_pending"] = True
                                     st.rerun()
                             # Confirmation dialog
+                            # Also show download original button alongside download corrected
+                            _raw_data_for_dl = st.session_state.get("last_data") or                                                db.get_data(_meta["machine_info"]["machine_id"])
+                            if _raw_data_for_dl is not None:
+                                import io as _io_orig
+                                _orig_buf = _io_orig.StringIO()
+                                _raw_data_for_dl.to_csv(_orig_buf)
+                                _orig_fname = f"{_meta['machine_info'].get('machine_id','machine')}_original.csv"
+                                st.download_button(
+                                    label="\u2b07\ufe0f Download original file",
+                                    data=_orig_buf.getvalue().encode("utf-8"),
+                                    file_name=_orig_fname,
+                                    mime="text/csv",
+                                    key="dl_original_csv",
+                                    use_container_width=True,
+                                    help="Download the original unmodified data file"
+                                )
+
+                            # Confirmation dialog
                             if st.session_state.get("_confirm_pending"):
                                 st.warning(
-                                    "\u26a0\ufe0f **Confirm:** The corrected data will be used for analysis.  \n"
-                                    "The original uploaded file is unchanged — this only affects the current session.  \n"
-                                    "Download the corrected file too if you want to keep the corrections permanently."
+                                    "\u26a0\ufe0f **Confirm:** The corrected file will be saved to the "
+                                    "database with a **_corrected** tag and used for this analysis.  \n"
+                                    "The original file remains unchanged and available in File Management."
                                 )
                                 _conf1, _conf2 = st.columns(2)
                                 with _conf1:
-                                    if st.button("\u2705 Yes, analyze with corrected data", key="confirm_yes_btn", type="primary", use_container_width=True):
+                                    if st.button("\u2705 Yes, save corrected and analyze",
+                                                 key="confirm_yes_btn", type="primary",
+                                                 use_container_width=True):
                                         _corrected_df = st.session_state.get("_corrected_df")
                                         if _corrected_df is not None:
-                                            # Override last_data and pending_meta with corrected df
+                                            # Save corrected file to DB with _corrected tag
+                                            import io as _io_save
+                                            _machine_id  = _meta["machine_info"].get("machine_id","machine")
+                                            _corr_fname  = f"{_machine_id}_corrected.csv"
+                                            _save_buf    = _io_save.BytesIO(
+                                                st.session_state["_corrected_csv"])
+                                            _save_buf.name = _corr_fname
+                                            _save_res    = db.ingest_file(_save_buf, selected_id)
+                                            if _save_res.get("success"):
+                                                st.session_state["_corrected_saved"] = _corr_fname
+                                            # Run analysis with corrected data
                                             _meta["filtered_data"] = _corrected_df
-                                            st.session_state["_pending_meta"]      = _meta
-                                            st.session_state["_pending_analysis"]  = False
-                                            st.session_state["_confirm_pending"]   = False
-                                            st.session_state["_corrected_csv"]     = None
-                                            _run_analysis(_meta, _dq_ctx, db, selected_id, override_data=_corrected_df)
+                                            st.session_state["_pending_meta"]     = _meta
+                                            st.session_state["_pending_analysis"] = False
+                                            st.session_state["_confirm_pending"]  = False
+                                            st.session_state["_corrected_csv"]    = None
+                                            _run_analysis(_meta, _dq_ctx, db, selected_id,
+                                                          override_data=_corrected_df)
                                 with _conf2:
-                                    if st.button("\u274c Cancel", key="confirm_no_btn", use_container_width=True):
+                                    if st.button("\u274c Cancel", key="confirm_no_btn",
+                                                 use_container_width=True):
                                         st.session_state["_confirm_pending"] = False
                                         st.rerun()
-
                     # ── Warnings ───────────────────────────────────────────────
                     if _warns:
                         st.markdown("")
