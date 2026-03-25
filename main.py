@@ -1428,6 +1428,7 @@ with tab_data:
                     "Vibration / Velocity": [],
                     "Speed / Frequency": [],
                     "Flow / Volume": [],
+                    "Voltage": [],
                     "Energy": [],
                     "Other": [],
                 }
