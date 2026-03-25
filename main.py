@@ -1456,21 +1456,106 @@ with tab_data:
 
             _groups = _group_by_unit(numeric_cols)
 
+            # Build per-column issue lookup for chart overlays
+            _dq_now = st.session_state.get("last_dq_report", {})
+            _dq_issues_by_col = {}
+            for _iss in (_dq_now.get("issues") or []):
+                _c2 = _iss.get("col","")
+                if _c2 not in _dq_issues_by_col:
+                    _dq_issues_by_col[_c2] = []
+                _dq_issues_by_col[_c2].append(_iss)
+
+            # Severity colours for overlays
+            _SEV_FILL = {"critical": "rgba(163,45,45,0.12)", "warning": "rgba(186,117,23,0.10)", "info": "rgba(24,95,165,0.08)"}
+            _SEV_LINE = {"critical": "rgba(163,45,45,0.7)",  "warning": "rgba(186,117,23,0.6)",  "info": "rgba(24,95,165,0.5)"}
+            _SEV_MARKER = {"critical": "red", "warning": "orange", "info": "blue"}
+
+            import plotly.graph_objects as _go2
             for _grp_name, _grp_cols in _groups.items():
                 st.markdown(f"**{_grp_name}**")
-                import plotly.graph_objects as _go2
                 _fig = _go2.Figure()
+
+                # Data traces
                 for _c in _grp_cols:
                     _fig.add_trace(_go2.Scatter(
                         x=data.index, y=data[_c],
                         name=_c, mode="lines", line=dict(width=1.5),
                         hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + _c + ": %{y:.3f}<extra></extra>",
                     ))
+
+                # Overlay DQ issue annotations for columns in this group
+                _overlay_added = False
+                for _c in _grp_cols:
+                    for _iss in _dq_issues_by_col.get(_c, []):
+                        _sev   = _iss.get("severity","warning")
+                        _chk   = _iss.get("check","Issue")
+                        _fill  = _SEV_FILL.get(_sev, "rgba(186,117,23,0.10)")
+                        _line  = _SEV_LINE.get(_sev, "rgba(186,117,23,0.6)")
+                        _mclr  = _SEV_MARKER.get(_sev, "orange")
+                        _label = f"{_chk} ({_c})"
+
+                        s_ts = _iss.get("start_ts")
+                        e_ts = _iss.get("end_ts")
+                        p_ts = _iss.get("point_ts")
+
+                        if s_ts is not None:
+                            # Shaded region for range issues
+                            _x1 = str(e_ts) if e_ts is not None else str(data.index.max())
+                            _fig.add_vrect(
+                                x0=str(s_ts), x1=_x1,
+                                fillcolor=_fill,
+                                line=dict(color=_line, width=1, dash="dot"),
+                                annotation_text=_label,
+                                annotation_position="top left",
+                                annotation=dict(
+                                    font=dict(size=9, color=_mclr),
+                                    bgcolor="rgba(255,255,255,0.7)",
+                                ),
+                                layer="below",
+                            )
+                            _overlay_added = True
+
+                        if p_ts is not None:
+                            # Vertical line for point events (spikes)
+                            _fig.add_vline(
+                                x=str(p_ts),
+                                line=dict(color=_mclr, width=1.5, dash="dash"),
+                                annotation_text=_label,
+                                annotation_position="top right",
+                                annotation=dict(font=dict(size=9, color=_mclr)),
+                            )
+                            _overlay_added = True
+
+                # Also overlay [timestamp] issues (gaps) on all charts
+                for _iss in _dq_issues_by_col.get("[timestamp]", []):
+                    _sev  = _iss.get("severity","warning")
+                    _fill = _SEV_FILL.get(_sev, "rgba(186,117,23,0.10)")
+                    _line = _SEV_LINE.get(_sev, "rgba(186,117,23,0.6)")
+                    _mclr = _SEV_MARKER.get(_sev, "orange")
+                    s_ts  = _iss.get("start_ts")
+                    e_ts  = _iss.get("end_ts")
+                    if s_ts is not None:
+                        _fig.add_vrect(
+                            x0=str(s_ts), x1=str(e_ts) if e_ts else str(data.index.max()),
+                            fillcolor="rgba(100,100,100,0.08)",
+                            line=dict(color="rgba(100,100,100,0.5)", width=1, dash="dot"),
+                            annotation_text="Missing data",
+                            annotation_position="top left",
+                            annotation=dict(font=dict(size=9, color="grey")),
+                            layer="below",
+                        )
+
+                if _overlay_added:
+                    st.caption(
+                        "⚠️ Shaded regions indicate data quality issues detected in this parameter. "
+                        "Review before drawing conclusions from these periods."
+                    )
+
                 _fig.update_layout(
                     title=dict(text=_grp_name, font=dict(size=13)),
                     xaxis_title="Time",
                     yaxis_title=", ".join(_grp_cols[:2]) + (" ..." if len(_grp_cols) > 2 else ""),
-                    height=280,
+                    height=300,
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     margin=dict(l=40, r=20, t=40, b=40),
