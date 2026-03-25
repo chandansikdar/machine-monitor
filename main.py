@@ -992,23 +992,135 @@ with st.sidebar:
         _spec_tab1, _spec_tab2 = st.tabs(["✏️ Enter manually", "📎 Upload file"])
 
         machine_desc = ""
+        _is_pump_reg = (machine_type == "Centrifugal Pump" or
+                        "pump" in (machine_type or "").lower())
+
         with _spec_tab1:
-            machine_desc = st.text_area(
-                "Specifications",
-                placeholder=(
-                    "Rated power: 75 kW\n"
-                    "Rated flow: 185 m\u00b3/h\n"
-                    "Rated head: 45 m\n"
-                    "Rated speed: 1480 RPM\n"
-                    "Full load amps: 138 A\n"
-                    "Motor efficiency: 94.5%\n"
-                    "IE class: IE3\n"
-                    "Commissioning date: 2024-01-15"
-                ),
-                height=130,
-                help="Enter nameplate data, installation details, and any relevant notes.",
-                label_visibility="collapsed",
-            )
+            if _is_pump_reg:
+                # ── Structured nameplate form for pumps ───────────
+                # Tier 1: Recommended — improves accuracy across most phases
+                st.caption(
+                    "\u2b50 Recommended \u2014 improves accuracy for all phases"
+                )
+                _r1, _r2 = st.columns(2)
+                _np_rated_kw   = _r1.number_input("Rated power (kW)", min_value=0.0, value=0.0, step=0.1,
+                                                  format="%.1f", key="np_rated_kw",
+                                                  help="Motor electrical input rating. Enables load factor calculation.")
+                _np_flow       = _r2.number_input("Rated flow (m\u00b3/h)", min_value=0.0, value=0.0,
+                                                  step=0.1, format="%.1f", key="np_flow",
+                                                  help="Design flow at rated duty point. Enables BEP deviation and specific energy.")
+                _r3, _r4 = st.columns(2)
+                _np_head       = _r3.number_input("Rated head (m)", min_value=0.0, value=0.0,
+                                                  step=0.1, format="%.1f", key="np_head",
+                                                  help="Design head at rated duty point. Enables wire-to-water efficiency.")
+                _np_pump_eff   = _r4.number_input("Pump efficiency (%)", min_value=0.0, max_value=100.0,
+                                                  value=0.0, step=0.1, format="%.1f", key="np_pump_eff",
+                                                  help="Hydraulic efficiency at rated point. From datasheet or test report.")
+
+                # Tier 2: Optional — improves accuracy
+                with st.expander("Optional \u2014 improves accuracy", expanded=False):
+                    st.caption("Motor nameplate data. Defaults are used if not entered.")
+                    _o1, _o2, _o3 = st.columns(3)
+                    _np_rated_rpm  = _o1.number_input("Rated speed (RPM)", min_value=0, value=0, step=10,
+                                                      key="np_rated_rpm",
+                                                      help="Full-load speed. Default: estimated from poles and frequency.")
+                    _np_fla        = _o2.number_input("FLA (A)", min_value=0.0, value=0.0, step=0.1,
+                                                      format="%.1f", key="np_fla",
+                                                      help="Full load amps. Used when power column is not available.")
+                    _np_voltage    = _o3.number_input("Voltage (V)", min_value=0.0, value=415.0, step=1.0,
+                                                      format="%.0f", key="np_voltage",
+                                                      help="Rated supply voltage. Default: 415 V.")
+                    _o4, _o5, _o6 = st.columns(3)
+                    _np_pf         = _o4.number_input("Power factor", min_value=0.0, max_value=1.0, value=0.0,
+                                                      step=0.01, format="%.2f", key="np_pf",
+                                                      help="Rated cos \u03c6. Default: 0.85.")
+                    _np_motor_eff  = _o5.number_input("Motor efficiency (%)", min_value=0.0, max_value=100.0,
+                                                      value=0.0, step=0.1, format="%.1f", key="np_motor_eff",
+                                                      help="From test certificate. Default: 93%.")
+                    _np_ie         = _o6.selectbox("IE class", ["--", "IE1", "IE2", "IE3", "IE4"], index=0,
+                                                   key="np_ie", help="Sets voltage imbalance limit. Default: IE3.")
+                    _o7, _o8 = st.columns(2)
+                    _np_poles      = _o7.selectbox("Poles", [0, 2, 4, 6, 8], index=0, key="np_poles",
+                                                   help="Number of motor poles.")
+                    _np_freq       = _o8.selectbox("Frequency (Hz)", [50, 60], index=0, key="np_freq")
+
+                # Tier 3: Advanced diagnostics
+                with st.expander("Advanced diagnostics", expanded=False):
+                    st.caption("Enables BEP deviation, cavitation checks, blade pass frequency, and commissioning comparison.")
+                    _a1, _a2, _a3 = st.columns(3)
+                    _np_bep_flow   = _a1.number_input("BEP flow (m\u00b3/h)", min_value=0.0, value=0.0,
+                                                      step=0.1, format="%.1f", key="np_bep_flow",
+                                                      help="Best efficiency point flow. Often ~90% of rated flow.")
+                    _np_npsh_r     = _a2.number_input("NPSH required (m)", min_value=0.0, value=0.0,
+                                                      step=0.1, format="%.1f", key="np_npsh_r",
+                                                      help="From pump curve. Enables cavitation risk assessment.")
+                    _np_imp_dia    = _a3.number_input("Impeller \u00f8 (mm)", min_value=0, value=0, step=1,
+                                                      key="np_imp_dia",
+                                                      help="Impeller diameter from datasheet.")
+                    _a4, _a5, _a6 = st.columns(3)
+                    _np_vanes      = _a4.number_input("Number of vanes", min_value=0, value=0, step=1,
+                                                      key="np_vanes",
+                                                      help="Vane count. Enables blade pass frequency calculation.")
+                    _np_pump_rpm   = _a5.number_input("Pump speed (RPM)", min_value=0, value=0, step=10,
+                                                      key="np_pump_rpm",
+                                                      help="Only if different from motor speed (gearbox drive).")
+                    _np_comm_kw    = _a6.number_input("Commissioning power (kW)", min_value=0.0, value=0.0,
+                                                      step=0.1, format="%.1f", key="np_comm_kw",
+                                                      help="Power at commissioning. Enables SPI trending.")
+                    _a7, _ = st.columns(2)
+                    _np_density    = _a7.number_input("Fluid density (kg/m\u00b3)", min_value=0.0, value=998.0,
+                                                      step=1.0, format="%.0f", key="np_density",
+                                                      help="998 for water at 20\u00b0C. Adjust for other fluids.")
+
+                _np_notes = st.text_area(
+                    "Additional notes",
+                    placeholder="e.g. Commissioning date: 2024-01-15, seal type: mechanical, bearing: 6308",
+                    height=60, key="np_extra_notes",
+                    label_visibility="collapsed",
+                )
+
+                # Build description string for parse_nameplate() compatibility
+                _desc_parts = []
+                if _np_rated_kw > 0:    _desc_parts.append(f"Rated power: {_np_rated_kw} kW")
+                if _np_rated_rpm > 0:   _desc_parts.append(f"Rated speed: {_np_rated_rpm} RPM")
+                if _np_poles > 0:       _desc_parts.append(f"{_np_poles}-pole")
+                if _np_freq:            _desc_parts.append(f"Frequency: {_np_freq} Hz")
+                if _np_fla > 0:         _desc_parts.append(f"FLA: {_np_fla} A")
+                if _np_voltage > 0:     _desc_parts.append(f"Voltage: {_np_voltage} V")
+                if _np_pf > 0:          _desc_parts.append(f"Power factor: {_np_pf}")
+                if _np_motor_eff > 0:   _desc_parts.append(f"Motor efficiency: {_np_motor_eff}%")
+                if _np_ie != "--":      _desc_parts.append(f"{_np_ie}")
+                if _np_flow > 0:        _desc_parts.append(f"Rated flow: {_np_flow} m3/h")
+                if _np_head > 0:        _desc_parts.append(f"Rated head: {_np_head} m")
+                if _np_pump_eff > 0:    _desc_parts.append(f"Pump efficiency: {_np_pump_eff}%")
+                if _np_bep_flow > 0:    _desc_parts.append(f"BEP flow: {_np_bep_flow} m3/h")
+                if _np_npsh_r > 0:      _desc_parts.append(f"NPSH_r: {_np_npsh_r} m")
+                if _np_imp_dia > 0:     _desc_parts.append(f"Impeller: {_np_imp_dia} mm")
+                if _np_vanes > 0:       _desc_parts.append(f"Vanes: {_np_vanes}")
+                if _np_pump_rpm > 0:    _desc_parts.append(f"Pump speed: {_np_pump_rpm} RPM")
+                if _np_comm_kw > 0:     _desc_parts.append(f"Commissioning power: {_np_comm_kw} kW")
+                if _np_density != 998:  _desc_parts.append(f"Density: {_np_density} kg/m3")
+                if drive_type:          _desc_parts.append(f"Drive type: {drive_type}")
+                if _drive_extra.strip():_desc_parts.append(_drive_extra.strip())
+                if _np_notes.strip():   _desc_parts.append(_np_notes.strip())
+                machine_desc = "\n".join(_desc_parts)
+
+            else:
+                # ── Free text for non-pump machine types ──────────
+                machine_desc = st.text_area(
+                    "Specifications",
+                    placeholder=(
+                        "Rated power: 75 kW\n"
+                        "Rated speed: 1480 RPM\n"
+                        "Full load amps: 138 A\n"
+                        "Motor efficiency: 94.5%\n"
+                        "IE class: IE3\n"
+                        "Commissioning date: 2024-01-15"
+                    ),
+                    height=130,
+                    help="Enter nameplate data, installation details, and any relevant notes.",
+                    label_visibility="collapsed",
+                )
 
         with _spec_tab2:
             st.caption(
@@ -1064,12 +1176,16 @@ with st.sidebar:
 
         if st.button("Register", type="primary", use_container_width=True):
             if machine_type and machine_id:
-                _structured = ""
-                if drive_type:
-                    _structured += f"Drive type: {drive_type}\n"
-                if _drive_extra:
-                    _structured += _drive_extra
-                full_desc = (_structured + machine_desc).strip() if _structured else machine_desc
+                if _is_pump_reg:
+                    # Structured pump form already includes drive type and extras
+                    full_desc = machine_desc
+                else:
+                    _structured = ""
+                    if drive_type:
+                        _structured += f"Drive type: {drive_type}\n"
+                    if _drive_extra:
+                        _structured += _drive_extra
+                    full_desc = (_structured + machine_desc).strip() if _structured else machine_desc
                 if thresh_text and thresh_text.strip():
                     full_desc = full_desc + "\n\n=== PARAMETER THRESHOLDS ===\n" + thresh_text.strip()
                 db.register_machine(machine_id.strip(), machine_type.strip(), full_desc)
