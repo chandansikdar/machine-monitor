@@ -2429,15 +2429,20 @@ with tab_analysis:
                     _n_crit_ph = sum(1 for f in _all_f if f.get("severity") == "critical")
                     _n_warn_ph = sum(1 for f in _all_f if f.get("severity") == "warning")
                     _ph_label  = (f"  ·  {_n_crit_ph} critical" if _n_crit_ph else "") +                                  (f"  ·  {_n_warn_ph} warning(s)" if _n_warn_ph else "") +                                  ("  ·  No issues" if not _all_f else "")
-                    _ph_nums   = sorted(_phys_res["phases"].keys())
+                    _ph_nums   = sorted(k for k in _phys_res["phases"].keys() if isinstance(k, int))
                     _ph_names  = {1:"Power Baseline",2:"Hydraulic Efficiency",
-                                  3:"Full Duty Point",4:"Thermodynamic",5:"Mechanical"}
+                                  3:"Full Duty Point",4:"Thermodynamic",5:"Mechanical",
+                                  "TS":"Time-Segmented Events"}
+                    _has_ts    = "TS" in _phys_res["phases"]
+                    _ts_label  = " + Event Detection" if _has_ts else ""
                     with st.expander(
-                        f"🔧 Pump physics — Phases {_ph_nums}{_ph_label}",
+                        f"\U0001f527 Pump physics \u2014 Phases {_ph_nums}{_ts_label}{_ph_label}",
                         expanded=(_n_crit_ph > 0)
                     ):
-                        for _ph_n, _ph_r in sorted(_phys_res["phases"].items()):
-                            st.markdown(f"**Phase {_ph_n} — {_ph_r['name']}**")
+                        for _ph_n, _ph_r in sorted(_phys_res["phases"].items(),
+                                                    key=lambda x: (isinstance(x[0], str), x[0])):
+                            _ph_display = f"Phase {_ph_n} \u2014 {_ph_r['name']}" if isinstance(_ph_n, int) else _ph_r.get("name", str(_ph_n))
+                            st.markdown(f"**{_ph_display}**")
                             # Warnings
                             for _w in _ph_r.get("warnings", []):
                                 st.warning(_w)
