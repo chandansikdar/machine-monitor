@@ -1,5 +1,5 @@
 """
-main.py — Machine Continuous Monitoring Analytics
+main.py â€” Machine Continuous Monitoring Analytics
 Run with:  streamlit run main.py
 """
 
@@ -42,6 +42,13 @@ except Exception:
     def fix_isolated_spikes(df,col,**kw): return {"corrected_df":df,"changes":0,"description":"","method":""}
     def fix_physical_impossibles(df,col,**kw): return {"corrected_df":df,"changes":0,"description":"","method":""}
     def fix_flatline(df,col,**kw): return {"corrected_df":df,"changes":0,"description":"","method":""}
+try:
+    from pump_physics import detect_phase, check_phase4_viability, phase1_power_baseline, phase2_hydraulic_efficiency
+    PUMP_PHYSICS_AVAILABLE = True
+except Exception:
+    PUMP_PHYSICS_AVAILABLE = False
+    def detect_phase(df): return {"phases":[],"highest_phase":0}
+    def check_phase4_viability(df,cols,**kw): return {"viable":False,"level":"not_viable","message":"","recommendation":""}
 from database import Database
 from visualizer import Visualizer
 
@@ -89,7 +96,7 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         (df.index.hour < hour_end)
     )
 
-    # Build shading shapes — find contiguous blocks
+    # Build shading shapes â€” find contiguous blocks
     def _blocks(mask):
         blocks = []
         in_block = False
@@ -127,7 +134,7 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
             layer="below"
         ))
 
-    # Main trace — colour points by schedule status
+    # Main trace â€” colour points by schedule status
     colors = ["rgba(0,150,60,0.8)" if v else "rgba(200,40,40,0.8)"
               for v in in_schedule]
 
@@ -176,7 +183,7 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
 
     fig.update_layout(
         title=dict(
-            text=f"{col_label} — Schedule Compliance ({source})",
+            text=f"{col_label} â€” Schedule Compliance ({source})",
             y=0.97,
             x=0,
             xanchor="left",
@@ -239,7 +246,7 @@ st.markdown("""
 
 
 # ------------------------------------------------------------------ #
-# Helper — render a complete insights block
+# Helper â€” render a complete insights block
 # (defined first so it can be called from anywhere below)
 # ------------------------------------------------------------------ #
 
@@ -251,7 +258,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     tier       = insights.get("_ml_tier", 0)
     tier_label = insights.get("_ml_tier_label", "")
     if tier_label:
-        st.caption(f"Analysis engine — Tier {tier}: {tier_label}")
+        st.caption(f"Analysis engine â€” Tier {tier}: {tier_label}")
 
     # Assign score early so it's available for breakdown check
     score = insights.get("health_score")
@@ -260,8 +267,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     if analysis_type not in ("Operational Schedule Compliance",) and score is not None:
         breakdown = insights.get("score_breakdown", [])
         if breakdown:
-            with st.expander("Score explanation — what drove this score", expanded=True):
-                impact_icon  = {"positive": "↑", "negative": "↓", "neutral": "—"}
+            with st.expander("Score explanation â€” what drove this score", expanded=True):
+                impact_icon  = {"positive": "â†‘", "negative": "â†“", "neutral": "â€”"}
                 impact_color = {"positive": "green", "negative": "red", "neutral": "gray"}
                 weight_style = {"high": "font-weight:600", "medium": "", "low": "color:#888"}
 
@@ -269,7 +276,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 for f in breakdown:
                     impact  = f.get("impact", "neutral")
                     weight  = f.get("weight", "low")
-                    icon    = impact_icon.get(impact, "—")
+                    icon    = impact_icon.get(impact, "â€”")
                     color   = impact_color.get(impact, "gray")
                     wstyle  = weight_style.get(weight, "")
                     factor  = f.get("factor", "")
@@ -355,7 +362,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 (c for c in data.columns if "current" in c.lower() or "amp" in c.lower()),
                 None
             )
-            voltage = 415  # standard 3-phase voltage (V) — adjust if needed
+            voltage = 415  # standard 3-phase voltage (V) â€” adjust if needed
             pf      = 0.85  # typical power factor for induction motor
 
             # Get currency settings from schedule (set in schedule config)
@@ -412,7 +419,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 )
 
             elif power_col:
-                # Use power (kW) column — integrate over time
+                # Use power (kW) column â€” integrate over time
                 avg_power_kw  = float(data[power_col].mean())
                 total_kwh     = avg_power_kw * total_hours
                 off_kwh       = total_kwh * (off_pct / 100) if off_pct else 0
@@ -474,7 +481,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 if voltage_col and pf_col:
                     avg_voltage = float(off_run_data[voltage_col].mean()) if len(off_run_data) > 0 else float(_df[voltage_col].mean())
                     avg_pf      = float(off_run_data[pf_col].mean()) if len(off_run_data) > 0 else float(_df[pf_col].mean())
-                    assumptions = "No assumptions — V, I and PF all measured from off-schedule running periods."
+                    assumptions = "No assumptions â€” V, I and PF all measured from off-schedule running periods."
                 elif voltage_col:
                     avg_voltage = float(off_run_data[voltage_col].mean()) if len(off_run_data) > 0 else float(_df[voltage_col].mean())
                     avg_pf      = pf
@@ -486,7 +493,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 else:
                     avg_voltage = voltage
                     avg_pf      = pf
-                    assumptions = f"Both assumed — {voltage} V, PF={pf}. Add voltage and power_factor columns for higher accuracy."
+                    assumptions = f"Both assumed â€” {voltage} V, PF={pf}. Add voltage and power_factor columns for higher accuracy."
                 power_kw   = (1.732 * avg_voltage * avg_current * avg_pf) / 1000
                 off_kwh    = power_kw * off_run_hours
                 cost_saved = off_kwh * rate_kwh
@@ -509,9 +516,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     f"Method: 3-phase power formula on off-schedule running readings only.  \n"
                     f"---  \n"
                     f"Off-schedule running readings (current > {_run_thresh} A): **{len(off_run_data):,}** ({current_src})  \n"
-                    f"Avg current (off-schedule running): {avg_current:.1f} A — from `{current_col}`  \n"
-                    f"Voltage: {avg_voltage:.0f} V — {v_source}  \n"
-                    f"Power factor: {avg_pf:.2f} — {pf_source}  \n"
+                    f"Avg current (off-schedule running): {avg_current:.1f} A â€” from `{current_col}`  \n"
+                    f"Voltage: {avg_voltage:.0f} V â€” {v_source}  \n"
+                    f"Power factor: {avg_pf:.2f} â€” {pf_source}  \n"
                     f"---  \n"
                     f"Power = 1.732 x {avg_voltage:.0f}V x {avg_current:.1f}A x {avg_pf:.2f} / 1000 = {power_kw:.1f} kW  \n"
                     f"Off-schedule running hours: {off_run_hours:.1f} h  \n"
@@ -528,22 +535,22 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         unsafe_allow_html=True
                     )
             else:
-                # No current column — show hours breakdown instead
+                # No current column â€” show hours breakdown instead
                 if kpis:
                     cols = st.columns(min(len(kpis), 4))
                     for i, kpi in enumerate(kpis[:4]):
                         status    = kpi.get("status", "normal")
                         delta_map = {"normal": None, "warning": "Warning", "critical": "Critical"}
                         delta_col = "inverse" if status == "critical" else "off" if status == "warning" else "normal"
-                        cols[i].metric(kpi.get("label","—"), kpi.get("value","—"),
+                        cols[i].metric(kpi.get("label","â€”"), kpi.get("value","â€”"),
                                        delta=delta_map.get(status), delta_color=delta_col)
     elif kpis:
         n_cols = min(len(kpis), 4)
         cols   = st.columns(n_cols)
         for i, kpi in enumerate(kpis[:4]):
             status = kpi.get("status", "normal")
-            value  = kpi.get("value", "—")
-            label  = kpi.get("label", "—")
+            value  = kpi.get("value", "â€”")
+            label  = kpi.get("label", "â€”")
             status_colour = {"normal": "green", "warning": "orange", "critical": "red"}
             colour = status_colour.get(status, "gray")
             cols[i].metric(label, f":{colour}[{value}]")
@@ -555,7 +562,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     if anomalies:
         st.subheader("Anomalies detected")
         for a in anomalies:
-            st.warning(f"**{a.get('parameter', '—')}** — {a.get('description', '')}")
+            st.warning(f"**{a.get('parameter', 'â€”')}** â€” {a.get('description', '')}")
 
     key_points = insights.get("insights", [])
     if key_points:
@@ -585,7 +592,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     if not isinstance(_cd.index, _pd.DatetimeIndex):
                         _cd.index = _pd.to_datetime(_cd.index)
                     _numeric = _cd.select_dtypes(include="number").columns.tolist()[:6]
-                    st.caption("UCL/LCL = mean ±3σ (red).  UWL/LWL = mean ±2σ (amber dashed).  Red circles = |Z|>3 anomalies.  Purple dotted = engineering thresholds.")
+                    st.caption("UCL/LCL = mean Â±3Ïƒ (red).  UWL/LWL = mean Â±2Ïƒ (amber dashed).  Red circles = |Z|>3 anomalies.  Purple dotted = engineering thresholds.")
                     for _col in _numeric:
                         _s  = _cd[_col].dropna()
                         _mu = float(_s.mean()); _sd = float(_s.std()) or 1e-9
@@ -600,11 +607,11 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         _fig.add_hrect(y0=_lwl, y1=_uwl, fillcolor="rgba(230,126,34,0.07)", line_width=0, layer="below")
                         # Limit lines as full-width scatter traces (same x type as data)
                         for _yv,_lc,_ld,_lw,_ln in [
-                            (_ucl,"#C0392B","solid",1.5,f"UCL {_ucl:.3f} (mean+3σ)"),
-                            (_uwl,"#E67E22","dash", 1.0,f"UWL {_uwl:.3f} (mean+2σ)"),
+                            (_ucl,"#C0392B","solid",1.5,f"UCL {_ucl:.3f} (mean+3Ïƒ)"),
+                            (_uwl,"#E67E22","dash", 1.0,f"UWL {_uwl:.3f} (mean+2Ïƒ)"),
                             (_mu, "#2C3E50","solid",1.5,f"Mean {_mu:.3f}"),
-                            (_lwl,"#E67E22","dash", 1.0,f"LWL {_lwl:.3f} (mean-2σ)"),
-                            (_lcl,"#C0392B","solid",1.5,f"LCL {_lcl:.3f} (mean-3σ)"),
+                            (_lwl,"#E67E22","dash", 1.0,f"LWL {_lwl:.3f} (mean-2Ïƒ)"),
+                            (_lcl,"#C0392B","solid",1.5,f"LCL {_lcl:.3f} (mean-3Ïƒ)"),
                         ]:
                             _fig.add_trace(_go.Scatter(
                                 x=[_xi[0], _xi[-1]], y=[_yv, _yv],
@@ -640,7 +647,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                             ))
                         _cl = _col.replace("_"," ").title()
                         _fig.update_layout(
-                            title=dict(text=f"Control chart — {_cl}", font=dict(size=14)),
+                            title=dict(text=f"Control chart â€” {_cl}", font=dict(size=14)),
                             xaxis_title="Time", yaxis_title=_cl,
                             legend=dict(orientation="h", yanchor="top", y=-0.22,
                                         xanchor="left", x=0, bgcolor="rgba(0,0,0,0)", borderwidth=0),
@@ -711,7 +718,7 @@ with st.sidebar:
         machine_id = st.text_input("Machine ID", placeholder="e.g. COMP-001")
         machine_desc = st.text_area(
             "Specs / notes",
-            placeholder="Rated power: 75 kW\nFlow: 500 m³/h\nRPM: 1480",
+            placeholder="Rated power: 75 kW\nFlow: 500 mÂ³/h\nRPM: 1480",
             height=90,
         )
 
@@ -770,8 +777,8 @@ with st.sidebar:
         st.session_state["_confirm_pending"]    = False
         st.session_state["_last_active_machine"] = selected_id
 
-    # ── Delete machine ──────────────────────────────────────────────
-    with st.expander("🗑️ Delete this machine", expanded=False):
+    # â”€â”€ Delete machine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    with st.expander("ðŸ—‘ï¸ Delete this machine", expanded=False):
         st.warning(
             f"Permanently delete **{selected_id}** and all its data, "
             "analysis history and maintenance logs. This cannot be undone."
@@ -783,7 +790,7 @@ with st.sidebar:
         )
         if _confirmed:
             if st.button(
-                f"🗑️ Delete {selected_id} permanently",
+                f"ðŸ—‘ï¸ Delete {selected_id} permanently",
                 type="primary",
                 key=f"btn_delete_{selected_id}",
                 use_container_width=True,
@@ -796,7 +803,7 @@ with st.sidebar:
                     st.success(f"{selected_id} deleted.")
                     st.rerun()
                 else:
-                    st.error("Delete failed — check logs.")
+                    st.error("Delete failed â€” check logs.")
 
     st.divider()
 
@@ -807,7 +814,7 @@ with st.sidebar:
         help="Any column named timestamp/date/time is auto-detected as the time axis.",
     )
     if uploaded_file:
-        # ── Timestamp format pre-check ──────────────────────────────
+        # â”€â”€ Timestamp format pre-check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if TS_CHECK_AVAILABLE:
             import tempfile, os as _os
             _ext  = uploaded_file.name.split(".")[-1]
@@ -820,30 +827,30 @@ with st.sidebar:
 
             if not _ts_check["parseable"]:
                 st.warning(
-                    f"⚠️ **Timestamp format issue detected** in column `{_ts_check['col'] or 'unknown'}`  \n"
+                    f"âš ï¸ **Timestamp format issue detected** in column `{_ts_check['col'] or 'unknown'}`  \n"
                     f"{_ts_check['suggestion']}"
                 )
                 if _ts_check["sample_raw"]:
                     st.caption(f"Sample raw values: {', '.join(_ts_check['sample_raw'][:3])}")
                 if _ts_check.get("corrected_df") is not None:
                     st.success(
-                        "✅ Timestamps can be auto-corrected to YYYY-MM-DD HH:MM:SS format.  \n"
+                        "âœ… Timestamps can be auto-corrected to YYYY-MM-DD HH:MM:SS format.  \n"
                         "Click **Fix timestamps and ingest** to correct and load in one step, "
                         "or download the corrected file to keep a copy."
                     )
                     _ts_buf = _ts_check["corrected_df"].to_csv(index=False).encode("utf-8")
                     _fix_col, _dl_col = st.columns(2)
                     with _fix_col:
-                        if st.button("✅ Fix timestamps and ingest", type="primary",
+                        if st.button("âœ… Fix timestamps and ingest", type="primary",
                                      key="fix_ts_ingest_btn", use_container_width=True):
-                            with st.spinner("Correcting timestamps and ingesting…"):
+                            with st.spinner("Correcting timestamps and ingestingâ€¦"):
                                 import io as _io2
                                 _fixed_buf = _io2.BytesIO(_ts_buf)
                                 _fixed_buf.name = uploaded_file.name.rsplit(".",1)[0] + "_fixed.csv"
                                 _res2 = db.ingest_file(_fixed_buf, selected_id)
                             if _res2["success"]:
                                 st.success(
-                                    f"✓ {_res2['rows']:,} rows ingested with corrected timestamps."
+                                    f"âœ“ {_res2['rows']:,} rows ingested with corrected timestamps."
                                 )
                                 st.caption("Columns: " + ", ".join(_res2["columns"]))
                                 st.rerun()
@@ -851,7 +858,7 @@ with st.sidebar:
                                 st.error(f"Ingest failed: {_res2['error']}")
                     with _dl_col:
                         st.download_button(
-                            label="⬇️ Download corrected file",
+                            label="â¬‡ï¸ Download corrected file",
                             data=_ts_buf,
                             file_name=f"{uploaded_file.name.rsplit('.',1)[0]}_ts_fixed.csv",
                             mime="text/csv",
@@ -863,13 +870,13 @@ with st.sidebar:
                     st.info("Auto-correction was not possible. Please fix the timestamp column manually before uploading.")
             else:
                 if _ts_check["sample_raw"]:
-                    st.caption(f"✅ Timestamps OK · sample: {_ts_check['sample_raw'][0]}")
+                    st.caption(f"âœ… Timestamps OK Â· sample: {_ts_check['sample_raw'][0]}")
 
         if st.button("Ingest", use_container_width=True):
-            with st.spinner("Reading and storing data…"):
+            with st.spinner("Reading and storing dataâ€¦"):
                 result = db.ingest_file(uploaded_file, selected_id)
             if result["success"]:
-                st.success(f"✓ {result['rows']:,} rows ingested")
+                st.success(f"âœ“ {result['rows']:,} rows ingested")
                 st.caption("Columns: " + ", ".join(result["columns"]))
                 st.rerun()
             else:
@@ -880,13 +887,13 @@ with st.sidebar:
         st.caption(f"{len(file_info)} file(s) stored for this machine")
         with st.expander("Manage stored files", expanded=len(file_info) > 1):
             if len(file_info) > 1:
-                st.warning(f"{len(file_info)} files stored — duplicates may cause incorrect row counts.")
+                st.warning(f"{len(file_info)} files stored â€” duplicates may cause incorrect row counts.")
             for _fi in file_info:
                 _fc1, _fc2, _fc3 = st.columns([0.60, 0.20, 0.20])
                 with _fc1:
-                    st.caption(f"📄 {_fi['file']}  ·  {_fi['rows']:,} rows  ·  {str(_fi['ingested_at'])[:10]}")
+                    st.caption(f"ðŸ“„ {_fi['file']}  Â·  {_fi['rows']:,} rows  Â·  {str(_fi['ingested_at'])[:10]}")
                 with _fc2:
-                    # Download button — read from stored file path
+                    # Download button â€” read from stored file path
                     try:
                         import pathlib as _pl
                         _fp = _pl.Path(_fi.get('file_path', ''))
@@ -900,7 +907,7 @@ with st.sidebar:
                             _fdf.to_csv(_buf3)
                             _fdata = _buf3.getvalue().encode("utf-8")
                         st.download_button(
-                            label="⬇️",
+                            label="â¬‡ï¸",
                             data=_fdata,
                             file_name=_fi['file'],
                             mime="text/csv",
@@ -931,11 +938,11 @@ with st.sidebar:
     )
     if log_file:
         if st.button("Read & store log", use_container_width=True):
-            with st.spinner("Reading log file…"):
+            with st.spinner("Reading log fileâ€¦"):
                 result = read_log(log_file, api_key=os.getenv("ANTHROPIC_API_KEY", ""))
             if result["success"]:
                 db.save_log(selected_id, log_file.name, result["method"], result["text"])
-                st.success(f"Log stored — {result['method']} ({len(result['text'])} chars)")
+                st.success(f"Log stored â€” {result['method']} ({len(result['text'])} chars)")
                 st.rerun()
             else:
                 st.error(result["error"])
@@ -950,7 +957,7 @@ with st.sidebar:
 # ================================================================== #
 
 machine_info = db.get_machine_info(selected_id)
-st.title(f"{machine_info['machine_type']}  ·  {selected_id}")
+st.title(f"{machine_info['machine_type']}  Â·  {selected_id}")
 if machine_info.get("description"):
     st.caption(machine_info["description"])
 
@@ -989,7 +996,7 @@ tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "H
 
 
 # ------------------------------------------------------------------ #
-# TAB 1 — Data preview
+# TAB 1 â€” Data preview
 # ------------------------------------------------------------------ #
 
 with tab_data:
@@ -1013,7 +1020,7 @@ with tab_data:
         if numeric_cols:
             st.subheader("Sensor overview")
 
-            # ── Auto-group columns by unit type ──────────────────────
+            # â”€â”€ Auto-group columns by unit type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             def _group_by_unit(cols):
                 groups = {
                     "Pressure": [],
@@ -1076,19 +1083,77 @@ with tab_data:
 
 
 # ------------------------------------------------------------------ #
-# TAB 2 — Analysis
+# TAB 2 â€” Analysis
 # ------------------------------------------------------------------ #
 
 with tab_analysis:
     if data is None or data.empty:
         st.info("Upload data first (sidebar), then run an analysis.")
     else:
+        # â”€â”€ Pump physics viability check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        _mtype = machine_info.get("machine_type","").lower()
+        _is_pump = any(kw in _mtype for kw in ["pump","centrifugal pump","water pump"])
+        if _is_pump and data is not None and not data.empty and PUMP_PHYSICS_AVAILABLE:
+            _phase_info = detect_phase(data)
+            _phases = _phase_info.get("phases",[])
+            if _phases:
+                with st.expander(f"ðŸ”§ Pump physics â€” Phase {max(_phases)} available", expanded=False):
+                    _pcols = _phase_info["cols"]
+                    # Show detected phases
+                    _phase_labels = {
+                        1: "Power Baseline",
+                        2: "Hydraulic Efficiency",
+                        3: "Full Duty Point",
+                        4: "Thermodynamic Efficiency",
+                        5: "Mechanical Signature",
+                    }
+                    _phase_colours = {1:"ðŸ”µ",2:"ðŸŸ¢",3:"ðŸŸ£",4:"ðŸŸ ",5:"ðŸŸ¢"}
+                    _col_a, _col_b = st.columns(2)
+                    for _ph in [1,2,3,4,5]:
+                        _active = _ph in _phases
+                        _icon = "âœ…" if _active else "âŒ"
+                        _col = _col_a if _ph <= 3 else _col_b
+                        _col.caption(f"{_icon} Phase {_ph}: {_phase_labels[_ph]}")
+
+                    # Phase 4 viability check
+                    if _phase_info["has_pressure"] and _phase_info["has_temp"]:
+                        st.markdown("---")
+                        st.markdown("**Phase 4 â€” Thermodynamic method viability:**")
+                        _viab = check_phase4_viability(data, _pcols)
+                        _lvl = _viab.get("level","not_viable")
+                        if _lvl == "viable":
+                            st.success(_viab["message"])
+                        elif _lvl == "marginal":
+                            st.warning(_viab["message"])
+                        else:
+                            st.error(_viab["message"])
+                        if _viab.get("recommendation"):
+                            st.info(f"ðŸ’¡ {_viab['recommendation']}")
+                    elif _phase_info["has_pressure"] and not _phase_info["has_temp"]:
+                        st.markdown("---")
+                        st.caption(
+                            "â„¹ï¸ Phase 4 viability check: add fluid inlet and outlet "
+                            "temperature columns (keywords: temp_in, temp_out) to assess "
+                            "whether the thermodynamic method is viable for this pump."
+                        )
+            else:
+                with st.expander("ðŸ”§ Pump physics â€” no physics columns detected", expanded=False):
+                    st.info(
+                        "Machine type is pump but no physics-relevant columns were detected.  \n"
+                        "Add columns with these keywords to activate pump physics:  \n"
+                        "- **Phase 1:** `current`, `power_kw`  \n"
+                        "- **Phase 2:** + `flow`  \n"
+                        "- **Phase 3:** + `suction_pressure`, `discharge_pressure`  \n"
+                        "- **Phase 4:** + `temp_in`, `temp_out`  \n"
+                        "- **Phase 5:** + `vibration`, `rpm`"
+                    )
+
         left, right = st.columns([1, 3])
 
         with left:
             selected_analyses = []
 
-            # ── Primary analyses ──────────────────────────────────
+            # â”€â”€ Primary analyses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             with st.expander("Primary analyses", expanded=True):
                 primary_options = [
                     ("Overall Health Assessment",      "Comprehensive health score, KPIs, anomalies and narrative"),
@@ -1100,7 +1165,7 @@ with tab_analysis:
                     if st.checkbox(name, value=False, key=f"chk_{name}", help=desc):
                         selected_analyses.append(name)
 
-            # ── Additional analytics ───────────────────────────
+            # â”€â”€ Additional analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             with st.expander("Additional analytics", expanded=False):
                 st.caption("Use for focused investigation of a specific relationship or pattern.")
                 additional_options = [
@@ -1112,7 +1177,7 @@ with tab_analysis:
                     if st.checkbox(name, value=False, key=f"chk_{name}", help=desc):
                         selected_analyses.append(name)
 
-            # Keep backward compat — use first selected for schedule UI trigger
+            # Keep backward compat â€” use first selected for schedule UI trigger
             analysis_type = selected_analyses[0] if selected_analyses else ""
 
             min_d, max_d = data.index.min().date(), data.index.max().date()
@@ -1128,10 +1193,10 @@ with tab_analysis:
             else:
                 date_range = (min_d, max_d)
 
-            # ── Normal operation baseline period ──────────────────────
-            with st.expander("📏 Normal operation baseline period", expanded=False):
+            # â”€â”€ Normal operation baseline period â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            with st.expander("ðŸ“ Normal operation baseline period", expanded=False):
                 st.markdown(
-                    "Define the period when the machine was running **normally** — "
+                    "Define the period when the machine was running **normally** â€” "
                     "ideally after commissioning and before any faults. "
                     "This period is used to calculate control chart limits (UCL/LCL)."
                 )
@@ -1144,10 +1209,10 @@ with tab_analysis:
                     _rec_min_days = 14
                     _rec_ideal_days = max(21, int(_total_days * 0.20))
                     st.caption(
-                        f"📋 **Minimum recommended:** {_rec_min_days} days · "
+                        f"ðŸ“‹ **Minimum recommended:** {_rec_min_days} days Â· "
                         f"**Ideal:** {_rec_ideal_days} days (20% of your dataset = "
-                        f"{_rec_ideal_days} days) · "
-                        f"Must be within {min_d} – {max_d}"
+                        f"{_rec_ideal_days} days) Â· "
+                        f"Must be within {min_d} â€“ {max_d}"
                     )
                     _bl_cols = st.columns(2)
                     _bl_start = _bl_cols[0].date_input(
@@ -1167,19 +1232,19 @@ with tab_analysis:
                     _bl_days = (_bl_end - _bl_start).days
                     if _bl_days < _rec_min_days:
                         st.warning(
-                            f"⚠️ Baseline period is only {_bl_days} day(s). "
+                            f"âš ï¸ Baseline period is only {_bl_days} day(s). "
                             f"A minimum of {_rec_min_days} days is recommended for reliable "
                             f"control limits. Short baselines produce wide UCL/LCL bands that "
                             f"may miss real anomalies."
                         )
                     elif _bl_days < _rec_ideal_days:
                         st.info(
-                            f"ℹ️ {_bl_days} days selected. Acceptable — "
+                            f"â„¹ï¸ {_bl_days} days selected. Acceptable â€” "
                             f"{_rec_ideal_days} days or more is ideal for stable limits."
                         )
                     else:
                         st.success(
-                            f"✅ {_bl_days}-day baseline period. "
+                            f"âœ… {_bl_days}-day baseline period. "
                             f"This is sufficient for reliable control limits."
                         )
                     baseline_period = (_bl_start, _bl_end)
@@ -1188,14 +1253,14 @@ with tab_analysis:
                     _auto_end  = min_d + __import__("datetime").timedelta(days=_auto_days)
                     baseline_period = (min_d, _auto_end)
                     st.info(
-                        f"ℹ️ **Default baseline will be used:** first {_auto_days} days "
-                        f"of your data ({min_d} – {_auto_end}).  \n"
+                        f"â„¹ï¸ **Default baseline will be used:** first {_auto_days} days "
+                        f"of your data ({min_d} â€“ {_auto_end}).  \n"
                         f"For more accurate control limits, tick the checkbox above and specify "
                         f"a period when the machine was operating normally."
                     )
                 st.session_state["baseline_period"] = baseline_period
 
-            # Schedule config — only shown when compliance is selected
+            # Schedule config â€” only shown when compliance is selected
             schedule = None
             if "Operational Schedule Compliance" in selected_analyses:
                 with st.expander("Schedule configuration", expanded=True):
@@ -1219,46 +1284,46 @@ with tab_analysis:
                     )
                     st.markdown("**Energy cost settings**")
                     CURRENCIES = [
-                        "$ — USD (US Dollar)",
-                        "€ — EUR (Euro)",
-                        "£ — GBP (British Pound)",
-                        "¥ — JPY (Japanese Yen)",
-                        "¥ — CNY (Chinese Yuan)",
-                        "₹ — INR (Indian Rupee)",
-                        "CHF — CHF (Swiss Franc)",
-                        "A$ — AUD (Australian Dollar)",
-                        "C$ — CAD (Canadian Dollar)",
-                        "S$ — SGD (Singapore Dollar)",
-                        "HK$ — HKD (Hong Kong Dollar)",
-                        "kr — SEK (Swedish Krona)",
-                        "kr — NOK (Norwegian Krone)",
-                        "kr — DKK (Danish Krone)",
-                        "₩ — KRW (South Korean Won)",
-                        "R — ZAR (South African Rand)",
-                        "R$ — BRL (Brazilian Real)",
-                        "₺ — TRY (Turkish Lira)",
-                        "₽ — RUB (Russian Ruble)",
-                        "﷼ — SAR (Saudi Riyal)",
-                        "د.إ — AED (UAE Dirham)",
-                        "₪ — ILS (Israeli Shekel)",
-                        "Mex$ — MXN (Mexican Peso)",
-                        "Rp — IDR (Indonesian Rupiah)",
-                        "₱ — PHP (Philippine Peso)",
-                        "฿ — THB (Thai Baht)",
-                        "zł — PLN (Polish Zloty)",
-                        "Kč — CZK (Czech Koruna)",
-                        "Ft — HUF (Hungarian Forint)",
-                        "RM — MYR (Malaysian Ringgit)",
-                        "NZ$ — NZD (New Zealand Dollar)",
-                        "CLP — CLP (Chilean Peso)",
-                        "Col$ — COP (Colombian Peso)",
-                        "S/. — PEN (Peruvian Sol)",
-                        "Ksh — KES (Kenyan Shilling)",
-                        "₦ — NGN (Nigerian Naira)",
-                        "EGP — EGP (Egyptian Pound)",
-                        "PKR — PKR (Pakistani Rupee)",
-                        "৳ — BDT (Bangladeshi Taka)",
-                        "Other — (type below)",
+                        "$ â€” USD (US Dollar)",
+                        "â‚¬ â€” EUR (Euro)",
+                        "Â£ â€” GBP (British Pound)",
+                        "Â¥ â€” JPY (Japanese Yen)",
+                        "Â¥ â€” CNY (Chinese Yuan)",
+                        "â‚¹ â€” INR (Indian Rupee)",
+                        "CHF â€” CHF (Swiss Franc)",
+                        "A$ â€” AUD (Australian Dollar)",
+                        "C$ â€” CAD (Canadian Dollar)",
+                        "S$ â€” SGD (Singapore Dollar)",
+                        "HK$ â€” HKD (Hong Kong Dollar)",
+                        "kr â€” SEK (Swedish Krona)",
+                        "kr â€” NOK (Norwegian Krone)",
+                        "kr â€” DKK (Danish Krone)",
+                        "â‚© â€” KRW (South Korean Won)",
+                        "R â€” ZAR (South African Rand)",
+                        "R$ â€” BRL (Brazilian Real)",
+                        "â‚º â€” TRY (Turkish Lira)",
+                        "â‚½ â€” RUB (Russian Ruble)",
+                        "ï·¼ â€” SAR (Saudi Riyal)",
+                        "Ø¯.Ø¥ â€” AED (UAE Dirham)",
+                        "â‚ª â€” ILS (Israeli Shekel)",
+                        "Mex$ â€” MXN (Mexican Peso)",
+                        "Rp â€” IDR (Indonesian Rupiah)",
+                        "â‚± â€” PHP (Philippine Peso)",
+                        "à¸¿ â€” THB (Thai Baht)",
+                        "zÅ‚ â€” PLN (Polish Zloty)",
+                        "KÄ â€” CZK (Czech Koruna)",
+                        "Ft â€” HUF (Hungarian Forint)",
+                        "RM â€” MYR (Malaysian Ringgit)",
+                        "NZ$ â€” NZD (New Zealand Dollar)",
+                        "CLP â€” CLP (Chilean Peso)",
+                        "Col$ â€” COP (Colombian Peso)",
+                        "S/. â€” PEN (Peruvian Sol)",
+                        "Ksh â€” KES (Kenyan Shilling)",
+                        "â‚¦ â€” NGN (Nigerian Naira)",
+                        "EGP â€” EGP (Egyptian Pound)",
+                        "PKR â€” PKR (Pakistani Rupee)",
+                        "à§³ â€” BDT (Bangladeshi Taka)",
+                        "Other â€” (type below)",
                     ]
                     selected_currency = st.selectbox(
                         "Currency",
@@ -1273,7 +1338,7 @@ with tab_analysis:
                             help="Type your currency symbol"
                         )
                     else:
-                        currency_symbol = selected_currency.split(" — ")[0].strip()
+                        currency_symbol = selected_currency.split(" â€” ")[0].strip()
 
                     rate_per_kwh = st.number_input(
                         "Rate per kWh",
@@ -1298,22 +1363,22 @@ with tab_analysis:
                     user_pf      = 0.85
 
                     if _has_kwh:
-                        st.success("Energy column detected — no electrical parameters needed.")
+                        st.success("Energy column detected â€” no electrical parameters needed.")
                     elif _has_power:
-                        st.success("Power (kW) column detected — no electrical parameters needed.")
+                        st.success("Power (kW) column detected â€” no electrical parameters needed.")
                     elif _has_current:
                         st.markdown("**Electrical parameters**")
                         if _has_voltage and _has_pf:
-                            st.success("Voltage and power factor columns detected — no manual input needed.")
+                            st.success("Voltage and power factor columns detected â€” no manual input needed.")
                         elif _has_voltage:
-                            st.info("Voltage column detected. Power factor not found in data — please enter below.")
+                            st.info("Voltage column detected. Power factor not found in data â€” please enter below.")
                             user_pf = st.number_input(
                                 "Power factor",
                                 min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f",
-                                help="Motor power factor (0–1). Typical induction motor: 0.80–0.90."
+                                help="Motor power factor (0â€“1). Typical induction motor: 0.80â€“0.90."
                             )
                         elif _has_pf:
-                            st.info("Power factor column detected. Voltage not found in data — please enter below.")
+                            st.info("Power factor column detected. Voltage not found in data â€” please enter below.")
                             user_voltage = st.number_input(
                                 "Supply voltage (V)",
                                 min_value=1.0, value=415.0, step=1.0, format="%.0f",
@@ -1329,7 +1394,7 @@ with tab_analysis:
                             user_pf = st.number_input(
                                 "Power factor",
                                 min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f",
-                                help="Motor power factor (0–1). Typical induction motor: 0.80–0.90."
+                                help="Motor power factor (0â€“1). Typical induction motor: 0.80â€“0.90."
                             )
                     else:
                         st.warning("No energy, power, or current column detected in data. Energy calculation will not be available.")
@@ -1421,7 +1486,7 @@ with tab_analysis:
                 st.session_state["_last_schedule"]   = schedule or {}
                 st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
-                # ── Data quality check ─────────────────────────────────
+                # â”€â”€ Data quality check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 _dq_ctx = ""
                 if data is not None and not data.empty:
                     _dq = run_data_quality_checks(data)
@@ -1441,9 +1506,9 @@ with tab_analysis:
                     st.rerun()
 
 
-            # ── DQ gate UI + analysis runner ──────────────────────────
+            # â”€â”€ DQ gate UI + analysis runner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if not DQ_AVAILABLE:
-                st.warning("Data quality module not loaded — install data_checker.py")
+                st.warning("Data quality module not loaded â€” install data_checker.py")
             if st.session_state.get("_pending_analysis"):
                 _dq      = st.session_state.get("last_dq_report", {})
                 _meta    = st.session_state.get("_pending_meta", {})
@@ -1452,20 +1517,20 @@ with tab_analysis:
                 _warns   = [x for x in _dq.get("issues",[]) if x["severity"]=="warning"]
 
                 if _crits:
-                    # ── Header ───────────────────────────────────────────────
+                    # â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     st.error(
-                        f"**Data quality check — {len(_crits)} critical issue(s) detected.**  \n"
+                        f"**Data quality check â€” {len(_crits)} critical issue(s) detected.**  \n"
                         "Please choose one of the three options below before continuing."
                     )
 
-                    # ── Issue cards with suggestions ─────────────────────────
+                    # â”€â”€ Issue cards with suggestions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     for _iss in _crits:
                         _check   = _iss["check"]
                         _col     = _iss["col"]
                         _sugg    = CORRECTION_SUGGESTIONS.get(_check, {}).get("suggestion", "Review and correct manually.")
                         st.markdown(
                             f'<div style="background:#FFF0F0;border-left:5px solid #A32D2D;padding:10px 14px;margin-bottom:4px;border-radius:3px;">' +
-                            f'<span style="font-weight:700;color:#A32D2D">❌ {_check}</span>' +
+                            f'<span style="font-weight:700;color:#A32D2D">âŒ {_check}</span>' +
                             f' &nbsp;\u00b7&nbsp; <code>{_col}</code>' +
                             f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.82em">{_iss["affected_pct"]}% affected</span><br>' +
                             f'<span style="font-size:0.87em;color:#444">{_iss["detail"]}</span></div>',
@@ -1473,23 +1538,23 @@ with tab_analysis:
                         if _sugg:
                             st.markdown(
                                 f'<div style="background:#F0F4F8;border-left:3px solid #185FA5;padding:6px 12px;margin-bottom:10px;border-radius:2px;">' +
-                                f'<span style="font-size:0.85em;color:#185FA5;font-weight:600">💡 Suggestion: </span>' +
+                                f'<span style="font-size:0.85em;color:#185FA5;font-weight:600">ðŸ’¡ Suggestion: </span>' +
                                 f'<span style="font-size:0.85em;color:#333">{_sugg}</span></div>',
                                 unsafe_allow_html=True)
 
 
-                    # ── Three options ─────────────────────────────────────────
+                    # â”€â”€ Three options â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     _opt1, _opt2 = st.columns(2)
 
                     with _opt1:
                         st.markdown(
                             '<div style="background:#EAF4FF;border:1.5px solid #185FA5;border-radius:6px;padding:14px 16px;min-height:80px;">' +
-                            '<span style="font-weight:700;color:#185FA5;font-size:1em">⭐ Option 1 — Recommended</span><br>' +
+                            '<span style="font-weight:700;color:#185FA5;font-size:1em">â­ Option 1 â€” Recommended</span><br>' +
                             '<span style="font-size:0.9em;color:#1A1A2E;">Correct the data manually and re-upload for accurate analysis.</span>' +
                             '</div>',
                             unsafe_allow_html=True)
                         st.markdown("")
-                        with st.expander("📋 How to correct the data", expanded=True):
+                        with st.expander("ðŸ“‹ How to correct the data", expanded=True):
                             st.markdown(
                                 "1. Download your original data file  \n"
                                 "2. Correct or remove the affected rows/columns  \n"
@@ -1501,7 +1566,7 @@ with tab_analysis:
                     with _opt2:
                         st.markdown(
                             '<div style="background:#FFF8F0;border:1.5px solid #BA7517;border-radius:6px;padding:14px 16px;min-height:80px;">' +
-                            '<span style="font-weight:700;color:#BA7517;font-size:1em">⚠️ Option 2 — Ignore and continue</span><br>' +
+                            '<span style="font-weight:700;color:#BA7517;font-size:1em">âš ï¸ Option 2 â€” Ignore and continue</span><br>' +
                             '<span style="font-size:0.9em;color:#1A1A2E;">Acknowledge each issue and proceed. Analysis may be affected.</span>' +
                             '</div>',
                             unsafe_allow_html=True)
@@ -1511,13 +1576,13 @@ with tab_analysis:
                             _key = f"dq_ack_{_iss['col']}_{_iss['check'].replace(' ','_')}"
                             _c1, _c2 = st.columns([0.12, 0.88])
                             with _c1:
-                                _ignored[_key] = st.checkbox(" ", key=_key, value=False, label_visibility="collapsed")
+                                _ignored[_key] = st.checkbox("Â ", key=_key, value=False, label_visibility="collapsed")
                             with _c2:
                                 _bc   = "#2E7D32" if _ignored[_key] else "#A32D2D"
-                                _icon = "✅" if _ignored[_key] else "❌"
+                                _icon = "âœ…" if _ignored[_key] else "âŒ"
                                 _lbl  = "Acknowledged" if _ignored[_key] else "Unacknowledged"
                                 st.markdown(
-                                    f'<span style="color:{_bc};font-size:0.88em;font-weight:600">{_icon} {_iss["check"]} &nbsp;·&nbsp; <code>{_iss["col"]}</code> &nbsp;·&nbsp; <i>{_lbl}</i></span>',
+                                    f'<span style="color:{_bc};font-size:0.88em;font-weight:600">{_icon} {_iss["check"]} &nbsp;Â·&nbsp; <code>{_iss["col"]}</code> &nbsp;Â·&nbsp; <i>{_lbl}</i></span>',
                                     unsafe_allow_html=True)
                         st.markdown("")
                         _all_acked = all(_ignored.values()) if _ignored else False
@@ -1530,7 +1595,7 @@ with tab_analysis:
                                 st.session_state["_pending_analysis"] = False
                                 _run_analysis(_meta, _dq_ctx, db, selected_id)
 
-                    # ── Option 3 — full width below ────────────────────────────
+                    # â”€â”€ Option 3 â€” full width below â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     _fixable = [
                         i for i in _crits
                         if CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
@@ -1546,7 +1611,7 @@ with tab_analysis:
                     st.markdown("")
                     st.markdown(
                         '<div style="background:#F0FFF4;border:1.5px solid #2E7D32;border-radius:6px;padding:14px 16px;">' +
-                        '<span style="font-weight:700;color:#2E7D32;font-size:1em">🔧 Option 3 — Auto-correct and download</span><br>' +
+                        '<span style="font-weight:700;color:#2E7D32;font-size:1em">ðŸ”§ Option 3 â€” Auto-correct and download</span><br>' +
                         '<span style="font-size:0.9em;color:#1A1A2E;">Apply suggested corrections automatically. Download the corrected file, re-upload and analyze.</span>' +
                         '</div>',
                         unsafe_allow_html=True)
@@ -1566,15 +1631,15 @@ with tab_analysis:
                             _col_sel = _fc1 if _fi_idx % 2 == 0 else _fc2
                             with _col_sel:
                                 _fix_keys[_fkey] = st.checkbox(
-                                    f"{_fi['check']} · `{_fi['col']}`",
+                                    f"{_fi['check']} Â· `{_fi['col']}`",
                                     key=_fkey, value=True, help=_sugg)
 
                         if _manual_only:
-                            st.caption(f"ℹ️ {len(_manual_only)} issue(s) cannot be auto-corrected (manual review needed): " +
+                            st.caption(f"â„¹ï¸ {len(_manual_only)} issue(s) cannot be auto-corrected (manual review needed): " +
                                        ", ".join(f"`{i['col']}`" for i in _manual_only))
 
                         st.markdown("")
-                        if st.button("🔧 Apply selected corrections and prepare download",
+                        if st.button("ðŸ”§ Apply selected corrections and prepare download",
                                      key="apply_fixes_btn", type="secondary", use_container_width=True):
                             import io as _io
                             _corrected = _raw_data.copy()
@@ -1599,9 +1664,9 @@ with tab_analysis:
                                     else:
                                         continue
                                     _corrected = _res["corrected_df"]
-                                    _log.append(f"✅ {_fi['check']} ({_col}): {_res['description']}")
+                                    _log.append(f"âœ… {_fi['check']} ({_col}): {_res['description']}")
                                 except Exception as _fe:
-                                    _log.append(f"❌ {_fi['check']} ({_col}): Failed — {_fe}")
+                                    _log.append(f"âŒ {_fi['check']} ({_col}): Failed â€” {_fe}")
                             _buf = _io.StringIO()
                             _corrected.to_csv(_buf)
                             st.session_state["_corrected_csv"]  = _buf.getvalue().encode("utf-8")
@@ -1620,7 +1685,7 @@ with tab_analysis:
                             with _dl_col:
                                 _fname = f"{_meta['machine_info'].get('machine_id','machine')}_corrected.csv"
                                 st.download_button(
-                                    label="⬇️ Download corrected file",
+                                    label="â¬‡ï¸ Download corrected file",
                                     data=st.session_state["_corrected_csv"],
                                     file_name=_fname,
                                     mime="text/csv",
@@ -1630,7 +1695,7 @@ with tab_analysis:
                                 )
                             with _use_col:
                                 if st.button(
-                                    "▶️ Use corrected data for analysis now",
+                                    "â–¶ï¸ Use corrected data for analysis now",
                                     key="use_corrected_btn",
                                     type="primary",
                                     use_container_width=True,
@@ -1641,13 +1706,13 @@ with tab_analysis:
                             # Confirmation dialog
                             if st.session_state.get("_confirm_pending"):
                                 st.warning(
-                                    "⚠️ **Confirm:** The corrected data will be used for analysis.  \n"
-                                    "The original uploaded file is unchanged — this only affects the current session.  \n"
+                                    "âš ï¸ **Confirm:** The corrected data will be used for analysis.  \n"
+                                    "The original uploaded file is unchanged â€” this only affects the current session.  \n"
                                     "Download the corrected file too if you want to keep the corrections permanently."
                                 )
                                 _conf1, _conf2 = st.columns(2)
                                 with _conf1:
-                                    if st.button("✅ Yes, analyze with corrected data", key="confirm_yes_btn", type="primary", use_container_width=True):
+                                    if st.button("âœ… Yes, analyze with corrected data", key="confirm_yes_btn", type="primary", use_container_width=True):
                                         _corrected_df = st.session_state.get("_corrected_df")
                                         if _corrected_df is not None:
                                             # Override last_data and pending_meta with corrected df
@@ -1658,25 +1723,25 @@ with tab_analysis:
                                             st.session_state["_corrected_csv"]     = None
                                             _run_analysis(_meta, _dq_ctx, db, selected_id, override_data=_corrected_df)
                                 with _conf2:
-                                    if st.button("❌ Cancel", key="confirm_no_btn", use_container_width=True):
+                                    if st.button("âŒ Cancel", key="confirm_no_btn", use_container_width=True):
                                         st.session_state["_confirm_pending"] = False
                                         st.rerun()
 
-                    # ── Warnings ───────────────────────────────────────────────
+                    # â”€â”€ Warnings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if _warns:
                         st.markdown("")
-                        with st.expander(f"⚠️ {len(_warns)} additional warning(s) — informational only", expanded=False):
+                        with st.expander(f"âš ï¸ {len(_warns)} additional warning(s) â€” informational only", expanded=False):
                             for _iss in _warns:
                                 st.markdown(
                                     f'<div style="background:#FFFBF0;border-left:4px solid #BA7517;padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
-                                    f'<span style="font-weight:600;color:#BA7517">⚠️ {_iss["check"]}</span>' +
+                                    f'<span style="font-weight:600;color:#BA7517">âš ï¸ {_iss["check"]}</span>' +
                                     f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code><br>' +
                                     f'<span style="font-size:0.88em">{_iss["detail"]}</span></div>',
                                     unsafe_allow_html=True)
 
 
                 else:
-                    # No critical issues — run immediately
+                    # No critical issues â€” run immediately
                     st.session_state["_pending_analysis"] = False
                     _run_analysis(_meta, _dq_ctx, db, selected_id)
 
@@ -1730,7 +1795,7 @@ with tab_analysis:
                         )
 
 
-            # PDF download button — shown when results exist
+            # PDF download button â€” shown when results exist
             if st.session_state.get("last_multi_results") and REPORT_AVAILABLE:
                 st.divider()
                 if st.button("Download PDF report", type="secondary", use_container_width=True):
@@ -1761,7 +1826,7 @@ with tab_analysis:
 
 
 # ------------------------------------------------------------------ #
-# TAB 3 — History
+# TAB 3 â€” History
 # ------------------------------------------------------------------ #
 
 with tab_history:
@@ -1770,7 +1835,7 @@ with tab_history:
         st.info("No analysis runs yet for this machine.")
     else:
         for record in history:
-            label = f"{record['analysis_type']}  —  {record['timestamp']}"
+            label = f"{record['analysis_type']}  â€”  {record['timestamp']}"
             with st.expander(label):
                 ins = record["insights"]
                 score = ins.get("health_score")
@@ -1784,7 +1849,7 @@ with tab_history:
 
 
 # ------------------------------------------------------------------ #
-# TAB 4 — Maintenance Logs
+# TAB 4 â€” Maintenance Logs
 # ------------------------------------------------------------------ #
 
 with tab_logs:
@@ -1792,11 +1857,11 @@ with tab_logs:
     if not stored_logs:
         st.info("No maintenance logs uploaded yet. Use the sidebar to upload a log file.")
     else:
-        st.caption(f"{len(stored_logs)} log file(s) — included automatically in every analysis")
+        st.caption(f"{len(stored_logs)} log file(s) â€” included automatically in every analysis")
         for log in stored_logs:
             col1, col2 = st.columns([5, 1])
             with col1:
-                with st.expander(f"{log['filename']}  —  {log['uploaded_at']}  [{log['file_type']}]"):
+                with st.expander(f"{log['filename']}  â€”  {log['uploaded_at']}  [{log['file_type']}]"):
                     st.text(log["content"][:3000] + ("..." if len(log["content"]) > 3000 else ""))
             with col2:
                 if st.button("Delete", key=f"del_{log['filename']}_{log['uploaded_at']}"):
