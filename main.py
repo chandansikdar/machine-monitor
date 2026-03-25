@@ -904,9 +904,28 @@ with st.sidebar:
             if _phys:
                 _status, _detail, _icon = _phys
                 if _status == "available":
-                    st.success(f"{_icon} **Physics module available:** {machine_type} \u2014 {_detail}. Physics-based analytics will activate automatically when sensor columns are detected.")
+                    # Show full availability only if drive type is also supported or not yet selected
+                    if not drive_type or drive_type == "-- Select drive type --":
+                        st.success(
+                            f"{_icon} **Physics module available:** {machine_type} \u2014 {_detail}.  \n"
+                            f"Select a drive type below to confirm full physics support."
+                        )
+                    elif drive_type in DRIVE_TYPES_SUPPORTED:
+                        st.success(
+                            f"{_icon} **Physics module available:** {machine_type} \u2014 {_detail}.  \n"
+                            f"Induction motor drive confirmed. All applicable phases will run."
+                        )
+                    else:
+                        st.warning(
+                            f"{_icon} **Physics module available for {machine_type}**, but:  \n"
+                            f"\u26a0\ufe0f Selected drive type is not yet supported for physics analysis.  \n"
+                            f"AI statistical analytics will run. Switch to an induction motor drive to enable physics phases."
+                        )
                 elif _status == "planned":
-                    st.info(f"{_icon} **Physics module in development:** {machine_type} \u2014 {_detail}. AI statistical analytics (Layer 1) will run. Physics module coming in a future update.")
+                    st.info(
+                        f"{_icon} **Physics module in development:** {machine_type} \u2014 {_detail}.  \n"
+                        f"AI statistical analytics (Layer 1) will run. Physics module coming in a future update."
+                    )
                 else:
                     st.warning(f"{_icon} **Physics module planned:** {machine_type}. AI statistical analytics will run.")
             else:
@@ -922,18 +941,24 @@ with st.sidebar:
         )
         drive_type = drive_type if drive_type != "-- Select drive type --" else ""
 
-        # Show badge for unsupported drive types
-        if drive_type and drive_type not in DRIVE_TYPES_SUPPORTED and drive_type not in ["-- Select drive type --", "Unknown", "Not applicable — static equipment", "Hydraulic coupling"]:
-            st.warning(
-                f"⚠️ **{drive_type}:** AI statistical analytics will run.  \n"
-                f"Physics-based analytics for this drive type are not yet available. "
-                f"Only induction motor drives are currently supported for physics modules."
-            )
-        elif drive_type in DRIVE_TYPES_SUPPORTED:
-            st.success(
-                f"✅ **Induction motor drive selected.** "
-                f"Full physics-based analytics are supported for this drive type."
-            )
+        # Drive type support badge
+        if drive_type and drive_type != "-- Select drive type --":
+            if drive_type in DRIVE_TYPES_SUPPORTED:
+                st.success(
+                    "✅ **Induction motor drive — full physics supported.**  \n"
+                    "All applicable physics phases will run for this drive type."
+                )
+            elif drive_type in ["Not applicable — static equipment"]:
+                st.info("ℹ️ Static equipment — no drive physics applicable.")
+            elif drive_type in ["Unknown", "Hydraulic coupling"]:
+                st.info("ℹ️ AI statistical analytics will run. Drive physics not applicable.")
+            else:
+                st.warning(
+                    f"⚠️ **Physics module not available for this drive type.**  \n"
+                    f"**{drive_type}**  \n"
+                    f"Only induction motor drives are currently supported for physics-based analytics.  \n"
+                    f"AI statistical analytics (Layer 1) will run for all analysis types."
+                )
 
         _drive_extra = ""
         if "VFD" in (drive_type or "") and "Induction motor" in (drive_type or ""):
