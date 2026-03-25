@@ -697,6 +697,82 @@ if "last_multi_results" not in st.session_state:
 # Services (cached so they survive reruns)
 # ------------------------------------------------------------------ #
 
+
+# ── Machine type registry ─────────────────────────────────────────────────────
+MACHINE_TYPES = {
+    "Rotating Machinery": [
+        "Centrifugal Pump",
+        "Axial / Reciprocating Compressor",
+        "Centrifugal Compressor",
+        "Axial Flow Fan / Blower",
+        "Centrifugal Fan / Blower",
+        "Electric Motor (standalone)",
+        "Gearbox",
+        "Turbine",
+    ],
+    "Static Equipment": [
+        "Shell & Tube Heat Exchanger",
+        "Plate Heat Exchanger",
+        "Boiler / Steam Generator",
+        "Cooling Tower",
+        "Pressure Vessel",
+    ],
+    "Process Equipment": [
+        "Extruder",
+        "Conveyor",
+        "Mixer / Agitator",
+        "Centrifuge",
+        "Hydraulic Power Unit",
+    ],
+    "Other": [
+        "Other (specify in description)",
+    ],
+}
+
+PHYSICS_MODULE_STATUS = {
+    "Centrifugal Pump":                     ("available",    "Phases 1\u20135",  "🔧"),
+    "Axial / Reciprocating Compressor":     ("planned",      "In development",    "🚧"),
+    "Centrifugal Compressor":               ("planned",      "In development",    "🚧"),
+    "Axial Flow Fan / Blower":              ("planned",      "In development",    "🚧"),
+    "Centrifugal Fan / Blower":             ("planned",      "In development",    "🚧"),
+    "Electric Motor (standalone)":          ("planned",      "In development",    "🚧"),
+    "Gearbox":                              ("planned",      "In development",    "🚧"),
+    "Shell & Tube Heat Exchanger":          ("future",       "Planned",           "📋"),
+    "Plate Heat Exchanger":                 ("future",       "Planned",           "📋"),
+    "Boiler / Steam Generator":             ("future",       "Planned",           "📋"),
+}
+
+DRIVE_TYPES = [
+    # ── Induction motor drives (currently supported) ──────────────────
+    "Induction motor — direct / rigid coupling",
+    "Induction motor — direct / flexible coupling",
+    "Induction motor — VFD (Variable Frequency Drive)",
+    "Induction motor — belt drive (V-belt / flat belt)",
+    "Induction motor — gearbox speed reducer",
+    "Induction motor — gearbox speed increaser",
+    # ── Other motor types (physics modules not yet available) ─────────
+    "Permanent magnet motor — direct coupling  (no physics module yet)",
+    "Synchronous reluctance motor — direct coupling  (no physics module yet)",
+    "Wound rotor induction motor — direct coupling  (no physics module yet)",
+    "DC motor — direct coupling  (no physics module yet)",
+    # ── Non-motor drives ──────────────────────────────────────────────
+    "Steam turbine drive  (no physics module yet)",
+    "Hydraulic coupling",
+    "Not applicable — static equipment",
+    "Unknown",
+]
+
+# Drive types with full induction motor physics support
+DRIVE_TYPES_SUPPORTED = [
+    "Induction motor — direct / rigid coupling",
+    "Induction motor — direct / flexible coupling",
+    "Induction motor — VFD (Variable Frequency Drive)",
+    "Induction motor — belt drive (V-belt / flat belt)",
+    "Induction motor — gearbox speed reducer",
+    "Induction motor — gearbox speed increaser",
+]
+
+
 @st.cache_resource
 def get_services(_version=5):
     return Database(), Visualizer()
@@ -726,42 +802,125 @@ with st.sidebar:
     st.divider()
 
     with st.expander("Register new machine", expanded=not db.get_machines()):
-        machine_type = st.text_input(
-            "Machine type", placeholder="e.g. Compressor, Pump, Furnace"
-        )
-        machine_id = st.text_input("Machine ID", placeholder="e.g. COMP-001")
-        machine_desc = st.text_area(
-            "Specs / notes",
-            placeholder="Rated power: 75 kW\nFlow: 500 m³/h\nRPM: 1480",
-            height=90,
+
+        # ── Machine ID ────────────────────────────────────────────────
+        machine_id = st.text_input(
+            "Machine ID",
+            placeholder="e.g. PUMP-A3, COMP-001",
+            help="Your site reference tag for this machine."
         )
 
-        # Optional thresholds
+        # ── Machine type selector ───────────────────────────────────────
+        st.markdown("**Machine type**")
+        _reg_cat = st.selectbox(
+            "Category",
+            options=list(MACHINE_TYPES.keys()),
+            key="reg_category",
+            label_visibility="collapsed",
+        )
+        _type_options = ["-- Select machine type --"] + MACHINE_TYPES.get(_reg_cat, [])
+        machine_type_sel = st.selectbox(
+            "Type",
+            options=_type_options,
+            key="reg_machine_type",
+            label_visibility="collapsed",
+        )
+        machine_type = machine_type_sel if machine_type_sel != "-- Select machine type --" else ""
+
+        # Physics module status badge
+        if machine_type:
+            _phys = PHYSICS_MODULE_STATUS.get(machine_type)
+            if _phys:
+                _status, _detail, _icon = _phys
+                if _status == "available":
+                    st.success(f"{_icon} **Physics module available:** {machine_type} \u2014 {_detail}. Physics-based analytics will activate automatically when sensor columns are detected.")
+                elif _status == "planned":
+                    st.info(f"{_icon} **Physics module in development:** {machine_type} \u2014 {_detail}. AI statistical analytics (Layer 1) will run. Physics module coming in a future update.")
+                else:
+                    st.warning(f"{_icon} **Physics module planned:** {machine_type}. AI statistical analytics will run.")
+            else:
+                st.info("\u2139\ufe0f AI statistical analytics will run. No physics module currently planned for this type.")
+
+        # ── Drive type ──────────────────────────────────────────────────
+        st.markdown("**Drive type**")
+        drive_type = st.selectbox(
+            "Drive",
+            options=["-- Select drive type --"] + DRIVE_TYPES,
+            key="reg_drive_type",
+            label_visibility="collapsed",
+        )
+        drive_type = drive_type if drive_type != "-- Select drive type --" else ""
+
+        # Show badge for unsupported drive types
+        if drive_type and drive_type not in DRIVE_TYPES_SUPPORTED and drive_type not in ["-- Select drive type --", "Unknown", "Not applicable — static equipment", "Hydraulic coupling"]:
+            st.warning(
+                f"⚠️ **{drive_type}:** AI statistical analytics will run.  \n"
+                f"Physics-based analytics for this drive type are not yet available. "
+                f"Only induction motor drives are currently supported for physics modules."
+            )
+        elif drive_type in DRIVE_TYPES_SUPPORTED:
+            st.success(
+                f"✅ **Induction motor drive selected.** "
+                f"Full physics-based analytics are supported for this drive type."
+            )
+
+        _drive_extra = ""
+        if "VFD" in (drive_type or "") and "Induction motor" in (drive_type or ""):
+            _vd1, _vd2 = st.columns(2)
+            _vfd_min = _vd1.number_input("Min speed (RPM)", min_value=0, value=300, key="reg_vfd_min")
+            _vfd_max = _vd2.number_input("Max speed (RPM)", min_value=0, value=1500, key="reg_vfd_max")
+            _vfd_ctrl = st.selectbox("VFD control mode",
+                ["Speed control","Pressure control","Flow control","Torque control"], key="reg_vfd_ctrl")
+            _drive_extra = f"VFD speed range: {_vfd_min}\u2013{_vfd_max} RPM\nVFD control mode: {_vfd_ctrl}\n"
+        elif "belt" in (drive_type or "").lower() and "Induction motor" in (drive_type or ""):
+            _bd1, _bd2 = st.columns(2)
+            _belt_drive  = _bd1.number_input("Drive pulley ø (mm)", min_value=1, value=200, key="reg_belt_drive")
+            _belt_driven = _bd2.number_input("Driven pulley ø (mm)", min_value=1, value=200, key="reg_belt_driven")
+            _sr = round(_belt_drive/_belt_driven,3) if _belt_driven else 1.0
+            st.caption(f"Speed ratio: {_belt_drive}/{_belt_driven} = **{_sr}**")
+            _drive_extra = f"Belt drive pulley (drive): {_belt_drive} mm\nBelt drive pulley (driven): {_belt_driven} mm\nBelt speed ratio: {_sr}\n"
+        elif "gearbox" in (drive_type or "").lower() and "Induction motor" in (drive_type or ""):
+            _gb1, _gb2 = st.columns(2)
+            _gb_ratio = _gb1.number_input("Gear ratio (:1)", min_value=0.1, value=1.0, step=0.1, key="reg_gb_ratio")
+            _gb_eff   = _gb2.number_input("Gearbox efficiency (%)", 50, 100, 98, key="reg_gb_eff")
+            _drive_extra = f"Gear ratio: {_gb_ratio}:1\nGearbox efficiency: {_gb_eff}%\n"
+
+        # ── Specs / notes ────────────────────────────────────────────
+        machine_desc = st.text_area(
+            "Specifications and notes",
+            placeholder="Rated power: 75 kW\nRated flow: 185 m\u00b3/h\nRated head: 45 m\nRated speed: 1480 RPM",
+            height=100,
+            help="Enter nameplate data, installation details, and any relevant notes.",
+        )
+
         with st.expander("Parameter thresholds (optional)", expanded=False):
             st.caption("Define warning and critical limits per parameter. Leave blank to let Claude decide automatically.")
             thresh_text = st.text_area(
                 "Thresholds",
-                placeholder=(
-                    "vibration_mm_s: warning=2.8, critical=4.5\n"
-                    "discharge_temp_C: warning=170, critical=185\n"
-                    "motor_current_A: warning=46, critical=50\n"
-                    "suction_pressure_bar: warning=0.93, critical=0.90"
-                ),
-                height=130,
+                placeholder="vibration_mm_s: warning=2.8, critical=4.5\ndischarge_temp_C: warning=170, critical=185\nmotor_current_A: warning=46, critical=50",
+                height=120,
                 help="One parameter per line. Format: param_name: warning=X, critical=Y",
             )
 
         if st.button("Register", type="primary", use_container_width=True):
             if machine_type and machine_id:
-                # Append thresholds to description if provided
-                full_desc = machine_desc
+                _structured = ""
+                if drive_type:
+                    _structured += f"Drive type: {drive_type}\n"
+                if _drive_extra:
+                    _structured += _drive_extra
+                full_desc = (_structured + machine_desc).strip() if _structured else machine_desc
                 if thresh_text and thresh_text.strip():
-                    full_desc = machine_desc + "\n\n=== PARAMETER THRESHOLDS ===\n" + thresh_text.strip()
+                    full_desc = full_desc + "\n\n=== PARAMETER THRESHOLDS ===\n" + thresh_text.strip()
                 db.register_machine(machine_id.strip(), machine_type.strip(), full_desc)
-                st.success(f"Machine **{machine_id}** registered.")
+                _phys_msg = ("Physics module: active." if PHYSICS_MODULE_STATUS.get(machine_type,("","",""))[0]=="available" else "AI analytics will run.")
+                st.success(f"Machine **{machine_id}** registered as **{machine_type}**.  \n{_phys_msg}")
                 st.rerun()
             else:
-                st.error("Machine type and ID are required.")
+                if not machine_id:
+                    st.error("Machine ID is required.")
+                if not machine_type:
+                    st.error("Please select a machine type.")
 
     st.divider()
 
@@ -1171,8 +1330,8 @@ with tab_analysis:
         st.info("Upload data first (sidebar), then run an analysis.")
     else:
         # ── Pump physics viability check ─────────────────────────────
-        _mtype = machine_info.get("machine_type","").lower()
-        _is_pump = any(kw in _mtype for kw in ["pump","centrifugal pump","water pump"])
+        _mtype = machine_info.get("machine_type","")
+        _is_pump = _mtype == "Centrifugal Pump" or any(kw in _mtype.lower() for kw in ["pump","centrifugal pump","water pump"])
         if _is_pump and data is not None and not data.empty and PUMP_PHYSICS_AVAILABLE:
             _phase_info = detect_phase(data)
             _phases = _phase_info.get("phases",[])
