@@ -261,6 +261,8 @@ def run_data_quality_checks(
                            f"starting at {worst_start.strftime('%Y-%m-%d %H:%M')}.",
                     affected_rows=int(len(large_gaps)),
                     total_rows=len(df),
+                    start_ts=worst_start,
+                    end_ts=worst_start + worst_gap,
                 ))
 
     # ── Per-column checks ─────────────────────────────────────────────────────
@@ -306,23 +308,28 @@ def run_data_quality_checks(
                 flat_starts = flat_mask[flat_mask].index
                 first_flat  = flat_starts[0]
                 sev = CRITICAL if flat_pct > 20 else WARNING
+                flat_end = flat_starts[-1] if len(flat_starts) > 0 else None
                 issues.append(_issue(col, "Flatline / stuck sensor", sev,
                     f"{flat_pct:.1f}% of readings show near-zero variation "
                     f"(rolling std < {FLATLINE_STD_THRESH:.0e} over {FLATLINE_WINDOW} readings). "
                     f"First detected at {_fmt_ts(first_flat)}. "
                     f"Sensor may be stuck, frozen, or disconnected.",
-                    flat_count, len(s_clean)))
+                    flat_count, len(s_clean),
+                    start_ts=first_flat, end_ts=flat_end))
 
         # ── 6. Frozen value runs (consecutive identical readings) ──────────────
         # Find longest run of identical values
         runs = _longest_run_of_identical(s_clean)
         if runs["length"] >= FROZEN_RUN_MIN:
             sev = CRITICAL if runs["length"] > 50 else WARNING
+            frozen_start = runs["start"]
+            frozen_end   = runs.get("end")
             issues.append(_issue(col, "Frozen value run", sev,
                 f"{runs['length']} consecutive identical readings of "
                 f"{runs['value']:.4f} starting at {_fmt_ts(runs['start'])}. "
                 f"Sensor output appears frozen — not a valid process reading.",
-                runs["length"], len(s_clean)))
+                runs["length"], len(s_clean),
+                start_ts=frozen_start, end_ts=frozen_end))
 
         # ── 7. Spike / step change ────────────────────────────────────────────
         q1, q3  = s_clean.quantile(0.25), s_clean.quantile(0.75)
@@ -339,7 +346,10 @@ def run_data_quality_checks(
                     f"{STEP_IQR_MULTIPLIER}x IQR ({step_thresh:.4f} units). "
                     f"Largest: {spikes.max():.4f} units at {_fmt_ts(worst_spike)}. "
                     f"May indicate sensor glitch, process upset, or data logging error.",
-                    len(spikes), len(s_clean)))
+                    len(spikes), len(s_clean),
+                    point_ts=worst_spike,
+                    start_ts=spikes.index.min() if len(spikes) > 1 else worst_spike,
+                    end_ts=spikes.index.max() if len(spikes) > 1 else worst_spike))
 
         # ── 8. Baseline shift ─────────────────────────────────────────────────
         n_window = max(int(len(s_clean) * WINDOW_FRACTION), MIN_ROWS_FOR_CHECKS)
@@ -354,7 +364,8 @@ def run_data_quality_checks(
                     f"({early.mean():.4f}) by {shift_sigma:.1f}σ — a {direction} shift. "
                     f"May indicate sensor drift, recalibration, process change, or "
                     f"component replacement. Cross-check with maintenance logs.",
-                    n_window, len(s_clean)))
+                    n_window, len(s_clean),
+                    start_ts=recent.index[0], end_ts=recent.index[-1]))
 
     # ── Summary ───────────────────────────────────────────────────────────────
     n_critical = sum(1 for i in issues if i["severity"] == CRITICAL)
@@ -383,7 +394,13 @@ def run_data_quality_checks(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _issue(col, check, severity, detail, affected_rows, total_rows):
+def _issue(col, check, severity, detail, affected_rows, total_rows,
+           start_ts=None, end_ts=None, point_ts=None):
+    """
+    start_ts : start of affected period (pandas Timestamp) — for range issues
+    end_ts   : end of affected period — None means open-ended to dataset end
+    point_ts : single event timestamp — for spike / step change issues
+    """
     return {
         "col":          col,
         "check":        check,
@@ -391,7 +408,11 @@ def _issue(col, check, severity, detail, affected_rows, total_rows):
         "detail":       detail,
         "affected_rows": int(affected_rows),
         "affected_pct": round(affected_rows / total_rows * 100, 1) if total_rows else 0,
+        "start_ts":     start_ts,
+        "end_ts":       end_ts,
+        "point_ts":     point_ts,
     }
+
 
 
 def _empty_report(reason: str) -> dict:
@@ -405,23 +426,28 @@ def _empty_report(reason: str) -> dict:
 
 def _longest_run_of_identical(s: pd.Series) -> dict:
     """Find the longest consecutive run of identical values."""
-    best = {"length": 0, "value": None, "start": None}
+    best = {"length": 0, "value": None, "start": None, "end": None}
     if len(s) == 0:
         return best
     current_val   = s.iloc[0]
     current_start = s.index[0]
+    current_end   = s.index[0]
     current_len   = 1
     for idx, val in zip(s.index[1:], s.iloc[1:]):
         if val == current_val:
             current_len += 1
+            current_end  = idx
         else:
             if current_len > best["length"]:
-                best = {"length": current_len, "value": current_val, "start": current_start}
+                best = {"length": current_len, "value": current_val,
+                        "start": current_start, "end": current_end}
             current_val   = val
             current_start = idx
+            current_end   = idx
             current_len   = 1
     if current_len > best["length"]:
-        best = {"length": current_len, "value": current_val, "start": current_start}
+        best = {"length": current_len, "value": current_val,
+                "start": current_start, "end": current_end}
     return best
 
 
