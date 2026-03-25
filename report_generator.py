@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 from reportlab.lib import colors
+from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
@@ -169,6 +170,7 @@ def generate_report(
     multi_results: dict,
     date_range: tuple,
     data_info: Optional[dict] = None,
+    data_sources: Optional[dict] = None,
 ) -> bytes:
     """
     Generate a PDF report from multi_results dict.
@@ -179,6 +181,7 @@ def generate_report(
         multi_results : {analysis_type: insights_dict, ...}
         date_range    : (start_date, end_date)
         data_info     : optional {"rows": int, "columns": list}
+        data_sources  : optional dict with input traceability info
     """
     buf = io.BytesIO()
     report_date = datetime.now().strftime("%d %b %Y  %H:%M")
@@ -242,6 +245,323 @@ def generate_report(
     ]))
     story.append(t)
     story.append(HRFlowable(width="100%", thickness=1, color=C_BLUE, spaceAfter=8))
+
+    # ---- Data Sources & Input Traceability section ----
+    story.append(PageBreak())
+    story.append(Paragraph("Data Sources and Input Traceability", S["section"]))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=C_BORDER))
+    story.append(Paragraph(
+        "This section provides a complete audit trail of all data sources, "
+        "user-entered parameters, file uploads, and reference information used "
+        "in this analysis. Every input that influenced the findings is documented "
+        "here with its source and provenance.",
+        S["body"]
+    ))
+    story.append(Spacer(1, 3*mm))
+
+    _src = data_sources or {}
+    _fi  = _src.get("file_info", {})
+    _bl  = _src.get("baseline_period")
+
+    # ── 1. Active sensor data file ─────────────────────────────────────────────
+    story.append(Paragraph("1. Sensor Data File Used for Analysis", S["subsection"]))
+    file_rows = [
+        ["Item", "Details"],
+        ["File name",       _fi.get("filename", "—")],
+        ["File type",       _fi.get("file_type", "—")],
+        ["File status",     _fi.get("file_status", "Original upload")],
+        ["Rows ingested",   f"{data_info.get('rows', 0):,}" if data_info else "—"],
+        ["Parameters (sensor columns)", str(data_info.get("columns", "—")) if data_info else "—"],
+        ["Data from",       str(date_range[0]) if date_range else "—"],
+        ["Data to",         str(date_range[1]) if date_range else "—"],
+        ["Analysis period", f"{str(date_range[0])} to {str(date_range[1])}" if date_range else "—"],
+        ["Control limit baseline",
+         f"{_bl[0]} to {_bl[1]} (engineer-specified)" if _bl else "Default: first 20% of dataset (auto)"],
+        ["Ingested at",     _fi.get("ingested_at", "—")],
+        ["Uploaded by",     _fi.get("uploaded_by", "Engineer")],
+    ]
+    ft = Table(file_rows, colWidths=[70*mm, 100*mm])
+    ft.setStyle(TableStyle([
+        ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTNAME",      (0, 1), (0, -1),  "Helvetica-Bold"),
+        ("FONTNAME",      (1, 1), (1, -1),  "Helvetica"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8.5),
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_BLUE),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(ft)
+    story.append(Spacer(1, 3*mm))
+
+    # All stored files for this machine
+    _all_files = _src.get("all_files", [])
+    if len(_all_files) > 1:
+        story.append(Paragraph(
+            f"All files stored for this machine ({len(_all_files)} total):",
+            S["body"]
+        ))
+        af_rows = [["File name", "Status", "Rows", "Ingested", "Used for this analysis"]]
+        for _af in _all_files:
+            af_rows.append([
+                _af.get("filename","—"),
+                _af.get("file_status","—"),
+                f"{_af.get('rows',0):,}",
+                str(_af.get("ingested_at","—"))[:10],
+                "YES ← active" if _af.get("active") else "No",
+            ])
+        aft = Table(af_rows, colWidths=[55*mm, 28*mm, 18*mm, 28*mm, 41*mm])
+        aft.setStyle(TableStyle([
+            ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 7.5),
+            ("BACKGROUND",    (0, 0), (-1, 0),  HexColor("#444444")),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ("FONTNAME",      (4, 1), (4, -1),  "Helvetica-Bold"),
+            ("TEXTCOLOR",     (4, 1), (4, -1),  HexColor("#0F6E56")),
+        ]))
+        story.append(aft)
+    story.append(Spacer(1, 4*mm))
+
+    # ── 1b. Engineer notes ─────────────────────────────────────────────────────
+    _eng_notes = _src.get("engineer_notes","")
+    if _eng_notes and _eng_notes.strip():
+        story.append(Paragraph("1b. Engineer Notes (Provided at Time of Analysis)", S["subsection"]))
+        story.append(Paragraph(
+            "The following notes were entered by the engineer before running this analysis:",
+            S["body"]
+        ))
+        story.append(Paragraph(_eng_notes.strip(), S["body"]))
+        story.append(Spacer(1, 4*mm))
+
+    # ── 2. Machine nameplate data ──────────────────────────────────────────────
+    story.append(Paragraph("2. Machine Nameplate and Engineer-Entered Parameters", S["subsection"]))
+    story.append(Paragraph(
+        "The following parameters were entered by the engineer from the machine "
+        "nameplate, manufacturer datasheet, or commissioning records.",
+        S["body"]
+    ))
+    story.append(Spacer(1, 2*mm))
+    _np = _src.get("nameplate", {})
+    _motor = _np.get("motor", {})
+    _pump  = _np.get("pump", {})
+    _sys   = _np.get("system", {})
+
+    # Motor nameplate
+    if _motor:
+        story.append(Paragraph("Motor Nameplate", S["body_bold"] if "body_bold" in S else S["subsection"]))
+        _motor_rows = [["Parameter", "Value", "Source"]]
+        for k, v in _motor.items():
+            if v not in (None, "", "—"):
+                _motor_rows.append([k, str(v), "Motor nameplate"])
+        if len(_motor_rows) > 1:
+            mt = Table(_motor_rows, colWidths=[65*mm, 55*mm, 50*mm])
+            mt.setStyle(TableStyle([
+                ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+                ("FONTNAME",      (0, 1), (0, -1),  "Helvetica-Bold"),
+                ("FONTSIZE",      (0, 0), (-1, -1), 8),
+                ("BACKGROUND",    (0, 0), (-1, 0),  HexColor("#2E5F8A")),
+                ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+                ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+                ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+                ("TOPPADDING",    (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ]))
+            story.append(mt)
+            story.append(Spacer(1, 3*mm))
+
+    # Pump nameplate
+    if _pump:
+        story.append(Paragraph("Pump Nameplate", S["subsection"]))
+        _pump_rows = [["Parameter", "Value", "Source"]]
+        for k, v in _pump.items():
+            if v not in (None, "", "—"):
+                _pump_rows.append([k, str(v), "Pump nameplate / datasheet"])
+        if len(_pump_rows) > 1:
+            pt2 = Table(_pump_rows, colWidths=[65*mm, 55*mm, 50*mm])
+            pt2.setStyle(TableStyle([
+                ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+                ("FONTNAME",      (0, 1), (0, -1),  "Helvetica-Bold"),
+                ("FONTSIZE",      (0, 0), (-1, -1), 8),
+                ("BACKGROUND",    (0, 0), (-1, 0),  HexColor("#0F6E56")),
+                ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+                ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+                ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+                ("TOPPADDING",    (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ]))
+            story.append(pt2)
+            story.append(Spacer(1, 3*mm))
+
+    # System / installation
+    if _sys:
+        story.append(Paragraph("System / Installation Parameters", S["subsection"]))
+        _sys_rows = [["Parameter", "Value", "Source"]]
+        for k, v in _sys.items():
+            if v not in (None, "", "—"):
+                _sys_rows.append([k, str(v), "Site inspection / drawings"])
+        if len(_sys_rows) > 1:
+            st2 = Table(_sys_rows, colWidths=[65*mm, 55*mm, 50*mm])
+            st2.setStyle(TableStyle([
+                ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+                ("FONTNAME",      (0, 1), (0, -1),  "Helvetica-Bold"),
+                ("FONTSIZE",      (0, 0), (-1, -1), 8),
+                ("BACKGROUND",    (0, 0), (-1, 0),  HexColor("#555555")),
+                ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+                ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+                ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+                ("TOPPADDING",    (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ]))
+            story.append(st2)
+            story.append(Spacer(1, 3*mm))
+
+    if not _motor and not _pump and not _sys:
+        story.append(Paragraph(
+            "No nameplate parameters were entered for this machine. "
+            "Analysis used statistical methods only (Layer 1).",
+            S["body"]
+        ))
+        story.append(Spacer(1, 3*mm))
+
+    # ── 3. Performance curves ──────────────────────────────────────────────────
+    story.append(Paragraph("3. Performance Curves", S["subsection"]))
+    _curve_ref = _src.get("pump_curve_source_ref")
+    if _curve_ref:
+        _method_labels = {
+            "manufacturer_site": "Manufacturer product selector (automatic retrieval)",
+            "web_search":        "Web search (automatic retrieval)",
+            "manual_entry":      "Manual entry by engineer",
+            "not_found":         "Not retrieved — manual entry required",
+        }
+        _clabel = _method_labels.get(_curve_ref.get("method",""), _curve_ref.get("method",""))
+        curve_rows = [
+            ["Item", "Details"],
+            ["Retrieval method",  _clabel],
+            ["Manufacturer",      _curve_ref.get("manufacturer","—")],
+            ["Model number",      _curve_ref.get("model","—")],
+            ["Confidence",        _curve_ref.get("confidence","—")],
+            ["Retrieved date",    _curve_ref.get("retrieved_date","—")],
+            ["Source URL",        _curve_ref.get("url","—") or "—"],
+            ["Notes",             _curve_ref.get("notes","—") or "—"],
+        ]
+        ct = Table(curve_rows, colWidths=[60*mm, 110*mm])
+        ct.setStyle(TableStyle([
+            ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+            ("FONTNAME",      (0, 1), (0, -1),  "Helvetica-Bold"),
+            ("FONTNAME",      (1, 1), (1, -1),  "Helvetica"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_BLUE),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("WORDWRAP",      (1, 7), (1, 7),   True),
+        ]))
+        story.append(ct)
+    else:
+        story.append(Paragraph(
+            "No performance curves were used in this analysis. "
+            "Use the pump curve finder in the Analysis tab to source H-Q curves.",
+            S["body"]
+        ))
+    story.append(Spacer(1, 4*mm))
+
+    # ── 4. Maintenance logs ────────────────────────────────────────────────────
+    story.append(Paragraph("4. Maintenance Logs", S["subsection"]))
+    _logs = _src.get("maintenance_logs", [])
+    if _logs:
+        log_rows = [["Log file / entry", "Method", "Date"]]
+        for _log in _logs:
+            log_rows.append([
+                _log.get("filename","—"),
+                _log.get("method","—"),
+                str(_log.get("uploaded_at","—"))[:10],
+            ])
+        lt = Table(log_rows, colWidths=[80*mm, 50*mm, 40*mm])
+        lt.setStyle(TableStyle([
+            ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_BLUE),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ]))
+        story.append(lt)
+    else:
+        story.append(Paragraph("No maintenance logs were uploaded for this analysis.", S["body"]))
+    story.append(Spacer(1, 4*mm))
+
+    # ── 5. Data quality ────────────────────────────────────────────────────────
+    story.append(Paragraph("5. Data Quality", S["subsection"]))
+    _dq = _src.get("data_quality", {})
+    _dq_score = _dq.get("score")
+    _dq_issues = _dq.get("issues", [])
+    _dq_corr   = _dq.get("corrections_applied", [])
+    if _dq_score is not None:
+        story.append(Paragraph(f"Data quality score: <b>{_dq_score}/100</b>", S["body"]))
+    if _dq_issues:
+        story.append(Paragraph(f"Issues detected: {len(_dq_issues)}", S["body"]))
+        for _iss in _dq_issues:
+            story.append(Paragraph(
+                f"• {_iss.get('check','')}: {_iss.get('col','')} — "
+                f"{_iss.get('affected_pct','')}% affected",
+                S["bullet"]
+            ))
+    if _dq_corr:
+        story.append(Paragraph("Auto-corrections applied:", S["body"]))
+        for _c in _dq_corr:
+            story.append(Paragraph(f"• {_c}", S["bullet"]))
+    if not _dq_issues and not _dq_corr:
+        story.append(Paragraph(
+            "All data quality checks passed. No issues detected.",
+            S["body"]
+        ))
+    story.append(Spacer(1, 4*mm))
+
+    # ── 6. Analysis engine ────────────────────────────────────────────────────
+    story.append(Paragraph("6. Analysis Engine", S["subsection"]))
+    _eng = _src.get("engine", {})
+    engine_rows = [
+        ["Item", "Details"],
+        ["AI model",          _eng.get("model", "Claude (Anthropic)")],
+        ["Analytics tier",    _eng.get("tier_label", "—")],
+        ["Analysis types",    ", ".join(_eng.get("analysis_types", []))],
+        ["Analysis date",     _eng.get("analysis_date", datetime.now().strftime("%d %b %Y %H:%M"))],
+        ["Platform version",  _eng.get("platform_version", "Machine Analytics v1.0")],
+    ]
+    et = Table(engine_rows, colWidths=[60*mm, 110*mm])
+    et.setStyle(TableStyle([
+        ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTNAME",      (0, 1), (0, -1),  "Helvetica-Bold"),
+        ("FONTNAME",      (1, 1), (1, -1),  "Helvetica"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8.5),
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_BLUE),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_LIGHT]),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+    ]))
+    story.append(et)
+    story.append(Spacer(1, 6*mm))
 
     # ---- Analysis sections ----
     for atype, insights in multi_results.items():
