@@ -43,12 +43,14 @@ except Exception:
     def fix_physical_impossibles(df,col,**kw): return {"corrected_df":df,"changes":0,"description":"","method":""}
     def fix_flatline(df,col,**kw): return {"corrected_df":df,"changes":0,"description":"","method":""}
 try:
-    from pump_physics import detect_phase, check_phase4_viability, phase1_power_baseline, phase2_hydraulic_efficiency
+    from pump_physics import detect_phase, check_phase4_viability, run_all_phases, parse_nameplate
     PUMP_PHYSICS_AVAILABLE = True
 except Exception:
     PUMP_PHYSICS_AVAILABLE = False
-    def detect_phase(df): return {"phases":[],"highest_phase":0}
+    def detect_phase(df): return {"phases":[],"highest_phase":0,"cols":{},"has_power":False,"has_flow":False,"has_pressure":False,"has_temp":False,"has_vibr":False,"has_speed":False,"has_3v":False,"has_3i":False}
     def check_phase4_viability(df,cols,**kw): return {"viable":False,"level":"not_viable","message":"","recommendation":""}
+    def run_all_phases(df,desc,**kw): return {"phases":{},"all_findings":[],"summary":"","phase_info":{},"np_data":{}}
+    def parse_nameplate(desc): return {}
 try:
     from pump_curve_finder import (
         get_manufacturer_info, MANUFACTURER_URLS,
@@ -1953,6 +1955,22 @@ with tab_analysis:
                 st.session_state["_last_schedule"]   = schedule or {}
                 st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
+                # ── Pump physics pre-run ───────────────────────────────
+                _pump_physics_summary = ""
+                if PUMP_PHYSICS_AVAILABLE:
+                    _mtype_check = machine_info.get("machine_type","")
+                    _is_pump_check = (_mtype_check == "Centrifugal Pump" or
+                                      any(k in _mtype_check.lower() for k in ["pump","centrifugal"]))
+                    if _is_pump_check and data is not None and not data.empty:
+                        _phys_result = run_all_phases(
+                            data,
+                            machine_info.get("description",""),
+                            hq_curve=st.session_state.get("_pump_hq_curve"),
+                            bearing_freqs=st.session_state.get("_pump_bearing_freqs"),
+                        )
+                        _pump_physics_summary = _phys_result.get("summary","")
+                        st.session_state["_pump_physics_result"] = _phys_result
+
                 # ── Data quality check ─────────────────────────────────
                 _dq_ctx = ""
                 if data is not None and not data.empty:
@@ -1965,7 +1983,7 @@ with tab_analysis:
                         "machine_info":      machine_info,
                         "date_range":        date_range,
                         "baseline_period":   st.session_state.get("baseline_period", (min_d, min_d)),
-                        "extra_context":     extra_context,
+                        "extra_context":     (extra_context + "\n\n" + _pump_physics_summary).strip() if _pump_physics_summary else extra_context,
                         "schedule":          schedule,
                         "logs_text":         db.get_logs_text(selected_id),
                         "filtered_data":     filtered_data,
@@ -2248,6 +2266,52 @@ with tab_analysis:
             # Show results only when DQ gate is not active
             _show_results = not st.session_state.get("_pending_analysis", False)
             if _show_results:
+
+                # ── Pump physics results panel ────────────────────────
+                _phys_res = st.session_state.get("_pump_physics_result")
+                if _phys_res and _phys_res.get("phases"):
+                    _all_f = _phys_res.get("all_findings", [])
+                    _n_crit_ph = sum(1 for f in _all_f if f.get("severity") == "critical")
+                    _n_warn_ph = sum(1 for f in _all_f if f.get("severity") == "warning")
+                    _ph_label  = (f"  ·  {_n_crit_ph} critical" if _n_crit_ph else "") +                                  (f"  ·  {_n_warn_ph} warning(s)" if _n_warn_ph else "") +                                  ("  ·  No issues" if not _all_f else "")
+                    _ph_nums   = sorted(_phys_res["phases"].keys())
+                    _ph_names  = {1:"Power Baseline",2:"Hydraulic Efficiency",
+                                  3:"Full Duty Point",4:"Thermodynamic",5:"Mechanical"}
+                    with st.expander(
+                        f"🔧 Pump physics — Phases {_ph_nums}{_ph_label}",
+                        expanded=(_n_crit_ph > 0)
+                    ):
+                        for _ph_n, _ph_r in sorted(_phys_res["phases"].items()):
+                            st.markdown(f"**Phase {_ph_n} — {_ph_r['name']}**")
+                            # Warnings
+                            for _w in _ph_r.get("warnings", []):
+                                st.warning(_w)
+                            # Metrics table
+                            _mets = _ph_r.get("metrics", {})
+                            if _mets:
+                                _met_cols = st.columns(min(len(_mets), 3))
+                                for _mi, (_mk, _mv) in enumerate(_mets.items()):
+                                    _met_cols[_mi % 3].metric(_mk, str(_mv))
+                            # Findings
+                            for _f in _ph_r.get("findings", []):
+                                _sev = _f.get("severity","info")
+                                _conf = _f.get("confidence","")
+                                _icon = {
+                                    "critical": "❌",
+                                    "warning":  "⚠️",
+                                    "info":     "ℹ️",
+                                }.get(_sev, "•")
+                                _bg  = {"critical":"#FFF0F0","warning":"#FFFBF0","info":"#EAF4FF"}.get(_sev,"#F8F8F8")
+                                _bc  = {"critical":"#A32D2D","warning":"#BA7517","info":"#185FA5"}.get(_sev,"#888")
+                                st.markdown(
+                                    f'<div style="background:{_bg};border-left:4px solid {_bc};' +
+                                    f'padding:8px 12px;margin-bottom:6px;border-radius:3px;">' +
+                                    f'<span style="font-weight:700;color:{_bc}">{_icon} {_f["finding"]}</span>' +
+                                    f' &nbsp;·&nbsp; <span style="color:#888;font-size:0.82em">Phase {_ph_n} · Confidence: {_conf}</span><br>' +
+                                    f'<span style="font-size:0.87em">{_f["detail"]}</span></div>',
+                                    unsafe_allow_html=True)
+                            st.markdown("")
+
                 dq = st.session_state.get("last_dq_report")
                 if dq:
                     _sev_color = {"critical":"#A32D2D","warning":"#BA7517","info":"#185FA5"}
