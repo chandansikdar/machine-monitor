@@ -172,6 +172,27 @@ class Database:
         except Exception:
             return None
 
+    def get_data_from_file(self, machine_id: str, filename: str) -> Optional[pd.DataFrame]:
+        """Load data from a specific file only (not all files for the machine)."""
+        machine_dir = self.data_dir / machine_id
+        # Find the matching file
+        matches = list(machine_dir.glob("*.csv")) if machine_dir.exists() else []
+        target = next((f for f in matches if f.name == filename or filename in f.name), None)
+        if not target or not target.exists():
+            return None
+        try:
+            df = self.conn.execute(f"""
+                SELECT * FROM read_csv_auto('{str(target).replace(chr(92),"/")}')
+                ORDER BY timestamp
+            """).df()
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df = df.set_index("timestamp")
+            for col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+            return df
+        except Exception:
+            return None
+
     def get_file_info(self, machine_id: str) -> list:
         rows = self.conn.execute("""
             SELECT file_path, rows, columns, ingested_at
