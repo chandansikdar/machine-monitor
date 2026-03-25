@@ -272,6 +272,16 @@ def run_data_quality_checks(
                     end_ts=worst_start + worst_gap,
                 ))
 
+    # ── Pre-compute frozen runs for coincidence check (Check 6) ────────────
+    # If multiple columns freeze over the same period, it's a real operating
+    # condition (e.g. planned stop, constant load) — not a sensor fault.
+    # A genuine stuck sensor freezes alone while others keep varying.
+    _all_frozen = {}  # col -> list of run dicts
+    for _c in numeric_cols:
+        _sc = df[_c].dropna()
+        if len(_sc) >= FROZEN_RUN_MIN:
+            _all_frozen[_c] = _all_runs_of_identical(_sc, FROZEN_RUN_MIN)
+
     # ── Per-column checks ─────────────────────────────────────────────────────
     for col in numeric_cols:
         s = df[col]
@@ -325,18 +335,35 @@ def run_data_quality_checks(
                     start_ts=first_flat, end_ts=flat_end))
 
         # ── 6. Frozen value runs (consecutive identical readings) ──────────────
-        # Find longest run of identical values
+        # Only flag if this column freezes ALONE.  If other columns also have
+        # a frozen run overlapping the same period, this is a real operating
+        # condition (shutdown, constant load, idle) — not a stuck sensor.
         runs = _longest_run_of_identical(s_clean)
         if runs["length"] >= FROZEN_RUN_MIN:
-            sev = CRITICAL if runs["length"] > 50 else WARNING
-            frozen_start = runs["start"]
-            frozen_end   = runs.get("end")
-            issues.append(_issue(col, "Frozen value run", sev,
-                f"{runs['length']} consecutive identical readings of "
-                f"{runs['value']:.4f} starting at {_fmt_ts(runs['start'])}. "
-                f"Sensor output appears frozen — not a valid process reading.",
-                runs["length"], len(s_clean),
-                start_ts=frozen_start, end_ts=frozen_end))
+            run_start = runs["start"]
+            run_end   = runs["end"]
+
+            # Check coincidence: does ANY other column also freeze in this window?
+            coincident = False
+            for other_col, other_runs in _all_frozen.items():
+                if other_col == col:
+                    continue
+                for orun in other_runs:
+                    # Overlapping if one starts before the other ends and vice versa
+                    if orun["start"] <= run_end and orun["end"] >= run_start:
+                        coincident = True
+                        break
+                if coincident:
+                    break
+
+            if not coincident:
+                sev = CRITICAL if runs["length"] > 50 else WARNING
+                issues.append(_issue(col, "Frozen value run", sev,
+                    f"{runs['length']} consecutive identical readings of "
+                    f"{runs['value']:.4f} starting at {_fmt_ts(runs['start'])}. "
+                    f"Sensor output appears frozen \u2014 not a valid process reading.",
+                    runs["length"], len(s_clean),
+                    start_ts=run_start, end_ts=run_end))
 
         # ── 7. Spike / step change ────────────────────────────────────────────
         q1, q3  = s_clean.quantile(0.25), s_clean.quantile(0.75)
@@ -440,6 +467,36 @@ def _longest_run_of_identical(s: pd.Series) -> dict:
         best = {"length": current_len, "value": current_val,
                 "start": current_start, "end": current_end}
     return best
+
+
+def _all_runs_of_identical(s: pd.Series, min_length: int) -> list:
+    """Return ALL consecutive runs of identical values with length >= min_length.
+
+    Each run: {"length": int, "value": float, "start": Timestamp, "end": Timestamp}
+    """
+    runs = []
+    if len(s) == 0:
+        return runs
+    current_val   = s.iloc[0]
+    current_start = s.index[0]
+    current_end   = s.index[0]
+    current_len   = 1
+    for idx, val in zip(s.index[1:], s.iloc[1:]):
+        if val == current_val:
+            current_len += 1
+            current_end  = idx
+        else:
+            if current_len >= min_length:
+                runs.append({"length": current_len, "value": current_val,
+                             "start": current_start, "end": current_end})
+            current_val   = val
+            current_start = idx
+            current_end   = idx
+            current_len   = 1
+    if current_len >= min_length:
+        runs.append({"length": current_len, "value": current_val,
+                     "start": current_start, "end": current_end})
+    return runs
 
 
 def _default_physical_minimums(cols: list) -> dict:
