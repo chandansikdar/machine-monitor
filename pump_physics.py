@@ -35,16 +35,24 @@ KW_SPEED   = ["speed_rpm","shaft_speed","speed","rpm","rps"]
 KW_V_A     = ["voltage_a","v_a","u_ab"]
 KW_V_B     = ["voltage_b","v_b","u_bc"]
 KW_V_C     = ["voltage_c","v_c","u_ca"]
-KW_I_A     = ["current_a","ia","phase_a_current"]
-KW_I_B     = ["current_b","ib","phase_b_current"]
-KW_I_C     = ["current_c","ic","phase_c_current"]
+KW_I_A     = ["current_a","phase_a_current","ia_rms","i_phase_a"]
+KW_I_B     = ["current_b","phase_b_current","ib_rms","i_phase_b"]
+KW_I_C     = ["current_c","phase_c_current","ic_rms","i_phase_c"]
 
 
 def _find(df, kws):
     for c in df.columns:
         cl = c.lower()
-        if any(k in cl for k in kws):
-            return c
+        for k in kws:
+            # Use word-boundary matching for short keywords (<=3 chars)
+            # to avoid false matches like "ib" in "vibration"
+            if len(k) <= 3:
+                import re as _re
+                if _re.search(r"(?<![a-z])" + _re.escape(k) + r"(?![a-z])", cl):
+                    return c
+            else:
+                if k in cl:
+                    return c
     return None
 
 
