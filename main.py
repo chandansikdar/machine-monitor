@@ -1421,10 +1421,12 @@ with tab_data:
 
             # ── Auto-group columns by unit type ──────────────────────
             def _group_by_unit(cols):
+                import re as _re
                 groups = {
                     "Pressure": [],
                     "Temperature": [],
-                    "Current / Power": [],
+                    "Current": [],
+                    "Power": [],
                     "Vibration / Velocity": [],
                     "Speed / Frequency": [],
                     "Flow / Volume": [],
@@ -1432,21 +1434,38 @@ with tab_data:
                     "Energy": [],
                     "Other": [],
                 }
+                # NOTE: Order matters — first match wins.
+                # "Voltage" must be before "Current" so voltage_A_V
+                # matches "voltage" and not a short current keyword.
+                # "Energy" must be before "Power" so kwh columns don't
+                # match "kw" from Power.
+                # Short keywords (\u22643 chars) use word-boundary regex
+                # to prevent partial matches (e.g. "_a" in "voltage_a_v").
                 kw_map = [
                     ("Energy",              ["kwh","kw_h","energy","consumption"]),
-                    ("Current / Power",     ["current","_a","amps","power_kw","kilowatt","watt","cos_phi","power_factor","pf"]),
+                    ("Voltage",             ["voltage","volt"]),
+                    ("Current",             ["current","amps","ampere"]),
+                    ("Power",               ["power","kilowatt","watt","cos_phi","power_factor","pf"]),
                     ("Pressure",            ["pressure","press","_bar","_psi","_kpa","_mbar"]),
-                    ("Temperature",         ["temp","temperature","_celsius","_fahrenheit","_c","_degc","deg_c"]),
+                    ("Temperature",         ["temp","temperature","_celsius","_fahrenheit","_degc","deg_c"]),
                     ("Vibration / Velocity",["vibration","vibr","velocity","mm_s","mm/s","acceleration","accel"]),
                     ("Speed / Frequency",   ["speed","rpm","rps","frequency","_hz"]),
                     ("Flow / Volume",       ["flow","volume","_m3","litre","liter","gpm","cfm"]),
-                    ("Voltage",             ["voltage","_v","volt"]),
                 ]
+                def _kw_match(keyword, col_lower):
+                    """Match keyword in column name; use word-boundary
+                    regex for short keywords to avoid false positives."""
+                    if len(keyword) <= 3:
+                        return bool(_re.search(
+                            r"(?<![a-z])" + _re.escape(keyword) + r"(?![a-z])",
+                            col_lower))
+                    return keyword in col_lower
+
                 for col in cols:
                     cl = col.lower()
                     placed = False
                     for group_name, keywords in kw_map:
-                        if any(kw in cl for kw in keywords):
+                        if any(_kw_match(kw, cl) for kw in keywords):
                             groups[group_name].append(col)
                             placed = True
                             break
