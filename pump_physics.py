@@ -305,16 +305,37 @@ def run_phase1(df, cols, np_d):
             vi = round(vi, 2)
             res["metrics"]["Voltage imbalance V\u2082/V\u2081 (%)"] = vi
             res["metrics"]["Mean line voltage (V)"] = round(v_avg, 1)
+
+            # Identify which phase deviates most
+            _phase_devs = {"A": va_m - v_avg, "B": vb_m - v_avg, "C": vc_m - v_avg}
+            _worst_phase = max(_phase_devs, key=lambda k: abs(_phase_devs[k]))
+            _worst_dev   = _phase_devs[_worst_phase]
+            _low_high    = "low" if _worst_dev < 0 else "high"
+            res["metrics"]["Phase A voltage (V)"] = round(va_m, 1)
+            res["metrics"]["Phase B voltage (V)"] = round(vb_m, 1)
+            res["metrics"]["Phase C voltage (V)"] = round(vc_m, 1)
+            res["metrics"]["Worst imbalance phase"] = f"Phase {_worst_phase} ({abs(_worst_dev):.1f} V {_low_high})"
+
             limits = {1: 2.0, 2: 1.5, 3: 1.0, 4: 0.5}
             lim = limits.get(ie, 1.0)
             if vi > lim * 2:
                 res["findings"].append({"finding": "Severe voltage imbalance",
-                    "detail": f"V\u2082/V\u2081 = {vi}% exceeds IE{ie} limit {lim}% by {vi/lim:.1f}\u00d7. Risk of motor damage. Investigate supply.",
+                    "detail": f"V\u2082/V\u2081 = {vi}% exceeds IE{ie} limit {lim}% by {vi/lim:.1f}\u00d7. "
+                              f"Phase {_worst_phase} is {abs(_worst_dev):.1f} V {_low_high} (A={va_m:.1f}, B={vb_m:.1f}, C={vc_m:.1f} V). "
+                              f"Risk of motor damage. Investigate supply.",
                     "severity": "critical", "confidence": HIGH})
             elif vi > lim:
                 res["findings"].append({"finding": "Voltage imbalance above IE class limit",
-                    "detail": f"V\u2082/V\u2081 = {vi}% exceeds IE{ie} limit {lim}% per IEC 60034-26.",
+                    "detail": f"V\u2082/V\u2081 = {vi}% exceeds IE{ie} limit {lim}% per IEC 60034-26. "
+                              f"Phase {_worst_phase} is {abs(_worst_dev):.1f} V {_low_high} (A={va_m:.1f}, B={vb_m:.1f}, C={vc_m:.1f} V).",
                     "severity": "warning", "confidence": HIGH})
+            elif vi > 0.2:
+                # Below limit but still notable \u2014 report as info
+                res["findings"].append({"finding": "Voltage imbalance within limits but measurable",
+                    "detail": f"V\u2082/V\u2081 = {vi}% (IE{ie} limit {lim}%). "
+                              f"Phase {_worst_phase} is {abs(_worst_dev):.1f} V {_low_high} (A={va_m:.1f}, B={vb_m:.1f}, C={vc_m:.1f} V). "
+                              f"No action required but monitor for increase.",
+                    "severity": "info", "confidence": HIGH})
 
     # Current imbalance
     if cols.get("i_a") and cols.get("i_b") and cols.get("i_c"):
@@ -682,7 +703,400 @@ def run_phase5(df, cols, np_d, bearing_freqs=None):
     return res
 
 
-def run_all_phases(df, machine_description, hq_curve=None, bearing_freqs=None):
+# ======================================================================= #
+# Time-segmented event detection
+# ======================================================================= #
+
+def _detect_shift_events(s, baseline_end_idx, window_size=48, threshold_sigma=3.0):
+    """
+    Detect discrete shift events in a time series by comparing rolling
+    window means against a baseline period.
+
+    Args:
+        s              : pd.Series with DatetimeIndex (already cleaned, running only)
+        baseline_end_idx : index position marking end of baseline period
+        window_size    : number of readings per rolling window
+        threshold_sigma: how many baseline-\u03c3 constitutes a shift
+
+    Returns:
+        list of {"start": Timestamp, "end": Timestamp|None, "direction": str,
+                 "magnitude": float, "magnitude_pct": float, "baseline_mean": float,
+                 "shifted_mean": float, "recovered": bool}
+    """
+    if len(s) < window_size * 3 or baseline_end_idx < window_size:
+        return []
+
+    baseline = s.iloc[:baseline_end_idx]
+    bl_mean  = float(baseline.mean())
+    bl_std   = float(baseline.std())
+    if bl_std < 1e-9 or bl_mean == 0:
+        return []
+
+    # Rolling window means across the full series
+    roll_mean = s.rolling(window_size, min_periods=window_size // 2).mean()
+
+    # Flag each point as shifted or normal
+    deviation = (roll_mean - bl_mean) / bl_std
+    shifted   = deviation.abs() > threshold_sigma
+
+    # Walk through to find contiguous shifted periods
+    events = []
+    in_event  = False
+    evt_start = None
+    evt_dir   = None
+
+    for i in range(baseline_end_idx, len(shifted)):
+        idx = shifted.index[i]
+        if shifted.iloc[i] and not in_event:
+            in_event  = True
+            evt_start = idx
+            evt_dir   = "drop" if deviation.iloc[i] < 0 else "rise"
+        elif not shifted.iloc[i] and in_event:
+            # Event ended \u2014 parameter recovered
+            evt_end   = shifted.index[i - 1]
+            evt_slice = s.loc[evt_start:evt_end]
+            if len(evt_slice) >= window_size // 2:
+                events.append({
+                    "start":         evt_start,
+                    "end":           evt_end,
+                    "direction":     evt_dir,
+                    "magnitude":     round(float(evt_slice.mean()) - bl_mean, 4),
+                    "magnitude_pct": round((float(evt_slice.mean()) - bl_mean) / abs(bl_mean) * 100, 2),
+                    "baseline_mean": round(bl_mean, 4),
+                    "shifted_mean":  round(float(evt_slice.mean()), 4),
+                    "recovered":     True,
+                })
+            in_event = False
+
+    # If still in an event at end of data \u2014 open-ended (not recovered)
+    if in_event and evt_start is not None:
+        evt_slice = s.loc[evt_start:]
+        if len(evt_slice) >= window_size // 2:
+            events.append({
+                "start":         evt_start,
+                "end":           s.index[-1],
+                "direction":     evt_dir,
+                "magnitude":     round(float(evt_slice.mean()) - bl_mean, 4),
+                "magnitude_pct": round((float(evt_slice.mean()) - bl_mean) / abs(bl_mean) * 100, 2),
+                "baseline_mean": round(bl_mean, 4),
+                "shifted_mean":  round(float(evt_slice.mean()), 4),
+                "recovered":     False,
+            })
+
+    return events
+
+
+def _fmt_date(ts):
+    try:
+        return pd.Timestamp(ts).strftime("%Y-%m-%d")
+    except Exception:
+        return str(ts)
+
+
+def run_time_segmented(df, cols, np_d, baseline_period=None):
+    """
+    Time-segmented event detection across all physics-relevant parameters.
+
+    Uses the same baseline period as the rest of the analysis (engineer-specified
+    or app default) and detects discrete shift events \u2014 step changes that start
+    and optionally recover \u2014 in each parameter.
+
+    Args:
+        df               : DataFrame with DatetimeIndex
+        cols             : column mapping from detect_phase()
+        np_d             : parsed nameplate dict
+        baseline_period  : (start_date, end_date) tuple — same as used by
+                           control charts and ML engine.  If None, falls back
+                           to first 20% / minimum 14 days.
+
+    Returns:
+        {"name": str, "events_by_col": dict, "interpreted_events": list,
+         "findings": list, "metrics": dict}
+    """
+    res = {
+        "name":              "Time-Segmented Event Detection",
+        "events_by_col":     {},
+        "interpreted_events": [],
+        "findings":          [],
+        "metrics":           {},
+    }
+
+    if not isinstance(df.index, pd.DatetimeIndex) or len(df) < 100:
+        return res
+
+    # Determine baseline end from the passed period, or fall back to default
+    if baseline_period and len(baseline_period) == 2:
+        bl_end_ts = pd.Timestamp(baseline_period[1])
+        bl_start_ts = pd.Timestamp(baseline_period[0])
+        # Sanity check: baseline must be within data range
+        if bl_end_ts < df.index.min() or bl_start_ts > df.index.max():
+            bl_end_ts = None
+    else:
+        bl_end_ts = None
+
+    if bl_end_ts is None:
+        # Fallback: first 20%, minimum 14 days (matches analyzer.py default)
+        total_days = (df.index.max() - df.index.min()).days
+        bl_days    = max(14, int(total_days * 0.20))
+        bl_end_ts  = df.index.min() + pd.Timedelta(days=bl_days)
+
+    # Interval in readings \u2014 used for window sizing
+    dt_h       = _interval_h(df)
+    # Window = ~2 days of readings (minimum 12 readings)
+    window_sz  = max(12, int(48 / max(dt_h, 0.01)))
+
+    # Determine running mask: exclude shutdown periods
+    rated_kw = np_d.get("rated_power_kw") or 0
+    if cols.get("power"):
+        pw = df[cols["power"]]
+        min_run = 0.05 * rated_kw if rated_kw > 0 else float(pw.dropna().quantile(0.10))
+        running_mask = pw > min_run
+    elif cols.get("current"):
+        cur = df[cols["current"]]
+        min_run = float(cur.dropna().quantile(0.10))
+        running_mask = cur > min_run
+    else:
+        running_mask = pd.Series(True, index=df.index)
+
+    # Parameters to scan \u2014 map logical name to column and label
+    scan_params = []
+    if cols.get("p_in"):
+        scan_params.append(("suction_pressure", cols["p_in"], "Suction pressure"))
+    if cols.get("p_out"):
+        scan_params.append(("discharge_pressure", cols["p_out"], "Discharge pressure"))
+    if cols.get("flow"):
+        scan_params.append(("flow", cols["flow"], "Flow rate"))
+    if cols.get("power"):
+        scan_params.append(("power", cols["power"], "Input power"))
+    elif cols.get("current"):
+        scan_params.append(("current", cols["current"], "Motor current"))
+    if cols.get("vibr"):
+        scan_params.append(("vibration", cols["vibr"], "Vibration"))
+    if cols.get("speed"):
+        scan_params.append(("speed", cols["speed"], "Shaft speed"))
+
+    # Also check differential pressure and head if pressures available
+    has_dp = bool(cols.get("p_in") and cols.get("p_out"))
+
+    if not scan_params:
+        return res
+
+    # Run shift detection on each parameter
+    all_events = {}  # logical_name -> list of events
+    for logical, colname, label in scan_params:
+        s = df[colname].copy()
+        s[~running_mask] = np.nan
+        s = s.dropna()
+        if len(s) < 100:
+            continue
+        bl_end_idx = int((s.index < bl_end_ts).sum())
+        if bl_end_idx < window_sz:
+            continue
+        events = _detect_shift_events(s, bl_end_idx, window_sz, threshold_sigma=3.0)
+        if events:
+            all_events[logical] = events
+            res["events_by_col"][label] = events
+
+    # Also run on derived differential pressure
+    if has_dp:
+        dp = (df[cols["p_out"]] - df[cols["p_in"]]).copy()
+        dp[~running_mask] = np.nan
+        dp = dp.dropna()
+        dp = dp[dp > 0]
+        if len(dp) >= 100:
+            bl_end_idx = int((dp.index < bl_end_ts).sum())
+            if bl_end_idx >= window_sz:
+                dp_events = _detect_shift_events(dp, bl_end_idx, window_sz, threshold_sigma=3.0)
+                if dp_events:
+                    all_events["diff_pressure"] = dp_events
+                    res["events_by_col"]["Differential pressure"] = dp_events
+
+    if not all_events:
+        res["metrics"]["Events detected"] = 0
+        return res
+
+    # ── Physics-informed interpretation of coincident events ──────────
+    # Collect all unique event windows and check which parameters shift together
+    interpreted = []
+
+    # Helper: do two events overlap in time?
+    def _overlaps(e1, e2):
+        return e1["start"] <= e2["end"] and e2["start"] <= e1["end"]
+
+    # Build a list of all individual events with their logical names
+    flat_events = []
+    for logical, evts in all_events.items():
+        for e in evts:
+            flat_events.append({"logical": logical, **e})
+
+    # Group overlapping events into coincident clusters
+    clusters = []
+    used = set()
+    for i, ev1 in enumerate(flat_events):
+        if i in used:
+            continue
+        cluster = [ev1]
+        used.add(i)
+        for j, ev2 in enumerate(flat_events):
+            if j in used:
+                continue
+            if _overlaps(ev1, ev2):
+                cluster.append(ev2)
+                used.add(j)
+        clusters.append(cluster)
+
+    for cluster in clusters:
+        params_involved = {e["logical"] for e in cluster}
+        earliest_start  = min(e["start"] for e in cluster)
+        latest_end      = max(e["end"] for e in cluster)
+        recovered       = all(e["recovered"] for e in cluster)
+
+        # Build the interpretation
+        interp = {
+            "start":      _fmt_date(earliest_start),
+            "end":        _fmt_date(latest_end),
+            "recovered":  recovered,
+            "parameters": {},
+            "diagnosis":  "",
+            "severity":   "info",
+            "confidence": LOW,
+        }
+        for e in cluster:
+            label = next((lbl for log, _, lbl in scan_params if log == e["logical"]),
+                         e["logical"].replace("_", " ").title())
+            interp["parameters"][label] = {
+                "direction":     e["direction"],
+                "magnitude_pct": e["magnitude_pct"],
+            }
+
+        # ── Apply pump physics rules ─────────────────────────────
+        has_suct_drop = "suction_pressure" in params_involved and \
+                        any(e["direction"] == "drop" for e in cluster if e["logical"] == "suction_pressure")
+        has_dp_drop   = "diff_pressure" in params_involved and \
+                        any(e["direction"] == "drop" for e in cluster if e["logical"] == "diff_pressure")
+        has_disc_drop = "discharge_pressure" in params_involved and \
+                        any(e["direction"] == "drop" for e in cluster if e["logical"] == "discharge_pressure")
+        has_vibr_rise = "vibration" in params_involved and \
+                        any(e["direction"] == "rise" for e in cluster if e["logical"] == "vibration")
+        has_flow_drop = "flow" in params_involved and \
+                        any(e["direction"] == "drop" for e in cluster if e["logical"] == "flow")
+        has_power_rise= "power" in params_involved and \
+                        any(e["direction"] == "rise" for e in cluster if e["logical"] == "power")
+        flow_stable   = "flow" not in params_involved
+
+        # Suction-side restriction (strainer blockage, valve closing)
+        if has_suct_drop and flow_stable and not has_disc_drop:
+            suct_evt  = next(e for e in cluster if e["logical"] == "suction_pressure")
+            recovery  = " Recovered" if suct_evt["recovered"] else " Still present"
+            interp["diagnosis"] = (
+                f"Suction-side restriction detected. Suction pressure dropped "
+                f"{abs(suct_evt['magnitude_pct']):.1f}% from baseline while flow remained stable "
+                f"\u2014 consistent with strainer blockage, inlet valve obstruction, or suction pipe "
+                f"fouling.{recovery} by {_fmt_date(suct_evt['end'])}."
+            )
+            interp["severity"]   = "warning"
+            interp["confidence"] = HIGH
+
+        # Suction blockage causing cavitation (suction drop + vibration rise)
+        elif has_suct_drop and has_vibr_rise:
+            interp["diagnosis"] = (
+                "Suction restriction with increased vibration \u2014 possible incipient cavitation. "
+                "Reduced suction pressure lowers NPSH available. Inspect suction strainer and piping."
+            )
+            interp["severity"]   = "critical"
+            interp["confidence"] = HIGH
+
+        # Impeller wear (head drop + vibration rise, flow stable or dropping)
+        elif (has_dp_drop or has_disc_drop) and has_vibr_rise:
+            interp["diagnosis"] = (
+                "Declining head with rising vibration \u2014 consistent with progressive impeller wear "
+                "or increased wear-ring clearances. Internal recirculation increases as clearances open, "
+                "causing both reduced hydraulic conversion and mechanical vibration."
+            )
+            interp["severity"]   = "critical"
+            interp["confidence"] = HIGH
+
+        # Head declining alone (early wear or system change)
+        elif has_dp_drop or has_disc_drop:
+            interp["diagnosis"] = (
+                "Head declining without other coincident shifts. May indicate early impeller wear, "
+                "check valve degradation, or a system resistance change (e.g. opened bypass valve). "
+                "Compare with maintenance records."
+            )
+            interp["severity"]   = "warning"
+            interp["confidence"] = MEDIUM
+
+        # Vibration rising alone (bearing, alignment, or balance issue)
+        elif has_vibr_rise and len(params_involved) == 1:
+            interp["diagnosis"] = (
+                "Vibration rising without hydraulic parameter changes. "
+                "Likely mechanical cause: bearing degradation, coupling misalignment, "
+                "rotor imbalance, or foundation looseness."
+            )
+            interp["severity"]   = "warning"
+            interp["confidence"] = MEDIUM
+
+        # Flow drop (system-side restriction)
+        elif has_flow_drop and not has_suct_drop:
+            interp["diagnosis"] = (
+                "Flow rate declining without suction pressure change. "
+                "System-side restriction: discharge valve throttling, pipe fouling, "
+                "or downstream blockage."
+            )
+            interp["severity"]   = "warning"
+            interp["confidence"] = MEDIUM
+
+        # Power rising with stable flow (internal friction or recirculation)
+        elif has_power_rise and flow_stable:
+            interp["diagnosis"] = (
+                "Power consumption rising with stable flow. "
+                "Possible increased mechanical friction (bearings, seals) "
+                "or internal recirculation due to wear-ring clearance increase."
+            )
+            interp["severity"]   = "warning"
+            interp["confidence"] = MEDIUM
+
+        # Generic: multiple parameters shifted but no specific pattern
+        else:
+            param_list = ", ".join(sorted(params_involved))
+            interp["diagnosis"] = (
+                f"Multiple parameters shifted simultaneously ({param_list}). "
+                "Review maintenance records for this period \u2014 may correspond to "
+                "a process change, maintenance event, or operating condition change."
+            )
+            interp["severity"]   = "info"
+            interp["confidence"] = LOW
+
+        interpreted.append(interp)
+
+    res["interpreted_events"] = interpreted
+    res["metrics"]["Events detected"]    = len(interpreted)
+    res["metrics"]["Parameters scanned"] = len(scan_params) + (1 if has_dp else 0)
+
+    # Convert interpreted events to findings
+    for ie in interpreted:
+        param_shifts = "; ".join(
+            f"{p} {v['direction']} {abs(v['magnitude_pct']):.1f}%"
+            for p, v in ie["parameters"].items()
+        )
+        period = f"{ie['start']} to {ie['end']}"
+        status = "recovered" if ie["recovered"] else "ongoing at end of dataset"
+        res["findings"].append({
+            "finding":    ie["diagnosis"].split(".")[0],  # first sentence as title
+            "detail":     (
+                f"Period: {period} ({status}). "
+                f"Parameter shifts: {param_shifts}. "
+                f"{ie['diagnosis']}"
+            ),
+            "severity":   ie["severity"],
+            "confidence": ie["confidence"],
+            "phase":      "TS",
+        })
+
+    return res
+
+
+def run_all_phases(df, machine_description, hq_curve=None, bearing_freqs=None, baseline_period=None):
     """Run all applicable phases and return combined structured results."""
     phase_info = detect_phase(df)
     np_d       = parse_nameplate(machine_description)
@@ -704,26 +1118,35 @@ def run_all_phases(df, machine_description, hq_curve=None, bearing_freqs=None):
     if 5 in phase_info["phases"]:
         phases_run[5] = run_phase5(df, phase_info["cols"], np_d, bearing_freqs)
 
+    # ── Time-segmented event detection ────────────────────────────────
+    ts_result = run_time_segmented(df, phase_info["cols"], np_d, baseline_period=baseline_period)
+    if ts_result["findings"]:
+        phases_run["TS"] = ts_result
+
     all_findings = []
     for ph_num, ph_res in phases_run.items():
         for f in ph_res.get("findings", []):
-            all_findings.append({**f, "phase": ph_num})
+            if "phase" not in f:
+                all_findings.append({**f, "phase": ph_num})
+            else:
+                all_findings.append(f)
     sev = {"critical": 0, "warning": 1, "info": 2}
     all_findings.sort(key=lambda x: sev.get(x.get("severity","info"), 2))
 
     lines = ["=== CENTRIFUGAL PUMP PHYSICS ANALYSIS ===",
-             f"Phases activated: {sorted(phases_run.keys())}",
+             f"Phases activated: {sorted(k for k in phases_run if k != 'TS')}",
              f"Drive type: {np_d.get('drive_type','unknown')}",
              f"Rated power: {np_d.get('rated_power_kw','not entered')} kW",
              ""]
-    for ph_num, ph_res in sorted(phases_run.items()):
-        lines.append(f"--- Phase {ph_num}: {ph_res['name']} ---")
+    for ph_num, ph_res in sorted(phases_run.items(), key=lambda x: (isinstance(x[0], str), x[0])):
+        ph_label = ph_res.get("name", f"Phase {ph_num}")
+        lines.append(f"--- {ph_label} ---")
         for w in ph_res.get("warnings", []):
             lines.append(f"  WARNING: {w}")
         for k, v in ph_res.get("metrics", {}).items():
             lines.append(f"  {k}: {v}")
         for f in ph_res.get("findings", []):
-            lines.append(f"  FINDING [{f['severity'].upper()}/{f['confidence']}]: {f['finding']} — {f['detail']}")
+            lines.append(f"  FINDING [{f['severity'].upper()}/{f.get('confidence','?')}]: {f['finding']} \u2014 {f['detail']}")
         lines.append("")
 
     return {"phase_info": phase_info, "np_data": np_d, "phases": phases_run,
