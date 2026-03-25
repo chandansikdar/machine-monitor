@@ -49,6 +49,20 @@ except Exception:
     PUMP_PHYSICS_AVAILABLE = False
     def detect_phase(df): return {"phases":[],"highest_phase":0}
     def check_phase4_viability(df,cols,**kw): return {"viable":False,"level":"not_viable","message":"","recommendation":""}
+try:
+    from pump_curve_finder import (
+        get_manufacturer_info, MANUFACTURER_URLS,
+        search_and_extract_curves, validate_hq_points,
+        format_source_reference_text
+    )
+    CURVE_FINDER_AVAILABLE = True
+except Exception:
+    CURVE_FINDER_AVAILABLE = False
+    def get_manufacturer_info(m): return None
+    MANUFACTURER_URLS = {}
+    def search_and_extract_curves(*a,**k): return {"success":False,"method":"not_found","message":"Module unavailable","hq_points":[],"eta_points":[],"power_points":[],"source_ref":{},"needs_review":True,"raw_response":""}
+    def validate_hq_points(*a,**k): return {"valid":False,"warnings":["Module unavailable"]}
+    def format_source_reference_text(r): return ""
 from database import Database
 from visualizer import Visualizer
 
@@ -1202,6 +1216,107 @@ with tab_analysis:
                             "temperature columns (keywords: temp_in, temp_out) to assess "
                             "whether the thermodynamic method is viable for this pump."
                         )
+
+                    # ── Pump curve finder ─────────────────────────────────
+                    if CURVE_FINDER_AVAILABLE:
+                        st.markdown("---")
+                        st.markdown("**\U0001f4c8 Performance curve sourcing**")
+                        _api_key = os.getenv("ANTHROPIC_API_KEY","")
+                        _cf_mfr  = st.text_input(
+                            "Pump manufacturer",
+                            placeholder="e.g. Grundfos, KSB, Wilo, Sulzer",
+                            key="cf_manufacturer",
+                        )
+                        _cf_model = st.text_input(
+                            "Pump model number (from nameplate)",
+                            placeholder="e.g. CR 32-3, Etanorm 040-025-200",
+                            key="cf_model",
+                        )
+                        _cf_flow  = st.number_input("Rated flow (m\u00b3/h)", min_value=0.0, value=0.0, key="cf_flow")
+                        _cf_head  = st.number_input("Rated head (m)", min_value=0.0, value=0.0, key="cf_head")
+
+                        if _cf_mfr:
+                            _mfr_info = get_manufacturer_info(_cf_mfr)
+                            if _mfr_info:
+                                st.caption(
+                                    f"\u2705 {_mfr_info['name']} is in the manufacturer library. "
+                                    f"Will try product selector first.  \n"
+                                    f"\U0001f517 Manual lookup: [{_mfr_info['selector_url']}]({_mfr_info['selector_url']})"
+                                )
+                            else:
+                                st.caption(
+                                    f"\u2139\ufe0f {_cf_mfr} is not in the known manufacturer library. "
+                                    f"Will use web search only."
+                                )
+
+                        if st.button(
+                            "\U0001f50d Search for pump curves",
+                            key="search_curves_btn",
+                            type="primary",
+                            disabled=not (_cf_mfr and _cf_model and _cf_flow > 0 and _cf_head > 0 and _api_key),
+                        ):
+                            with st.spinner(
+                                f"Searching for {_cf_mfr} {_cf_model} curves... "
+                                "Trying manufacturer site first, then web search."
+                            ):
+                                _result = search_and_extract_curves(
+                                    _cf_mfr, _cf_model, _cf_flow, _cf_head, _api_key
+                                )
+                            st.session_state["_curve_result"] = _result
+
+                        _cr = st.session_state.get("_curve_result")
+                        if _cr:
+                            _method_labels = {
+                                "manufacturer_site": "\u2705 Found on manufacturer site",
+                                "web_search":        "\U0001f310 Found via web search",
+                                "not_found":         "\u274c Not found automatically",
+                            }
+                            _mlabel = _method_labels.get(_cr.get("method",""), _cr.get("method",""))
+                            if _cr.get("success"):
+                                st.success(f"{_mlabel}")
+                                st.info(_cr.get("message",""))
+                                _hq = _cr.get("hq_points",[])
+                                if _hq:
+                                    # Validate points
+                                    _val = validate_hq_points(_hq, _cf_flow, _cf_head)
+                                    if _val["warnings"]:
+                                        for _w in _val["warnings"]:
+                                            st.warning(f"\u26a0\ufe0f {_w}")
+                                    st.markdown(f"**{len(_hq)} H-Q data points extracted — please review:**")
+                                    import pandas as _pd2
+                                    _hq_df = _pd2.DataFrame(_hq)
+                                    st.dataframe(_hq_df, use_container_width=True, height=200)
+                                    if _cr.get("eta_points"):
+                                        with st.expander("Efficiency curve points", expanded=False):
+                                            st.dataframe(_pd2.DataFrame(_cr["eta_points"]), use_container_width=True)
+                                # Source reference
+                                _ref = _cr.get("source_ref",{})
+                                if _ref:
+                                    with st.expander("\U0001f4cb Source reference (included in report)", expanded=False):
+                                        st.code(format_source_reference_text(_ref))
+                                        st.caption(
+                                            f"Method: {_ref.get('method','')}  \u00b7  "
+                                            f"Confidence: {_ref.get('confidence','')}  \u00b7  "
+                                            f"Retrieved: {_ref.get('retrieved_date','')}  \n"
+                                            + (f"URL: {_ref.get('url','')}" if _ref.get('url') else "")
+                                        )
+                                    # Save to session for report
+                                    st.session_state["_pump_curve_source_ref"] = _ref
+                                    st.warning(
+                                        "\u26a0\ufe0f **Review required:** Verify these points match "
+                                        "your specific pump variant and impeller diameter before use."
+                                    )
+                            else:
+                                st.error(f"{_mlabel}")
+                                st.info(_cr.get("message",""))
+                                _mfr_info2 = get_manufacturer_info(_cf_mfr)
+                                if _mfr_info2:
+                                    st.markdown(
+                                        f"\U0001f517 Try manually at "
+                                        f"[{_mfr_info2['name']} product selector]"
+                                        f"({_mfr_info2['selector_url']}):  \n"
+                                        f"{_mfr_info2['datasheet_hint']}"
+                                    )
             else:
                 with st.expander("\U0001f527 Pump physics — no physics columns detected", expanded=False):
                     st.info(
@@ -1905,11 +2020,153 @@ with tab_analysis:
                                     "rows": len(_data),
                                     "columns": len(_data.select_dtypes(include="number").columns),
                                 }
+                            # ── Build data_sources for report traceability ──
+                            _file_info_list = db.get_file_info(selected_id)
+                            _active_fname   = st.session_state.get(f"active_file_{selected_id}", "")
+                            _active_fi      = next(
+                                (f for f in _file_info_list if f["file"] == _active_fname),
+                                _file_info_list[-1] if _file_info_list else {}
+                            )
+                            _logs_list      = db.get_logs(selected_id) if hasattr(db, "get_logs") else []
+                            _dq_report      = st.session_state.get("last_dq_report", {})
+                            _corr_log       = st.session_state.get("_correction_log", [])
+                            _ml_tier        = st.session_state.get("last_multi_results", {})
+                            _tier_label     = ""
+                            for _at, _ins in (_ml_tier or {}).items():
+                                if isinstance(_ins, dict) and "_ml_tier" in _ins:
+                                    _tier_label = _ins.get("tier_label","")
+                                    break
+                            _bl_period      = st.session_state.get("baseline_period")
+
+                            # ── Parse machine description into structured nameplate data ──
+                            def _parse_desc_to_nameplate(desc: str, mtype: str) -> dict:
+                                """Extract nameplate parameters from machine description text."""
+                                import re as _re
+                                _is_pump = any(k in mtype.lower() for k in ["pump","centrifugal"])
+                                _motor, _pump_np, _sys = {}, {}, {}
+                                lines = desc.replace("\r","").split("\n")
+                                for line in lines:
+                                    line = line.strip()
+                                    if not line or line.startswith("==="):
+                                        continue
+                                    # Common key: value patterns
+                                    m = _re.match(r"^([^:=]+)[:\s=]+(.+)$", line)
+                                    if not m:
+                                        continue
+                                    key   = m.group(1).strip().lower()
+                                    value = m.group(2).strip()
+                                    # Motor fields
+                                    if any(k in key for k in ["rated power","motor power","kw","hp"]):
+                                        _motor["Rated power"] = value
+                                    elif any(k in key for k in ["full load amp","fla","rated current","amps"]):
+                                        _motor["Full load amps (FLA)"] = value
+                                    elif any(k in key for k in ["voltage","supply volt"]):
+                                        _motor["Supply voltage"] = value
+                                    elif any(k in key for k in ["power factor","cos"]):
+                                        _motor["Power factor"] = value
+                                    elif any(k in key for k in ["motor speed","motor rpm","rated speed","synchronous"]):
+                                        _motor["Rated speed"] = value
+                                    elif any(k in key for k in ["pole","poles"]):
+                                        _motor["Number of poles"] = value
+                                    elif any(k in key for k in ["ie class","efficiency class"]):
+                                        _motor["IE efficiency class"] = value
+                                    elif any(k in key for k in ["insulation","insul class"]):
+                                        _motor["Insulation class"] = value
+                                    elif any(k in key for k in ["motor efficiency","motor eta","\u03b7_motor"]):
+                                        _motor["Motor efficiency"] = value
+                                    elif any(k in key for k in ["commissioning power","baseline power"]):
+                                        _motor["Commissioning power"] = value
+                                    # Pump fields
+                                    elif any(k in key for k in ["rated flow","design flow","q_rated"]):
+                                        _pump_np["Rated flow"] = value
+                                    elif any(k in key for k in ["rated head","design head","h_rated","total head"]):
+                                        _pump_np["Rated head"] = value
+                                    elif any(k in key for k in ["pump efficiency","\u03b7_pump","pump eta"]):
+                                        _pump_np["Pump efficiency at BEP"] = value
+                                    elif any(k in key for k in ["bep flow","q_bep"]):
+                                        _pump_np["BEP flow"] = value
+                                    elif any(k in key for k in ["pump speed","pump rpm"]):
+                                        _pump_np["Pump rated speed"] = value
+                                    elif any(k in key for k in ["impeller","vane","blade"]):
+                                        _pump_np["Impeller details"] = value
+                                    elif any(k in key for k in ["npsh","suction head"]):
+                                        _pump_np["NPSH required"] = value
+                                    elif any(k in key for k in ["seal type","seal"]):
+                                        _pump_np["Seal type"] = value
+                                    elif any(k in key for k in ["stage","stages"]):
+                                        _pump_np["Stage count"] = value
+                                    # System fields
+                                    elif any(k in key for k in ["fluid","medium","liquid"]):
+                                        _sys["Fluid type"] = value
+                                    elif any(k in key for k in ["coupling","drive"]):
+                                        _sys["Coupling / drive type"] = value
+                                    elif any(k in key for k in ["elevation","\u0394z","delta z"]):
+                                        _sys["Elevation difference"] = value
+                                    elif any(k in key for k in ["commission date","install date","year"]):
+                                        _sys["Commissioning date"] = value
+                                    elif any(k in key for k in ["bearing","de bearing","nde bearing"]):
+                                        _sys["Bearing details"] = value
+                                    elif any(k in key for k in ["operating temp","fluid temp"]):
+                                        _sys["Fluid operating temperature"] = value
+                                return {"motor": _motor, "pump": _pump_np, "system": _sys}
+
+                            _desc_text = machine_info.get("description","")
+                            _np_data   = _parse_desc_to_nameplate(_desc_text, machine_info.get("machine_type",""))
+                            _eng_notes = st.session_state.get("_pending_meta",{}).get("extra_context","") or ""
+
+                            # All files stored for this machine (not just active)
+                            _all_files = [
+                                {
+                                    "filename":    f.get("file","—"),
+                                    "file_type":   "CSV" if str(f.get("file","")).endswith(".csv") else "Excel",
+                                    "file_status": "Corrected" if "_corrected" in str(f.get("file","")).lower() else "Original",
+                                    "rows":        f.get("rows",0),
+                                    "ingested_at": str(f.get("ingested_at","—"))[:19],
+                                    "active":      f.get("file","") == _active_fi.get("file",""),
+                                }
+                                for f in _file_info_list
+                            ]
+
+                            _data_sources = {
+                                "file_info": {
+                                    "filename":    _active_fi.get("file","—"),
+                                    "file_type":   "CSV" if str(_active_fi.get("file","")).endswith(".csv") else "Excel",
+                                    "file_status": "Corrected (auto-correction applied)" if "_corrected" in str(_active_fi.get("file","")).lower() else "Original upload",
+                                    "ingested_at": str(_active_fi.get("ingested_at","—"))[:19],
+                                    "uploaded_by": "Engineer",
+                                },
+                                "all_files":       _all_files,
+                                "baseline_period": _bl_period,
+                                "nameplate":       _np_data,
+                                "engineer_notes":  _eng_notes,
+                                "pump_curve_source_ref": st.session_state.get("_pump_curve_source_ref"),
+                                "maintenance_logs": [
+                                    {"filename": _l.get("filename","—"),
+                                     "method":   _l.get("method","—"),
+                                     "uploaded_at": _l.get("uploaded_at","—")}
+                                    for _l in (_logs_list or [])
+                                ],
+                                "data_quality": {
+                                    "score":               _dq_report.get("score"),
+                                    "issues":              _dq_report.get("issues",[]),
+                                    "corrections_applied": _corr_log,
+                                },
+                                "engine": {
+                                    "model":            "Claude Sonnet 4 (Anthropic)",
+                                    "tier_label":       _tier_label,
+                                    "analysis_types":   list(st.session_state.get("last_multi_results",{}).keys()),
+                                    "analysis_date":    datetime.now().strftime("%d %b %Y %H:%M"),
+                                    "platform_version": "AI Based Machine Analytics v1.0",
+                                    "baseline_used":    f"{_bl_period[0]} to {_bl_period[1]}" if _bl_period else "Default (first 20% of dataset)",
+                                },
+                            }
+
                             pdf_bytes = generate_report(
                                 machine_info=machine_info,
                                 multi_results=st.session_state["last_multi_results"],
                                 date_range=date_range,
                                 data_info=_data_info,
+                                data_sources=_data_sources,
                             )
                             st.download_button(
                                 label="Click here to save PDF",
