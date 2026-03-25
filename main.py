@@ -1561,8 +1561,9 @@ with tab_data:
 
                 if _overlay_added:
                     st.caption(
-                        "⚠️ Shaded regions indicate data quality issues detected in this parameter. "
-                        "Review before drawing conclusions from these periods."
+                        "\u26a0\ufe0f Shaded / marked regions indicate sensor data quality issues "
+                        "(invalid or untrustworthy readings — not performance problems). "
+                        "Trends and efficiency changes are separate findings from the AI analysis."
                     )
 
                 _fig.update_layout(
@@ -2135,7 +2136,10 @@ with tab_analysis:
                 if _crits:
                     # ── Header ───────────────────────────────────────────────
                     st.error(
-                        f"**Data quality check — {len(_crits)} critical issue(s) detected.**  \n"
+                        f"**Data quality check — {len(_crits)} critical issue(s) found in the sensor data.**  \n"
+                        "These indicate readings that may be invalid, corrupted, or untrustworthy — "
+                        "**not** performance problems. Gradual trends, efficiency drops, and process changes "
+                        "are intentionally not flagged here; those are analysed by the AI and physics engines.  \n"
                         "Please choose one of the three options below before continuing."
                     )
 
@@ -2455,7 +2459,7 @@ with tab_analysis:
                               ("  \u00b7  All checks passed" if not dq["issues"] else "")
                     with st.expander(f"Data quality check \u2014 score {_score}/100{_label}", expanded=(_n_crit>0)):
                         if not dq["issues"]:
-                            st.success("All data quality checks passed.")
+                            st.success("All sensor data quality checks passed. Data is suitable for analysis.")
                         else:
                             for _iss2 in dq["issues"]:
                                 _sev2  = _iss2["severity"]
