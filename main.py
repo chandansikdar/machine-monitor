@@ -2118,6 +2118,7 @@ with tab_analysis:
                             machine_info.get("description",""),
                             hq_curve=st.session_state.get("_pump_hq_curve"),
                             bearing_freqs=st.session_state.get("_pump_bearing_freqs"),
+                            baseline_period=st.session_state.get("baseline_period"),
                         )
                         _pump_physics_summary = _phys_result.get("summary","")
                         st.session_state["_pump_physics_result"] = _phys_result
