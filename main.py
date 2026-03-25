@@ -784,6 +784,75 @@ db, viz = get_services()
 # SIDEBAR
 # ================================================================== #
 
+def _extract_spec_text(uploaded_file, api_key: str) -> str:
+    """
+    Extract specification text from an uploaded PDF, image, or text file.
+    Uses Claude vision for images/PDFs, plain read for text files.
+    """
+    import base64, io as _io2
+    fname = uploaded_file.name.lower()
+    file_bytes = uploaded_file.read()
+    uploaded_file.seek(0)
+
+    # Plain text files
+    if fname.endswith(".txt") or fname.endswith(".csv"):
+        try:
+            return file_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            return file_bytes.decode("latin-1", errors="replace")
+
+    # PDF or image — use Claude vision
+    if not api_key:
+        return "[No API key available — cannot extract text from file. Enter specifications manually.]"
+
+    import anthropic as _ant
+    _client = _ant.Anthropic(api_key=api_key)
+
+    b64 = base64.standard_b64encode(file_bytes).decode("utf-8")
+    if fname.endswith(".pdf"):
+        media_type = "application/pdf"
+        source_type = "base64"
+        content_block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": media_type, "data": b64},
+        }
+    else:
+        ext_map = {".png":"image/png", ".jpg":"image/jpeg",
+                   ".jpeg":"image/jpeg", ".webp":"image/webp"}
+        ext = "." + fname.rsplit(".",1)[-1]
+        media_type = ext_map.get(ext, "image/jpeg")
+        content_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": b64},
+        }
+
+    response = _client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2000,
+        messages=[{
+            "role": "user",
+            "content": [
+                content_block,
+                {
+                    "type": "text",
+                    "text": (
+                        "This is a machine nameplate, datasheet, or specification document. "
+                        "Extract all technical specifications, nameplate data, and relevant "
+                        "parameters as structured key: value pairs, one per line. "
+                        "Include: rated power, voltage, current, speed, efficiency, "
+                        "flow, head, pressure, temperature, model number, serial number, "
+                        "and any other technical parameters visible. "
+                        "Format: Parameter name: value unit\n"
+                        "Do not include page headers, footers, or marketing text. "
+                        "Only technical data."
+                    )
+                }
+            ]
+        }]
+    )
+    return response.content[0].text if response.content else ""
+
+
 with st.sidebar:
     st.title("Machine Analytics")
     st.caption("Continuous monitoring - Powered by Claude")
@@ -885,13 +954,71 @@ with st.sidebar:
             _gb_eff   = _gb2.number_input("Gearbox efficiency (%)", 50, 100, 98, key="reg_gb_eff")
             _drive_extra = f"Gear ratio: {_gb_ratio}:1\nGearbox efficiency: {_gb_eff}%\n"
 
-        # ── Specs / notes ────────────────────────────────────────────
-        machine_desc = st.text_area(
-            "Specifications and notes",
-            placeholder="Rated power: 75 kW\nRated flow: 185 m\u00b3/h\nRated head: 45 m\nRated speed: 1480 RPM",
-            height=100,
-            help="Enter nameplate data, installation details, and any relevant notes.",
-        )
+        # ── Specifications and notes ───────────────────────────
+        st.markdown("**Specifications and notes**")
+        _spec_tab1, _spec_tab2 = st.tabs(["✏️ Enter manually", "📎 Upload file"])
+
+        machine_desc = ""
+        with _spec_tab1:
+            machine_desc = st.text_area(
+                "Specifications",
+                placeholder=(
+                    "Rated power: 75 kW\n"
+                    "Rated flow: 185 m\u00b3/h\n"
+                    "Rated head: 45 m\n"
+                    "Rated speed: 1480 RPM\n"
+                    "Full load amps: 138 A\n"
+                    "Motor efficiency: 94.5%\n"
+                    "IE class: IE3\n"
+                    "Commissioning date: 2024-01-15"
+                ),
+                height=130,
+                help="Enter nameplate data, installation details, and any relevant notes.",
+                label_visibility="collapsed",
+            )
+
+        with _spec_tab2:
+            st.caption(
+                "Upload a PDF, image, or text file containing the machine datasheet, "
+                "nameplate photo, or specification document. "
+                "The text will be extracted automatically and added to the machine profile."
+            )
+            _spec_file = st.file_uploader(
+                "Upload specification file",
+                type=["pdf", "png", "jpg", "jpeg", "webp", "txt", "csv"],
+                key="reg_spec_file",
+                label_visibility="collapsed",
+                help="PDF datasheet, photo of nameplate, or text specification file.",
+            )
+            if _spec_file:
+                _api_key_spec = os.getenv("ANTHROPIC_API_KEY","")
+                if st.button(
+                    "📤 Extract text from file",
+                    key="extract_spec_btn",
+                    type="secondary",
+                    use_container_width=True,
+                ):
+                    with st.spinner("Extracting text from file…"):
+                        try:
+                            _extracted = _extract_spec_text(_spec_file, _api_key_spec)
+                            st.session_state["_extracted_spec"] = _extracted
+                        except Exception as _ex:
+                            st.error(f"Extraction failed: {_ex}")
+
+                _extracted_text = st.session_state.get("_extracted_spec","")
+                if _extracted_text:
+                    st.success(f"✅ Text extracted ({len(_extracted_text)} characters)")
+                    machine_desc = st.text_area(
+                        "Extracted text (review and edit before registering)",
+                        value=_extracted_text,
+                        height=160,
+                        key="reg_extracted_desc",
+                        label_visibility="collapsed",
+                    )
+                elif _spec_file:
+                    st.info("Click ‘Extract text from file’ to read the content.")
+                    machine_desc = ""
+
 
         with st.expander("Parameter thresholds (optional)", expanded=False):
             st.caption("Define warning and critical limits per parameter. Leave blank to let Claude decide automatically.")
