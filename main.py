@@ -1325,27 +1325,22 @@ with st.sidebar:
         _existing_files = db.get_file_info(selected_id)
         _upload_stem    = uploaded_file.name.rsplit(".", 1)[0]
         _dup = any(_upload_stem in f["file"] for f in _existing_files)
-        if _dup:
-            st.warning(
-                f"⚠️ **{uploaded_file.name}** has already been ingested for this machine.  \n"
-                "Delete the existing file first, or rename the new file before uploading."
-            )
-        else:
-            if st.button("Ingest", use_container_width=True):
-                with st.spinner("Reading and storing data…"):
-                    result = db.ingest_file(uploaded_file, selected_id)
-                if result["success"]:
-                    st.success(f"\u2713 {result['rows']:,} rows ingested")
-                    st.caption("Columns: " + ", ".join(result["columns"]))
-                    st.session_state["last_dq_report"]     = None
-                    st.session_state["last_multi_results"] = None
-                    st.session_state["last_data"]          = None
-                    st.session_state["_pending_analysis"]  = False
-                    st.session_state["_corrected_csv"]     = None
-                    st.session_state["_corrected_df"]      = None
-                    st.rerun()
-                else:
-                    st.error(result["error"])
+        if st.button("Ingest", use_container_width=True, disabled=_dup,
+                     help="This file has already been ingested. Delete it first to re-upload." if _dup else None):
+            with st.spinner("Reading and storing data…"):
+                result = db.ingest_file(uploaded_file, selected_id)
+            if result["success"]:
+                st.success(f"\u2713 {result['rows']:,} rows ingested")
+                st.caption("Columns: " + ", ".join(result["columns"]))
+                st.session_state["last_dq_report"]     = None
+                st.session_state["last_multi_results"] = None
+                st.session_state["last_data"]          = None
+                st.session_state["_pending_analysis"]  = False
+                st.session_state["_corrected_csv"]     = None
+                st.session_state["_corrected_df"]      = None
+                st.rerun()
+            else:
+                st.error(result["error"])
 
     file_info = db.get_file_info(selected_id)
     if file_info:
