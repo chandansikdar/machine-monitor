@@ -1266,7 +1266,9 @@ with st.sidebar:
     # Duplicate check (only meaningful when a file is selected)
     _existing_files = db.get_file_info(selected_id)
     _upload_stem    = uploaded_file.name.rsplit(".", 1)[0] if uploaded_file else ""
-    _dup            = bool(_upload_stem and any(_upload_stem in f["file"] for f in _existing_files))
+    _dup            = bool(_upload_stem and any(
+        f["file"].rsplit(".", 1)[0] == _upload_stem for f in _existing_files
+    ))
 
     # Ingest button — always visible, disabled until a file is selected
     if st.button("Ingest", use_container_width=True, disabled=not uploaded_file):
