@@ -400,6 +400,130 @@ def _running_mask(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 3B — SHUTDOWN PERIOD DETECTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _detect_shutdown_periods(
+    power: pd.Series,
+    running: pd.Series,
+    rated_power_kw: Optional[float],
+    voltages: Optional[pd.DataFrame] = None,
+) -> dict:
+    """
+    Identify and characterise standby / shutdown periods.
+
+    A shutdown period is defined as any contiguous block of intervals where
+    the compressor is not running (power below threshold) but the supply
+    voltage is present (voltages at normal level).  This is a valid operating
+    state — not a data quality issue — and must be excluded from all
+    efficiency metric calculations.
+
+    Parameters
+    ----------
+    power : pd.Series
+        Power signal (kW).
+    running : pd.Series[bool]
+        Running mask from _running_mask().  Shutdown = ~running.
+    rated_power_kw : float or None
+        Used for context in the summary.
+    voltages : pd.DataFrame or None
+        DataFrame of voltage columns (V_a, V_b, V_c).  If provided, used to
+        confirm supply is energised during zero-kW periods.
+
+    Returns
+    -------
+    dict with:
+      n_shutdown_intervals   : int
+      pct_shutdown           : float  — % of total intervals that are shutdown
+      shutdown_kwh_avoided   : float  — always 0 (no energy during shutdown)
+      longest_shutdown_h     : float  — duration of longest single shutdown block
+      n_shutdown_blocks      : int    — number of separate shutdown episodes
+      voltage_confirmed      : bool   — True if voltages confirmed energised
+      info_messages          : list[str]  — human-readable messages for UI
+    """
+    standby = ~running
+    n_total    = len(power)
+    n_standby  = int(standby.sum())
+    pct        = float(n_standby / n_total * 100) if n_total > 0 else 0.0
+
+    # Identify contiguous shutdown blocks
+    blocks = []
+    in_block = False
+    start_idx = None
+    for i, (ts, is_standby) in enumerate(standby.items()):
+        if is_standby and not in_block:
+            in_block = True
+            start_idx = ts
+        elif not is_standby and in_block:
+            in_block = False
+            blocks.append((start_idx, ts))
+    if in_block:
+        blocks.append((start_idx, power.index[-1]))
+
+    # Duration of each block
+    durations_h = []
+    for start, end in blocks:
+        try:
+            dt = (end - start).total_seconds() / 3600.0
+            durations_h.append(dt)
+        except Exception:
+            pass
+
+    longest_h = float(max(durations_h)) if durations_h else 0.0
+
+    # Check if voltages are energised during standby periods
+    voltage_confirmed = False
+    if voltages is not None and not voltages.empty:
+        # For any voltage column, check median during standby vs overall median
+        for col in voltages.columns:
+            v = pd.to_numeric(voltages[col], errors="coerce")
+            overall_med = float(v.median())
+            if overall_med > 10:   # clearly a voltage column (>10 V median)
+                standby_v = v[standby].median()
+                if pd.notna(standby_v) and standby_v > 0.5 * overall_med:
+                    voltage_confirmed = True
+                    break
+
+    # Build informational messages
+    msgs = []
+    if n_standby == 0:
+        msgs.append("No shutdown periods detected — chiller ran continuously throughout the dataset.")
+    else:
+        msgs.append(
+            f"Shutdown / standby periods detected: {n_standby:,} intervals "
+            f"({pct:.1f}% of dataset, {len(blocks)} separate episode(s)). "
+            f"Longest single shutdown: {longest_h:.1f} hours."
+        )
+        if voltage_confirmed:
+            msgs.append(
+                "Supply voltage confirmed present during all shutdown periods — "
+                "these are valid scheduled shutdowns, not power failures or data errors."
+            )
+        msgs.append(
+            "All shutdown intervals are excluded from efficiency metric calculations "
+            "(load factor, SPI, power factor). Only running intervals are used. "
+            "Energy totals include zero-kW shutdown periods as this represents true site consumption."
+        )
+        if pct > 50:
+            msgs.append(
+                f"Note: the chiller is in standby for {pct:.0f}% of the dataset. "
+                "This may indicate seasonal operation, demand response, or an oversized unit. "
+                "Consider filtering the dataset to the operational season for trend analysis."
+            )
+
+    return {
+        "n_shutdown_intervals": n_standby,
+        "pct_shutdown":         pct,
+        "n_running_intervals":  int(running.sum()),
+        "pct_running":          float(running.mean() * 100),
+        "longest_shutdown_h":   longest_h,
+        "n_shutdown_blocks":    len(blocks),
+        "voltage_confirmed":    voltage_confirmed,
+        "info_messages":        msgs,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — POWER DERIVATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1254,6 +1378,17 @@ def run_phase1(
     )
     power_running = power.where(running)
 
+    # ── 4b. Detect and characterise shutdown periods ──────────────────────────
+    # Build voltage DataFrame if phase voltage columns are available
+    _v_cols = {r: cols[r] for r in ("volt_a", "volt_b", "volt_c") if cols.get(r)}
+    _volt_df = df[[c for c in _v_cols.values() if c]] if _v_cols else None
+    shutdown_info = _detect_shutdown_periods(
+        power=power,
+        running=running,
+        rated_power_kw=np_data.get("rated_power_kw"),
+        voltages=_volt_df,
+    )
+
     # ── 5. Ambient temperature series ────────────────────────────────────────
     temp: Optional[pd.Series] = None
     if cols["amb_temp"]:
@@ -1326,6 +1461,9 @@ def run_phase1(
         f"{running.sum()} running intervals of {len(df)} total "
         f"({running.mean()*100:.0f}% utilisation).",
     ]
+    # Always include shutdown period summary
+    for _msg in shutdown_info.get("info_messages", []):
+        summary_lines.append(_msg)
 
     if lf.get("available"):
         summary_lines.append(
@@ -1381,6 +1519,7 @@ def run_phase1(
         "nameplate":       np_data,
         "running_mask":    running,
         "power":           power,
+        "shutdown_info":   shutdown_info,
         "metrics": {
             "load_factor":    lf,
             "spi":            spi_raw,
