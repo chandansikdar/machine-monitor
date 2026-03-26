@@ -1783,6 +1783,28 @@ def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
 
 tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "History", "Maintenance Logs"])
 
+# Auto-switch to Analysis tab when requested (e.g. after Option 2 acknowledge)
+if st.session_state.get("_switch_to_analysis"):
+    st.session_state["_switch_to_analysis"] = False
+    import streamlit.components.v1 as _components
+    _components.html(
+        """<script>
+        // Wait for Streamlit to finish rendering, then click the Analysis tab
+        function switchTab() {
+            const tabs = window.parent.document.querySelectorAll(
+                '[data-baseweb="tab-list"] [role="tab"]'
+            );
+            if (tabs && tabs.length > 1) {
+                tabs[1].click();
+            } else {
+                setTimeout(switchTab, 100);
+            }
+        }
+        setTimeout(switchTab, 150);
+        </script>""",
+        height=0,
+    )
+
 
 # ------------------------------------------------------------------ #
 # TAB 1 — Data preview
@@ -1927,7 +1949,9 @@ with tab_data:
                                 if st.button("Continue to Analysis →", type="primary",
                                              key="tab_dq_continue_btn", use_container_width=True):
                                     st.session_state["_pending_analysis"] = False
-                                    st.session_state["_dq_acknowledged"] = True
+                                    st.session_state["_dq_acknowledged"]  = True
+                                    st.session_state["_switch_to_analysis"] = True
+                                    st.rerun()
 
                         # ── Option 3 — Auto-correct ───────────────────────────
                         with _toption_cols[2]:
