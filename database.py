@@ -204,12 +204,23 @@ class Database:
             FROM data_files WHERE machine_id = ?
             ORDER BY ingested_at
         """, [machine_id]).fetchall()
-        # Deduplicate by filename — keep latest entry for each name
+        # Deduplicate by filename in Python — keep latest ingested per name
         seen = {}
         for r in rows:
             name = Path(r[0]).name
             seen[name] = {"file": name, "file_path": r[0], "rows": r[1], "columns": r[2], "ingested_at": r[3]}
-        return list(seen.values())
+        result = list(seen.values())
+
+        # Physically remove stale duplicate rows from DB so they don't accumulate
+        valid_paths = {v["file_path"] for v in result}
+        all_paths = [r[0] for r in rows]
+        stale = [p for p in all_paths if p not in valid_paths]
+        for p in stale:
+            self.conn.execute(
+                "DELETE FROM data_files WHERE machine_id = ? AND file_path = ?",
+                [machine_id, p]
+            )
+        return result
 
     # ------------------------------------------------------------------ #
     # Analysis history
