@@ -1783,40 +1783,7 @@ def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
 
 tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "History", "Maintenance Logs"])
 
-# Auto-switch to Analysis tab when requested (e.g. after Option 2 acknowledge)
-if st.session_state.get("_switch_to_analysis"):
-    st.session_state["_switch_to_analysis"] = False
-    import streamlit.components.v1 as _components
-    _components.html(
-        """<script>
-        // Traverse up to the top-level window (handles nested iframes)
-        function getTopDoc() {
-            try { return window.top.document; } catch(e) { return window.parent.document; }
-        }
-        function switchTab(attempt) {
-            attempt = attempt || 0;
-            if (attempt > 30) return;   // give up after 3 s
-            var doc = getTopDoc();
-            // Streamlit tabs: buttons with role="tab" inside a tab-list
-            // Try multiple selectors for different Streamlit versions
-            var tabs = doc.querySelectorAll('[role="tablist"] [role="tab"]');
-            if (!tabs || tabs.length === 0) {
-                tabs = doc.querySelectorAll('[data-baseweb="tab"]');
-            }
-            if (!tabs || tabs.length === 0) {
-                tabs = doc.querySelectorAll('button[role="tab"]');
-            }
-            if (tabs && tabs.length > 1) {
-                tabs[1].click();
-            } else {
-                setTimeout(function() { switchTab(attempt + 1); }, 100);
-            }
-        }
-        // Initial delay to let Streamlit finish the rerun render
-        setTimeout(function() { switchTab(0); }, 300);
-        </script>""",
-        height=1,
-    )
+
 
 
 # ------------------------------------------------------------------ #
@@ -1959,11 +1926,10 @@ with tab_data:
                                 st.caption(f"{sum(1 for v in _tdq_ignored.values() if not v)} issue(s) unacknowledged.")
                             else:
                                 st.success("All acknowledged.")
-                                if st.button("Continue to Analysis →", type="primary",
+                                if st.button("Acknowledge and proceed", type="primary",
                                              key="tab_dq_continue_btn", use_container_width=True):
                                     st.session_state["_pending_analysis"] = False
                                     st.session_state["_dq_acknowledged"]  = True
-                                    st.session_state["_switch_to_analysis"] = True
                                     st.rerun()
 
                         # ── Option 3 — Auto-correct ───────────────────────────
@@ -2062,6 +2028,12 @@ with tab_data:
                             key="tab_dl_original_dq",
                             use_container_width=False,
                         )
+
+        if st.session_state.get("_dq_acknowledged"):
+            st.info(
+                "ℹ️ **All issues acknowledged.** "
+                "Go to the **Analysis** tab to continue with the analysis."
+            )
 
         st.subheader("Recent readings")
         st.dataframe(data.tail(200), use_container_width=True, height=280)
