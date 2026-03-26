@@ -1333,8 +1333,12 @@ with st.sidebar:
         _existing_files = db.get_file_info(selected_id)
         _upload_stem    = uploaded_file.name.rsplit(".", 1)[0]
         _dup = any(_upload_stem in f["file"] for f in _existing_files)
-        if st.button("Ingest", use_container_width=True, disabled=_dup,
-                     help="This file has already been ingested. Delete it first to re-upload." if _dup else None):
+        if _dup:
+            st.warning(
+                f"⚠️ **{uploaded_file.name}** has already been ingested. "
+                "Delete the existing file first to re-upload."
+            )
+        if st.button("Ingest", use_container_width=True, disabled=_dup):
             with st.spinner("Reading and storing data…"):
                 result = db.ingest_file(uploaded_file, selected_id)
             if result["success"]:
