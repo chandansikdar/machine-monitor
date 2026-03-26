@@ -1188,6 +1188,8 @@ with st.sidebar:
     if file_info:
         st.caption(f"{len(file_info)} file(s) stored for this machine")
     if file_info and len(file_info) > 1:
+        _sidebar_active = st.session_state.get(f"active_file_{selected_id}", file_info[-1]["file"])
+        st.caption(f"Currently using: **{_sidebar_active}**")
         st.markdown("**📂 Choose which file to use for analysis:**")
         _file_options = {
             _f["file"]: (
@@ -1944,12 +1946,16 @@ with tab_data:
                 _dq_sev_bg    = {"critical": "#FFF0F0", "warning": "#FFFBF0", "info": "#EAF4FF"}
 
                 if not _tab_dq.get("issues"):
-                    if st.session_state.get("_corrections_applied"):
+                    _corr_fname = st.session_state.get("_corrections_applied")
+                    if _corr_fname:
                         st.session_state["_corrections_applied"] = False
-                        st.success("✅ **Auto-corrections applied successfully.** Data quality checks passed.")
+                        st.success(
+                            f"\u2705 **Corrections applied.** Corrected file **{_corr_fname}** "
+                            "saved and available in the left panel."
+                        )
                         st.info(
-                            "ℹ️ **All corrections applied.** "
-                            "Go to the **Analysis** tab to continue with the analysis."
+                            "\u2139\ufe0f The corrected file is now set as the active file for analysis.  \n"
+                            "Go to the **Analysis** tab to continue."
                         )
                     else:
                         st.success("All sensor data quality checks passed. Data is suitable for analysis.")
@@ -2131,10 +2137,12 @@ with tab_data:
                                     _tcorr_buf.name = _tcorr_name
                                     _tsave = db.ingest_file(_tcorr_buf, selected_id)
                                     if _tsave.get("success"):
+                                        # Set corrected file as active for analysis
+                                        st.session_state[f"active_file_{selected_id}"] = _tcorr_name
                                         st.session_state["last_dq_report"]     = None
                                         st.session_state["last_multi_results"] = None
                                         st.session_state["_pending_analysis"]  = False
-                                        st.session_state["_corrections_applied"] = True
+                                        st.session_state["_corrections_applied"] = _tcorr_name
                                         st.rerun()
 
                     # Warnings-only: still show download button
