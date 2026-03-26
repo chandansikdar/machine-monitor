@@ -1188,7 +1188,12 @@ with st.sidebar:
     if file_info:
         st.caption(f"{len(file_info)} file(s) stored for this machine")
     if file_info and len(file_info) > 1:
+        _valid_files    = [f["file"] for f in file_info]
         _sidebar_active = st.session_state.get(f"active_file_{selected_id}", file_info[-1]["file"])
+        # If stored active file no longer exists, reset to most recent
+        if _sidebar_active not in _valid_files:
+            _sidebar_active = file_info[-1]["file"]
+            st.session_state[f"active_file_{selected_id}"] = _sidebar_active
         st.markdown("")
         st.caption(f"Currently using: **{_sidebar_active}**")
         st.markdown("**📂 Choose which file to use for analysis:**")
