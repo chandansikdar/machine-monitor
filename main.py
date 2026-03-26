@@ -1311,6 +1311,9 @@ with st.sidebar:
 # ================================================================== #
 
 machine_info = db.get_machine_info(selected_id)
+if not machine_info:
+    st.warning("Machine not found. Please select or register a machine.")
+    st.stop()
 st.title(f"{machine_info['machine_type']}  ·  {selected_id}")
 
 # ── Machine type & Drive type section ────────────────────────────────────────
