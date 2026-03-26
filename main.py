@@ -1294,7 +1294,13 @@ with st.sidebar:
                 with _fc3:
                     if st.button("Delete", key=f"del_file_{_fi_idx}_{_fi['file']}", type="secondary"):
                         db.delete_file(selected_id, _fi["file"])
-                        st.success(f"Deleted {_fi['file']}")
+                        # If the deleted file was the active one, reset to avoid stale reference
+                        if st.session_state.get(f"active_file_{selected_id}") == _fi["file"]:
+                            st.session_state.pop(f"active_file_{selected_id}", None)
+                            st.session_state["last_dq_report"]     = None
+                            st.session_state["last_multi_results"] = None
+                            st.session_state["last_data"]          = None
+                            st.session_state["_pending_analysis"]  = False
                         st.rerun()
             st.markdown("")
 
