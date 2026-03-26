@@ -2131,15 +2131,11 @@ with tab_data:
                                     _tcorr_buf.name = _tcorr_name
                                     _tsave = db.ingest_file(_tcorr_buf, selected_id)
                                     if _tsave.get("success"):
-                                        for _te in _tlog:
-                                            st.caption(_te)
                                         st.session_state["last_dq_report"]     = None
                                         st.session_state["last_multi_results"] = None
                                         st.session_state["_pending_analysis"]  = False
                                         st.session_state["_corrections_applied"] = True
                                         st.rerun()
-                                    else:
-                                        st.error(f"Save failed: {_tsave.get('error')}")
 
                     # Warnings-only: still show download button
                     elif _tdq_warns:
