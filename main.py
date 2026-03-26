@@ -1832,9 +1832,29 @@ with st.expander("✏️ Machine specifications", expanded=False):
             _disable_power   = (_n_filled == 2 and not _has_power)
             _disable_cop     = (_n_filled == 2 and not _has_cop)
 
+            # ── Write derived values into session state BEFORE rendering ──────
+            # Streamlit number_input ignores value= when the key already exists
+            # in session_state. Writing the derived value here forces the widget
+            # to display the calculated number.
+            if _disable_cooling and _derived_cooling > 0:
+                st.session_state["cnp_cooling_kw"] = _derived_cooling
+                st.session_state["cnp_tons"]       = round(_derived_cooling / _TON_TO_KW_PRE, 2)
+            if _disable_power and _derived_power > 0:
+                st.session_state["cnp_power_kw"]   = _derived_power
+            if _disable_cop and _derived_cop > 0:
+                st.session_state["cnp_cop"]        = _derived_cop
+
             # ── Cooling capacity: kW and tons are mutually dependent ──────────
             # 1 refrigeration ton = 3.51685 kW (exact ASHRAE definition)
             _TON_TO_KW = _TON_TO_KW_PRE  # same constant, alias for clarity
+
+            # Write derived kW/tons into session state before rendering
+            if _cool_kw_val > 0 and not _disable_cooling:
+                # kW is the source of truth — always keep tons in sync
+                st.session_state["cnp_tons"] = round(_cool_kw_val / _TON_TO_KW_PRE, 2)
+            elif _cool_ton_val > 0 and not _cool_kw_val and not _disable_cooling:
+                # Tons entered, kW not — derive and write kW
+                st.session_state["cnp_cooling_kw"] = round(_cool_ton_val * _TON_TO_KW_PRE, 1)
 
             # Re-use pre-read session values from above
             _cnp_cool_kw_raw  = _cool_kw_ss
