@@ -1825,7 +1825,14 @@ with tab_data:
                 _dq_sev_bg    = {"critical": "#FFF0F0", "warning": "#FFFBF0", "info": "#EAF4FF"}
 
                 if not _tab_dq.get("issues"):
-                    st.success("All sensor data quality checks passed. Data is suitable for analysis.")
+                    if st.session_state.get("_corrections_applied"):
+                        st.session_state["_corrections_applied"] = False
+                        st.success("✅ **Auto-corrections applied successfully.** Data quality checks passed.")
+                        st.info(
+                            "ℹ️ Go to the **Analysis** tab to continue with the analysis."
+                        )
+                    else:
+                        st.success("All sensor data quality checks passed. Data is suitable for analysis.")
                 else:
                     for _tdq_iss in _tab_dq.get("issues", []):
                         _tdq_sev  = _tdq_iss["severity"]
@@ -2006,12 +2013,10 @@ with tab_data:
                                     if _tsave.get("success"):
                                         for _te in _tlog:
                                             st.caption(_te)
-                                        st.success(
-                                            f"✓ Saved as **{_tcorr_name}**. "
-                                            "DQ check will re-run automatically.")
                                         st.session_state["last_dq_report"]     = None
                                         st.session_state["last_multi_results"] = None
                                         st.session_state["_pending_analysis"]  = False
+                                        st.session_state["_corrections_applied"] = True
                                         st.rerun()
                                     else:
                                         st.error(f"Save failed: {_tsave.get('error')}")
