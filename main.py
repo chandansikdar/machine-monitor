@@ -1545,7 +1545,22 @@ with st.expander("Parameter thresholds", expanded=False):
                 if _lims:
                     _thr_new[_col] = _lims
 
-        if st.button("Save thresholds", key="save_thresh_btn", use_container_width=True):
+        # Validate: find ticked params with no values entered
+        _thr_incomplete = [
+            _col for _col in _thr_cols
+            if st.session_state.get(f"thr_use_{_col}", False)
+            and not st.session_state.get(f"thr_warn_{_col}", "").strip()
+            and not st.session_state.get(f"thr_crit_{_col}", "").strip()
+        ]
+        if _thr_incomplete:
+            st.warning(
+                "⚠️ Please enter at least one threshold value (warning or critical) "
+                "for the selected parameter(s): "
+                + ", ".join(f"`{c}`" for c in _thr_incomplete)
+                + "  \nUntick the checkbox to skip a parameter."
+            )
+        if st.button("Save thresholds", key="save_thresh_btn",
+                     use_container_width=True, disabled=bool(_thr_incomplete)):
             _thresh_lines = [
                 f"{_p}: " + ", ".join(f"{k}={v}" for k, v in _lims.items())
                 for _p, _lims in _thr_new.items()
