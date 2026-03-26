@@ -1467,8 +1467,149 @@ with st.sidebar:
 
 machine_info = db.get_machine_info(selected_id)
 st.title(f"{machine_info['machine_type']}  ·  {selected_id}")
-if machine_info.get("description"):
-    st.caption(machine_info["description"])
+
+# ── Machine type & Drive type section ────────────────────────────────────────
+with st.expander("🔧 Machine type & Drive type", expanded=False):
+    st.caption("Review or correct the machine type and drive type. Changes take effect immediately.")
+
+    _mt_desc = machine_info.get("description", "")
+    _mt_base = _mt_desc.split("=== PARAMETER THRESHOLDS ===")[0]
+
+    # Parse current drive_type from stored description
+    _cur_drive = ""
+    for _line in _mt_base.splitlines():
+        if _line.strip().lower().startswith("drive type:"):
+            _cur_drive = _line.split(":", 1)[1].strip()
+            break
+
+    _mt_col1, _mt_col2 = st.columns(2)
+
+    with _mt_col1:
+        st.markdown("**Machine type**")
+        _mt_cat_cur = next(
+            (cat for cat, types in MACHINE_TYPES.items()
+             if machine_info.get("machine_type","") in types),
+            list(MACHINE_TYPES.keys())[0]
+        )
+        _mt_cat = st.selectbox(
+            "Category",
+            options=list(MACHINE_TYPES.keys()),
+            index=list(MACHINE_TYPES.keys()).index(_mt_cat_cur),
+            key="mt_edit_category",
+            label_visibility="collapsed",
+        )
+        _mt_type_opts = ["-- Select machine type --"] + MACHINE_TYPES.get(_mt_cat, [])
+        _mt_cur_type  = machine_info.get("machine_type", "")
+        _mt_type_idx  = (
+            _mt_type_opts.index(_mt_cur_type)
+            if _mt_cur_type in _mt_type_opts else 0
+        )
+        _mt_new_type = st.selectbox(
+            "Type",
+            options=_mt_type_opts,
+            index=_mt_type_idx,
+            key="mt_edit_type",
+            label_visibility="collapsed",
+        )
+        _mt_new_type = _mt_new_type if _mt_new_type != "-- Select machine type --" else _mt_cur_type
+
+    with _mt_col2:
+        st.markdown("**Drive type**")
+        _mt_drive_idx = (
+            DRIVE_TYPES.index(_cur_drive) + 1
+            if _cur_drive in DRIVE_TYPES else 0
+        )
+        _mt_new_drive = st.selectbox(
+            "Drive",
+            options=["-- Unchanged --"] + DRIVE_TYPES,
+            index=_mt_drive_idx,
+            key="mt_edit_drive",
+            label_visibility="collapsed",
+        )
+        _mt_new_drive = _mt_new_drive if _mt_new_drive != "-- Unchanged --" else _cur_drive
+
+    # Physics badge
+    if _mt_new_type:
+        _mt_phys = PHYSICS_MODULE_STATUS.get(_mt_new_type)
+        if _mt_phys:
+            _mt_status, _mt_detail, _mt_icon = _mt_phys
+            if _mt_status == "available":
+                if _mt_new_drive in DRIVE_TYPES_SUPPORTED:
+                    st.success(f"{_mt_icon} Physics module available — {_mt_detail}. Induction motor drive confirmed.")
+                elif _mt_new_drive:
+                    st.warning(f"{_mt_icon} Physics module available for {_mt_new_type}, but drive type not supported. AI analytics only.")
+                else:
+                    st.info(f"{_mt_icon} Physics module available — select a drive type to confirm.")
+            elif _mt_status == "planned":
+                st.info(f"{_mt_icon} Physics module in development. AI analytics will run.")
+            else:
+                st.info(f"{_mt_icon} AI analytics will run.")
+
+    # VFD / belt / gearbox sub-fields
+    _mt_drive_extra = ""
+    _mt_drive_extra_lines = []
+    # Read existing sub-values from description for pre-population
+    def _read_desc_val(desc, key, default=""):
+        for ln in desc.splitlines():
+            if ln.strip().lower().startswith(key.lower() + ":"):
+                return ln.split(":", 1)[1].strip()
+        return default
+
+    if "VFD" in (_mt_new_drive or "") and "Induction motor" in (_mt_new_drive or ""):
+        _mv1, _mv2 = st.columns(2)
+        _vfd_min_cur = int(_read_desc_val(_mt_base, "VFD speed range", "300–").split("–")[0].strip() or 300)
+        _vfd_max_cur = int((_read_desc_val(_mt_base, "VFD speed range", "–1500").split("–")[-1].strip() or 1500))
+        _mt_vfd_min  = _mv1.number_input("Min speed (RPM)", min_value=0, value=_vfd_min_cur, key="mt_vfd_min")
+        _mt_vfd_max  = _mv2.number_input("Max speed (RPM)", min_value=0, value=_vfd_max_cur, key="mt_vfd_max")
+        _vfd_modes   = ["Speed control","Pressure control","Flow control","Torque control"]
+        _vfd_ctrl_cur = _read_desc_val(_mt_base, "VFD control mode", "Speed control")
+        _vfd_ctrl_idx = _vfd_modes.index(_vfd_ctrl_cur) if _vfd_ctrl_cur in _vfd_modes else 0
+        _mt_vfd_ctrl  = st.selectbox("VFD control mode", _vfd_modes, index=_vfd_ctrl_idx, key="mt_vfd_ctrl")
+        _mt_drive_extra = f"VFD speed range: {_mt_vfd_min}\u2013{_mt_vfd_max} RPM\nVFD control mode: {_mt_vfd_ctrl}"
+    elif "belt" in (_mt_new_drive or "").lower() and "Induction motor" in (_mt_new_drive or ""):
+        _mb1, _mb2 = st.columns(2)
+        _mt_bd = _mb1.number_input("Drive pulley ø (mm)", min_value=1,
+                                    value=int(_read_desc_val(_mt_base, "Belt drive pulley (drive)", "200").split()[0] or 200),
+                                    key="mt_belt_drive")
+        _mt_bn = _mb2.number_input("Driven pulley ø (mm)", min_value=1,
+                                    value=int(_read_desc_val(_mt_base, "Belt drive pulley (driven)", "200").split()[0] or 200),
+                                    key="mt_belt_driven")
+        _mt_sr = round(_mt_bd / _mt_bn, 3) if _mt_bn else 1.0
+        st.caption(f"Speed ratio: {_mt_bd}/{_mt_bn} = **{_mt_sr}**")
+        _mt_drive_extra = f"Belt drive pulley (drive): {_mt_bd} mm\nBelt drive pulley (driven): {_mt_bn} mm\nBelt speed ratio: {_mt_sr}"
+    elif "gearbox" in (_mt_new_drive or "").lower() and "Induction motor" in (_mt_new_drive or ""):
+        _mg1, _mg2 = st.columns(2)
+        _mt_gr  = _mg1.number_input("Gear ratio (:1)", min_value=0.1,
+                                     value=float(_read_desc_val(_mt_base, "Gear ratio", "1.0").rstrip(":1").strip() or 1.0),
+                                     step=0.1, key="mt_gb_ratio")
+        _mt_ge  = _mg2.number_input("Gearbox efficiency (%)", 50, 100,
+                                     value=int(_read_desc_val(_mt_base, "Gearbox efficiency", "98").rstrip("%").strip() or 98),
+                                     key="mt_gb_eff")
+        _mt_drive_extra = f"Gear ratio: {_mt_gr}:1\nGearbox efficiency: {_mt_ge}%"
+
+    if st.button("Save machine type & drive type", key="save_mt_drive_btn", use_container_width=True):
+        # Rebuild description: strip old Drive type + sub-field lines, insert new ones
+        _drive_keywords = (
+            "drive type:", "vfd speed range:", "vfd control mode:",
+            "belt drive pulley", "belt speed ratio:", "gear ratio:", "gearbox efficiency:"
+        )
+        _clean_lines = [
+            ln for ln in _mt_base.splitlines()
+            if not any(ln.strip().lower().startswith(kw) for kw in _drive_keywords)
+        ]
+        if _mt_new_drive:
+            _clean_lines.append(f"Drive type: {_mt_new_drive}")
+        if _mt_drive_extra:
+            _clean_lines.extend(_mt_drive_extra.splitlines())
+
+        _thresh_block = _mt_desc.split("=== PARAMETER THRESHOLDS ===")
+        _new_desc = "\n".join(_clean_lines).strip()
+        if len(_thresh_block) > 1:
+            _new_desc += "\n\n=== PARAMETER THRESHOLDS ===\n" + _thresh_block[1].strip()
+
+        db.register_machine(selected_id, _mt_new_type, _new_desc)
+        st.success("✓ Machine type and drive type updated.")
+        st.rerun()
 
 # Inline threshold editor
 with st.expander("Edit parameter thresholds", expanded=False):
