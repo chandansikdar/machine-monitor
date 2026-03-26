@@ -1827,21 +1827,38 @@ with st.expander("✏️ Machine specifications", expanded=False):
             _has_cop     = float(_cnp_cop_raw)      > 0
             _n_filled    = sum([_has_cooling, _has_power, _has_cop])
 
-            # Derive the missing field when exactly two are filled
+            # Derive the missing/dependent field using priority order:
+            #   Priority 1: cooling + power entered → COP is always derived
+            #   Priority 2: cooling + COP entered   → power is derived
+            #   Priority 3: power + COP entered     → cooling is derived
+            # When all three are filled, Priority 1 applies (COP derived from the two measured values)
             _derived_cooling = 0.0
             _derived_power   = 0.0
             _derived_cop     = 0.0
-            if _n_filled == 2:
-                if not _has_cooling and _has_power and _has_cop:
-                    _derived_cooling = round(float(_cnp_power_raw) * float(_cnp_cop_raw), 1)
-                elif _has_cooling and not _has_power and _has_cop:
-                    _derived_power = round(float(_cnp_cooling_raw) / float(_cnp_cop_raw), 1)
-                elif _has_cooling and _has_power and not _has_cop:
-                    _derived_cop = round(float(_cnp_cooling_raw) / float(_cnp_power_raw), 3)
 
-            _disable_cooling = (_n_filled == 2 and not _has_cooling)
-            _disable_power   = (_n_filled == 2 and not _has_power)
-            _disable_cop     = (_n_filled == 2 and not _has_cop)
+            if _has_cooling and _has_power:
+                # Priority 1: COP derived regardless of whether it was also saved
+                _derived_cop     = round(float(_cnp_cooling_raw) / float(_cnp_power_raw), 3)
+                _disable_cooling = False
+                _disable_power   = False
+                _disable_cop     = True
+            elif _has_cooling and _has_cop:
+                # Priority 2: power derived
+                _derived_power   = round(float(_cnp_cooling_raw) / float(_cnp_cop_raw), 1)
+                _disable_cooling = False
+                _disable_power   = True
+                _disable_cop     = False
+            elif _has_power and _has_cop:
+                # Priority 3: cooling derived
+                _derived_cooling = round(float(_cnp_power_raw) * float(_cnp_cop_raw), 1)
+                _disable_cooling = True
+                _disable_power   = False
+                _disable_cop     = False
+            else:
+                # Fewer than two filled — nothing derived, all enabled
+                _disable_cooling = False
+                _disable_power   = False
+                _disable_cop     = False
 
             # ── Write derived values into session state BEFORE rendering ──────
             # Streamlit number_input ignores value= when the key already exists
