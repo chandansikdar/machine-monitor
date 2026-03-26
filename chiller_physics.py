@@ -1425,28 +1425,45 @@ def run_phase1(
             spi_corr = _apply_correction(spi_running, temp.reindex(spi_running.index), alpha_spi)
             spi_series_for_windows = spi_corr
 
-    # ── 8. Rolling windows on SPI ─────────────────────────────────────────────
+    # ── 8. Rolling windows ─────────────────────────────────────────────────────
+    # Phase 1 note: SPI = Actual Power ÷ Rated Cooling Capacity and
+    # Load Factor = Actual Power ÷ Rated Power Input are perfectly correlated
+    # (SPI = LF / Rated COP). They carry identical trend information in Phase 1.
+    # Only Load Factor is used for window analysis here. SPI is retained as a
+    # reference value (kW/kW and kW/TR) for cross-site comparison and industry
+    # benchmarking, but NOT run through a separate rolling window.
+    # SPI becomes an independent metric in Phase 2 when actual cooling output
+    # replaces rated cooling capacity in the denominator.
     windows = {}
-    if spi_series_for_windows is not None:
-        windows["SPI"] = _rolling_windows(
-            spi_series_for_windows,
-            baseline_days=baseline_days,
-        )
-        windows["SPI"]["daily_profile"] = _daily_profile(spi_series_for_windows)
-
-    # Load factor daily profile (operational patterns)
     if lf.get("available"):
         lf_series = (power_running / np_data["rated_power_kw"] * 100.0).dropna()
         windows["LF"] = _rolling_windows(lf_series, baseline_days=baseline_days)
         windows["LF"]["daily_profile"] = _daily_profile(lf_series)
+        # Attach SPI reference values to the LF window output for reporting
+        # (computed from LF using the rated COP relationship)
+        if spi_raw.get("available") and np_data.get("rated_cop"):
+            windows["LF"]["spi_mean_kw_kw"]  = spi_raw.get("mean")
+            windows["LF"]["spi_mean_kw_tr"]  = (
+                spi_raw["mean"] / 3.51685 if spi_raw.get("mean") else None
+            )
+    elif spi_series_for_windows is not None:
+        # LF not available (no rated_power_kw) but SPI is — use SPI as fallback
+        windows["SPI_fallback"] = _rolling_windows(
+            spi_series_for_windows,
+            baseline_days=baseline_days,
+        )
+        windows["SPI_fallback"]["daily_profile"] = _daily_profile(spi_series_for_windows)
 
     # ── 9. Generate findings ──────────────────────────────────────────────────
     ie_class = np_data.get("ie_class", "IE3")
+    # Note: SPI trend findings are removed in Phase 1 — SPI and Load Factor
+    # are perfectly correlated (SPI = LF / rated COP). Only LF window
+    # findings are generated. SPI findings activate in Phase 2+ when actual
+    # cooling output makes SPI independent of Load Factor.
     all_findings = (
         _findings_voltage_imbalance(vi, ie_class)
         + _findings_current_imbalance(ci)
         + _findings_load_factor(lf)
-        + _findings_spi_trend(windows.get("SPI", {}), np_data.get("rated_cop"))
         + _findings_power_factor(pf)
         + _findings_short_cycling(pattern)
     )
@@ -1471,7 +1488,13 @@ def run_phase1(
             f"P25={lf['p25']:.0f}%, P75={lf['p75']:.0f}%."
         )
     if spi_raw.get("available"):
-        summary_lines.append(f"SPI: mean {spi_raw['mean']:.4f} kW/kW.")
+        spi_kw_tr = spi_raw['mean'] / 3.51685
+        summary_lines.append(
+            f"SPI (reference): {spi_raw['mean']:.4f} kW/kW "
+            f"({spi_kw_tr:.4f} kW/TR). "
+            f"Note: in Phase 1, SPI and Load Factor carry identical trend "
+            f"information. SPI is reported for benchmarking only."
+        )
     if vi.get("available"):
         summary_lines.append(
             f"Voltage imbalance: mean {vi['mean']:.2f}%, max {vi['max']:.2f}%."
