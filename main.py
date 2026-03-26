@@ -1178,6 +1178,51 @@ with st.sidebar:
     file_info = db.get_file_info(selected_id)
     if file_info:
         st.caption(f"{len(file_info)} file(s) stored for this machine")
+    if file_info and len(file_info) > 1:
+        st.markdown("**📂 Choose which file to use for analysis:**")
+        _file_options = {
+            _f["file"]: (
+                f"\U0001f527 {_f['file']} ({_f['rows']:,} rows \u00b7 corrected)"
+                if "_corrected" in _f["file"].lower()
+                else f"\U0001f4c2 {_f['file']} ({_f['rows']:,} rows \u00b7 original)"
+            )
+            for _f in file_info
+        }
+        _current_active = st.session_state.get(
+            f"active_file_{selected_id}",
+            file_info[-1]["file"]
+        )
+        if _current_active not in _file_options:
+            _current_active = file_info[-1]["file"]
+        _selected_file = st.selectbox(
+            "Active file for analysis",
+            options=list(_file_options.keys()),
+            format_func=lambda x: _file_options[x],
+            index=list(_file_options.keys()).index(_current_active),
+            key=f"active_file_select_{selected_id}",
+        )
+        _file_changed = _selected_file != _current_active
+        if st.button(
+            "\u2713 Use selected file for analysis",
+            key="use_selected_file_btn",
+            type="primary",
+            use_container_width=True,
+            disabled=not _file_changed,
+        ):
+            st.session_state[f"active_file_{selected_id}"] = _selected_file
+            st.session_state["last_data"]          = None
+            st.session_state["last_multi_results"] = None
+            st.session_state["last_dq_report"]     = None
+            st.session_state["_pending_analysis"]  = False
+            st.session_state["_corrected_csv"]     = None
+            st.session_state["_corrected_df"]      = None
+            st.rerun()
+        if _file_changed:
+            st.caption(f"\u26a0\ufe0f Currently using: **{_current_active}**. Click above to switch.")
+        else:
+            st.caption(f"\u2139\ufe0f Analysis will use: **{_current_active}**.")
+        st.markdown("")
+
         with st.expander("Manage stored files", expanded=len(file_info) > 1):
             # Check for corrected/original pairs
             _has_corrected = any("_corrected" in f["file"].lower() for f in file_info)
@@ -1241,52 +1286,6 @@ with st.sidebar:
                         st.rerun()
             st.markdown("")
 
-            # ── Active file selector ─────────────────────────────────
-            if len(file_info) > 1:
-                st.markdown("---")
-                st.markdown("**📂 Choose which file to use for analysis:**")
-                _file_options = {
-                    _f["file"]: (
-                        f"🔧 {_f['file']} ({_f['rows']:,} rows · corrected)"
-                        if "_corrected" in _f["file"].lower()
-                        else f"📂 {_f['file']} ({_f['rows']:,} rows · original)"
-                    )
-                    for _f in file_info
-                }
-                _current_active = st.session_state.get(
-                    f"active_file_{selected_id}",
-                    file_info[-1]["file"]  # default: most recently ingested
-                )
-                # Ensure current active is still valid
-                if _current_active not in _file_options:
-                    _current_active = file_info[-1]["file"]
-                _selected_file = st.selectbox(
-                    "Active file for analysis",
-                    options=list(_file_options.keys()),
-                    format_func=lambda x: _file_options[x],
-                    index=list(_file_options.keys()).index(_current_active),
-                    key=f"active_file_select_{selected_id}",
-                )
-                _file_changed = _selected_file != _current_active
-                if st.button(
-                    "✓ Use selected file for analysis",
-                    key="use_selected_file_btn",
-                    type="primary",
-                    use_container_width=True,
-                    disabled=not _file_changed,
-                ):
-                    st.session_state[f"active_file_{selected_id}"] = _selected_file
-                    st.session_state["last_data"]          = None
-                    st.session_state["last_multi_results"] = None
-                    st.session_state["last_dq_report"]     = None
-                    st.session_state["_pending_analysis"]  = False
-                    st.session_state["_corrected_csv"]     = None
-                    st.session_state["_corrected_df"]      = None
-                    st.rerun()
-                if _file_changed:
-                    st.caption(f"⚠️ Currently using: **{_current_active}**. Click above to switch.")
-                else:
-                    st.caption(f"ℹ️ Analysis will use: **{_current_active}**.")
             if st.button("Delete ALL files for this machine", type="primary",
                          key="del_all_files", use_container_width=True):
                 db.delete_all_files(selected_id)
