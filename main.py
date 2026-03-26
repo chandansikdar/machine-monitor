@@ -1782,34 +1782,160 @@ with st.expander("✏️ Machine specifications", expanded=False):
         elif _tab_is_chiller:
             # ── Structured chiller nameplate form ─────────────────────────
             # Tier 1: Recommended
-            st.caption("⭐ Recommended — enables Load Factor, SPI, and imbalance analysis")
+            # Cooling capacity (kW), Power input (kW), and COP are mutually dependent:
+            #   COP = Cooling capacity ÷ Power input
+            # Any two entered → third is derived and its input is disabled.
+            st.caption(
+                "⭐ Recommended — enables Load Factor, SPI, and imbalance analysis  "
+                "\nℹ️ **Any two** of cooling capacity, power input, and COP determine the third. "
+                "Enter the two shown on your nameplate — the third will be calculated automatically."
+            )
+
+            # ── Pre-read all three interdependent fields ──────────────────────
+            _TON_TO_KW_PRE  = 3.51685
+            _cool_kw_ss   = st.session_state.get("cnp_cooling_kw", _chill_fv("rated_cooling_kw"))
+            _cool_ton_ss  = st.session_state.get("cnp_tons",
+                round(_chill_fv("rated_cooling_kw") / _TON_TO_KW_PRE, 1)
+                if _chill_fv("rated_cooling_kw") > 0 else 0.0)
+            _cnp_power_raw   = st.session_state.get("cnp_power_kw", _chill_fv("rated_power_kw"))
+            _cnp_cop_raw     = st.session_state.get("cnp_cop",      _chill_fv("rated_cop"))
+
+            # Resolve effective cooling kW from whichever of kW/tons is entered
+            # kW takes priority if both are present
+            _cool_kw_val  = float(_cool_kw_ss)
+            _cool_ton_val = float(_cool_ton_ss)
+            if _cool_kw_val > 0:
+                _cnp_cooling_raw = _cool_kw_val
+            elif _cool_ton_val > 0:
+                _cnp_cooling_raw = _cool_ton_val * _TON_TO_KW_PRE
+            else:
+                _cnp_cooling_raw = 0.0
+
+            _has_cooling = _cnp_cooling_raw > 0
+            _has_power   = float(_cnp_power_raw)   > 0
+            _has_cop     = float(_cnp_cop_raw)      > 0
+            _n_filled    = sum([_has_cooling, _has_power, _has_cop])
+
+            # Derive the missing field when exactly two are filled
+            _derived_cooling = 0.0
+            _derived_power   = 0.0
+            _derived_cop     = 0.0
+            if _n_filled == 2:
+                if not _has_cooling and _has_power and _has_cop:
+                    _derived_cooling = round(float(_cnp_power_raw) * float(_cnp_cop_raw), 1)
+                elif _has_cooling and not _has_power and _has_cop:
+                    _derived_power = round(float(_cnp_cooling_raw) / float(_cnp_cop_raw), 1)
+                elif _has_cooling and _has_power and not _has_cop:
+                    _derived_cop = round(float(_cnp_cooling_raw) / float(_cnp_power_raw), 3)
+
+            _disable_cooling = (_n_filled == 2 and not _has_cooling)
+            _disable_power   = (_n_filled == 2 and not _has_power)
+            _disable_cop     = (_n_filled == 2 and not _has_cop)
+
+            # ── Cooling capacity: kW and tons are mutually dependent ──────────
+            # 1 refrigeration ton = 3.51685 kW (exact ASHRAE definition)
+            _TON_TO_KW = _TON_TO_KW_PRE  # same constant, alias for clarity
+
+            # Re-use pre-read session values from above
+            _cnp_cool_kw_raw  = _cool_kw_ss
+            _cnp_cool_ton_raw = st.session_state.get("cnp_tons",
+                round(_chill_fv("rated_cooling_kw") / _TON_TO_KW, 1)
+                if _chill_fv("rated_cooling_kw") > 0 else 0.0)
+
+            _has_kw  = float(_cnp_cool_kw_raw)  > 0
+            _has_ton = float(_cnp_cool_ton_raw) > 0
+
+            # Disable tons if kW is entered, disable kW if tons is entered but kW is not
+            # Priority: kW wins if both somehow populated (e.g. loaded from description)
+            _disable_kw_field  = (not _has_kw) and _has_ton    # tons entered, kW not → derive kW
+            _disable_ton_field = _has_kw                        # kW entered → tons is always derived
+
+            _eff_kw_from_pair = (
+                float(_cnp_cool_kw_raw)  if _has_kw
+                else (float(_cnp_cool_ton_raw) * _TON_TO_KW if _has_ton else 0.0)
+            )
+            _eff_ton_from_pair = _eff_kw_from_pair / _TON_TO_KW if _eff_kw_from_pair > 0 else 0.0
+
             _cc1, _cc2 = st.columns(2)
             _cnp_cooling_kw = _cc1.number_input(
-                "Rated cooling capacity (kW)", min_value=0.0,
-                value=_chill_fv("rated_cooling_kw"), step=1.0, format="%.1f",
+                "Rated cooling capacity (kW)"
+                + (" ← calculated" if (_disable_cooling or _disable_kw_field) else ""),
+                min_value=0.0,
+                value=(
+                    _derived_cooling if _disable_cooling
+                    else (_eff_kw_from_pair if _disable_kw_field else float(_cnp_cool_kw_raw))
+                ),
+                step=1.0, format="%.1f",
                 key="cnp_cooling_kw",
-                help="Chiller nameplate cooling output in kW. Enables SPI calculation."
+                disabled=_disable_cooling or _disable_kw_field,
+                help=(
+                    "Auto-calculated when Power input and COP are both entered."
+                    if _disable_cooling else
+                    "Enter kW OR tons — the other converts automatically. "
+                    "1 ton = 3.51685 kW (ASHRAE). Clear tons field to enter kW directly."
+                )
             )
             _cnp_tons = _cc2.number_input(
-                "Rated cooling (tons)", min_value=0.0,
-                value=round(_chill_fv("rated_cooling_kw") / 3.517, 1) if _chill_fv("rated_cooling_kw") else 0.0,
-                step=1.0, format="%.1f",
+                "Rated cooling (tons)"
+                + (" ← calculated" if (_disable_cooling or _disable_ton_field) else ""),
+                min_value=0.0,
+                value=(
+                    round(_derived_cooling / _TON_TO_KW, 2) if _disable_cooling
+                    else _eff_ton_from_pair
+                ),
+                step=0.5, format="%.2f",
                 key="cnp_tons",
-                help="Cooling capacity in refrigeration tons. If both kW and tons are entered, kW takes priority."
+                disabled=_disable_cooling or _disable_ton_field,
+                help=(
+                    "Auto-calculated when Power input and COP are both entered."
+                    if _disable_cooling else
+                    "Enter tons OR kW — the other converts automatically. "
+                    "1 ton = 3.51685 kW (ASHRAE). Clear kW field to enter tons directly."
+                )
             )
+            # Show kW↔tons conversion caption when one is derived from the other
+            if not _disable_cooling:
+                if _disable_ton_field and _has_kw:
+                    st.caption(f"Tons derived: **{_eff_ton_from_pair:.2f} TR** "
+                               f"= {float(_cnp_cool_kw_raw):.1f} kW ÷ 3.51685")
+                elif _disable_kw_field and _has_ton:
+                    st.caption(f"kW derived: **{_eff_kw_from_pair:.1f} kW** "
+                               f"= {float(_cnp_cool_ton_raw):.2f} TR × 3.51685")
+
+            # Resolve effective cooling kW for the COP/power triplet logic
+            _cnp_cooling_raw = _eff_kw_from_pair  # override the earlier raw read
             _cc3, _cc4 = st.columns(2)
             _cnp_power_kw = _cc3.number_input(
-                "Rated power input (kW)", min_value=0.0,
-                value=_chill_fv("rated_power_kw"), step=0.5, format="%.1f",
+                "Rated power input (kW)"
+                + (" ← calculated" if _disable_power else ""),
+                min_value=0.0,
+                value=_derived_power if _disable_power else float(_cnp_power_raw),
+                step=0.5, format="%.1f",
                 key="cnp_power_kw",
-                help="Electrical input power at rated conditions. Enables Load Factor calculation."
+                disabled=_disable_power,
+                help="Electrical input power at rated conditions. Auto-calculated when Cooling capacity and COP are both entered."
             )
             _cnp_cop = _cc4.number_input(
-                "Rated COP", min_value=0.0, max_value=15.0,
-                value=_chill_fv("rated_cop"), step=0.1, format="%.2f",
+                "Rated COP"
+                + (" ← calculated" if _disable_cop else ""),
+                min_value=0.0, max_value=15.0,
+                value=_derived_cop if _disable_cop else float(_cnp_cop_raw),
+                step=0.1, format="%.2f",
                 key="cnp_cop",
-                help="Coefficient of Performance at rated conditions. Leave 0 to auto-derive from kW and cooling capacity."
+                disabled=_disable_cop,
+                help="COP = Cooling capacity ÷ Power input. Auto-calculated when the other two are entered."
             )
+            # Show derived value caption
+            if _n_filled == 2:
+                if _disable_cooling:
+                    st.caption(f"Cooling capacity derived: **{_derived_cooling:.1f} kW** "
+                               f"({_derived_cooling/3.517:.1f} tons) = Power {float(_cnp_power_raw):.1f} kW × COP {float(_cnp_cop_raw):.2f}")
+                elif _disable_power:
+                    st.caption(f"Power input derived: **{_derived_power:.1f} kW** "
+                               f"= Cooling {float(_cnp_cooling_raw):.1f} kW ÷ COP {float(_cnp_cop_raw):.2f}")
+                elif _disable_cop:
+                    st.caption(f"COP derived: **{_derived_cop:.3f}** "
+                               f"= Cooling {float(_cnp_cooling_raw):.1f} kW ÷ Power {float(_cnp_power_raw):.1f} kW")
 
             # Tier 2: Optional
             with st.expander("Optional — improves precision", expanded=False):
@@ -1882,16 +2008,16 @@ with st.expander("✏️ Machine specifications", expanded=False):
             )
 
             # Serialise chiller nameplate to description text
+            # Use the effective (possibly derived) values for all three fields
             _chiller_desc_parts = []
-            # Resolve cooling kW — kW field takes priority over tons
-            _eff_cooling_kw = _cnp_cooling_kw if _cnp_cooling_kw > 0 else (_cnp_tons * 3.517 if _cnp_tons > 0 else 0)
+            _eff_cooling_kw = (_derived_cooling if _disable_cooling
+                               else (_cnp_cooling_kw if _cnp_cooling_kw > 0
+                                     else (_cnp_tons * 3.517 if _cnp_tons > 0 else 0)))
+            _eff_power_kw   = _derived_power if _disable_power else _cnp_power_kw
+            _eff_cop        = _derived_cop   if _disable_cop   else _cnp_cop
             if _eff_cooling_kw > 0:   _chiller_desc_parts.append(f"Rated cooling capacity: {_eff_cooling_kw:.1f} kW")
-            if _cnp_power_kw > 0:     _chiller_desc_parts.append(f"Rated power input: {_cnp_power_kw:.1f} kW")
-            # Auto-derive COP if not entered
-            _eff_cop = _cnp_cop if _cnp_cop > 0 else (
-                round(_eff_cooling_kw / _cnp_power_kw, 3) if _cnp_power_kw > 0 and _eff_cooling_kw > 0 else 0
-            )
-            if _eff_cop > 0:          _chiller_desc_parts.append(f"Rated COP: {_eff_cop}")
+            if _eff_power_kw > 0:     _chiller_desc_parts.append(f"Rated power input: {_eff_power_kw:.1f} kW")
+            if _eff_cop > 0:          _chiller_desc_parts.append(f"Rated COP: {_eff_cop:.3f}")
             if _cnp_voltage > 0:      _chiller_desc_parts.append(f"Rated voltage: {_cnp_voltage:.0f} V")
             if _cnp_fla > 0:          _chiller_desc_parts.append(f"FLA: {_cnp_fla:.1f} A")
             if _cnp_pf != 0.85:       _chiller_desc_parts.append(f"Power factor: {_cnp_pf:.2f}")
