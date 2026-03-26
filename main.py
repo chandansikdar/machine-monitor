@@ -1793,12 +1793,23 @@ with st.expander("✏️ Machine specifications", expanded=False):
 
             # ── Pre-read all three interdependent fields ──────────────────────
             _TON_TO_KW_PRE  = 3.51685
-            _cool_kw_ss   = st.session_state.get("cnp_cooling_kw", _chill_fv("rated_cooling_kw"))
-            _cool_ton_ss  = st.session_state.get("cnp_tons",
-                round(_chill_fv("rated_cooling_kw") / _TON_TO_KW_PRE, 1)
-                if _chill_fv("rated_cooling_kw") > 0 else 0.0)
-            _cnp_power_raw   = st.session_state.get("cnp_power_kw", _chill_fv("rated_power_kw"))
-            _cnp_cop_raw     = st.session_state.get("cnp_cop",      _chill_fv("rated_cop"))
+
+            # Initialise session state keys with saved values on first load only
+            # (do NOT set if already present — that would override user edits)
+            if "cnp_cooling_kw" not in st.session_state:
+                st.session_state["cnp_cooling_kw"] = _chill_fv("rated_cooling_kw")
+            if "cnp_tons" not in st.session_state:
+                _saved_kw = _chill_fv("rated_cooling_kw")
+                st.session_state["cnp_tons"] = round(_saved_kw / _TON_TO_KW_PRE, 2) if _saved_kw > 0 else 0.0
+            if "cnp_power_kw" not in st.session_state:
+                st.session_state["cnp_power_kw"] = _chill_fv("rated_power_kw")
+            if "cnp_cop" not in st.session_state:
+                st.session_state["cnp_cop"] = _chill_fv("rated_cop")
+
+            _cool_kw_ss  = st.session_state["cnp_cooling_kw"]
+            _cool_ton_ss = st.session_state["cnp_tons"]
+            _cnp_power_raw = st.session_state["cnp_power_kw"]
+            _cnp_cop_raw   = st.session_state["cnp_cop"]
 
             # Resolve effective cooling kW from whichever of kW/tons is entered
             # kW takes priority if both are present
@@ -1881,10 +1892,6 @@ with st.expander("✏️ Machine specifications", expanded=False):
                 "Rated cooling capacity (kW)"
                 + (" ← calculated" if (_disable_cooling or _disable_kw_field) else ""),
                 min_value=0.0,
-                value=(
-                    _derived_cooling if _disable_cooling
-                    else (_eff_kw_from_pair if _disable_kw_field else float(_cnp_cool_kw_raw))
-                ),
                 step=1.0, format="%.1f",
                 key="cnp_cooling_kw",
                 disabled=_disable_cooling or _disable_kw_field,
@@ -1899,10 +1906,6 @@ with st.expander("✏️ Machine specifications", expanded=False):
                 "Rated cooling (tons)"
                 + (" ← calculated" if (_disable_cooling or _disable_ton_field) else ""),
                 min_value=0.0,
-                value=(
-                    round(_derived_cooling / _TON_TO_KW, 2) if _disable_cooling
-                    else _eff_ton_from_pair
-                ),
                 step=0.5, format="%.2f",
                 key="cnp_tons",
                 disabled=_disable_cooling or _disable_ton_field,
@@ -1929,7 +1932,6 @@ with st.expander("✏️ Machine specifications", expanded=False):
                 "Rated power input (kW)"
                 + (" ← calculated" if _disable_power else ""),
                 min_value=0.0,
-                value=_derived_power if _disable_power else float(_cnp_power_raw),
                 step=0.5, format="%.1f",
                 key="cnp_power_kw",
                 disabled=_disable_power,
@@ -1939,7 +1941,6 @@ with st.expander("✏️ Machine specifications", expanded=False):
                 "Rated COP"
                 + (" ← calculated" if _disable_cop else ""),
                 min_value=0.0, max_value=15.0,
-                value=_derived_cop if _disable_cop else float(_cnp_cop_raw),
                 step=0.1, format="%.2f",
                 key="cnp_cop",
                 disabled=_disable_cop,
