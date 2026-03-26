@@ -1302,12 +1302,6 @@ with st.sidebar:
                                     f"\u2713 {_res2['rows']:,} rows ingested with corrected timestamps."
                                 )
                                 st.caption("Columns: " + ", ".join(_res2["columns"]))
-                                st.session_state["last_dq_report"]     = None
-                                st.session_state["last_multi_results"] = None
-                                st.session_state["last_data"]          = None
-                                st.session_state["_pending_analysis"]  = False
-                                st.session_state["_corrected_csv"]     = None
-                                st.session_state["_corrected_df"]      = None
                                 st.rerun()
                             else:
                                 st.error(f"Ingest failed: {_res2['error']}")
@@ -1333,12 +1327,6 @@ with st.sidebar:
             if result["success"]:
                 st.success(f"\u2713 {result['rows']:,} rows ingested")
                 st.caption("Columns: " + ", ".join(result["columns"]))
-                st.session_state["last_dq_report"]     = None
-                st.session_state["last_multi_results"] = None
-                st.session_state["last_data"]          = None
-                st.session_state["_pending_analysis"]  = False
-                st.session_state["_corrected_csv"]     = None
-                st.session_state["_corrected_df"]      = None
                 st.rerun()
             else:
                 st.error(result["error"])
@@ -1405,12 +1393,6 @@ with st.sidebar:
                     if st.button("Delete", key=f"del_file_{_fi['file']}", type="secondary"):
                         db.delete_file(selected_id, _fi["file"])
                         st.success(f"Deleted {_fi['file']}")
-                        st.session_state["last_dq_report"]     = None
-                        st.session_state["last_multi_results"] = None
-                        st.session_state["last_data"]          = None
-                        st.session_state["_pending_analysis"]  = False
-                        st.session_state["_corrected_csv"]     = None
-                        st.session_state["_corrected_df"]      = None
                         st.rerun()
             st.markdown("")
 
@@ -1453,12 +1435,6 @@ with st.sidebar:
                          key="del_all_files", use_container_width=True):
                 db.delete_all_files(selected_id)
                 st.success("All data files deleted. Please re-upload.")
-                st.session_state["last_dq_report"]     = None
-                st.session_state["last_multi_results"] = None
-                st.session_state["last_data"]          = None
-                st.session_state["_pending_analysis"]  = False
-                st.session_state["_corrected_csv"]     = None
-                st.session_state["_corrected_df"]      = None
                 st.rerun()
 
     st.divider()
@@ -1523,6 +1499,83 @@ with st.expander("Edit parameter thresholds", expanded=False):
         st.success("Thresholds saved.")
         st.rerun()
 
+# ── Edit machine specifications ─────────────────────────────────────────────────────
+with st.expander("✏️ Edit machine specifications", expanded=False):
+    st.caption("Update nameplate data, installation details, or notes. Threshold block is preserved automatically.")
+
+    _edit_mtype = machine_info.get("machine_type", "")
+    _edit_desc  = machine_info.get("description", "")
+    # Strip threshold block — edit only the spec portion
+    _edit_base  = _edit_desc.split("=== PARAMETER THRESHOLDS ===")[0].strip()
+    _edit_thresh_block = (
+        "\n\n=== PARAMETER THRESHOLDS ===\n" +
+        _edit_desc.split("=== PARAMETER THRESHOLDS ===")[1].strip()
+        if "=== PARAMETER THRESHOLDS ===" in _edit_desc else ""
+    )
+
+    _edit_tab1, _edit_tab2 = st.tabs(["✏️ Enter manually", "📎 Upload file"])
+
+    _edit_new_desc = _edit_base
+
+    with _edit_tab1:
+        _edit_new_desc = st.text_area(
+            "Specifications",
+            value=_edit_base,
+            height=180,
+            label_visibility="collapsed",
+            help=(
+                "Edit nameplate data, ratings, installation details, and notes.  ❙  "
+                "For pumps: Rated power (kW), Rated flow (m³/h), Rated head (m), Pump efficiency (%).  ❙  "
+                "Threshold block is stored separately and will be re-appended on save."
+            ),
+            key="edit_spec_textarea",
+        )
+
+    with _edit_tab2:
+        st.caption(
+            "Upload a PDF, image, or text file containing the machine datasheet, "
+            "nameplate photo, or specification document."
+        )
+        _edit_spec_file = st.file_uploader(
+            "Upload specification file",
+            type=["pdf", "png", "jpg", "jpeg", "webp", "txt"],
+            key="edit_spec_file",
+            label_visibility="collapsed",
+        )
+        if _edit_spec_file:
+            _edit_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            if st.button(
+                "📤 Extract text from file",
+                key="edit_extract_spec_btn",
+                type="secondary",
+                use_container_width=True,
+            ):
+                with st.spinner("Extracting text from file…"):
+                    try:
+                        _edit_extracted = _extract_spec_text(_edit_spec_file, _edit_api_key)
+                        st.session_state["_edit_extracted_spec"] = _edit_extracted
+                    except Exception as _ex:
+                        st.error(f"Extraction failed: {_ex}")
+            _edit_extracted_text = st.session_state.get("_edit_extracted_spec", "")
+            if _edit_extracted_text:
+                st.success(f"✅ Text extracted ({len(_edit_extracted_text)} characters)")
+                _edit_new_desc = st.text_area(
+                    "Extracted text (review and edit before saving)",
+                    value=_edit_extracted_text,
+                    height=180,
+                    key="edit_extracted_desc",
+                    label_visibility="collapsed",
+                )
+            elif _edit_spec_file:
+                st.info("Click 'Extract text from file' to read the content.")
+
+    if st.button("Save specifications", key="save_edit_spec_btn", use_container_width=True):
+        _updated_full = (_edit_new_desc.strip() + _edit_thresh_block).strip()
+        db.register_machine(selected_id, _edit_mtype, _updated_full)
+        st.session_state.pop("_edit_extracted_spec", None)
+        st.success("✓ Specifications updated.")
+        st.rerun()
+
 # Load data from active file if one is selected, otherwise load all files
 _active_file = st.session_state.get(f"active_file_{selected_id}")
 if _active_file and db.get_file_info(selected_id) and len(db.get_file_info(selected_id)) > 1:
@@ -1530,6 +1583,27 @@ if _active_file and db.get_file_info(selected_id) and len(db.get_file_info(selec
     data = _file_data if _file_data is not None else db.get_data(selected_id)
 else:
     data = db.get_data(selected_id)
+
+# ── Data fingerprint: auto-clear stale DQ/analysis results when data changes ──
+# Computed on every render — no need to intercept individual file buttons.
+_data_fp = (
+    f"{selected_id}|"
+    + (
+        f"{len(data)}|{str(data.index.min())}|{str(data.index.max())}|"
+        + ",".join(sorted(data.columns.tolist()))
+        if data is not None and not data.empty
+        else "empty"
+    )
+)
+if st.session_state.get("_data_fingerprint") != _data_fp:
+    st.session_state["_data_fingerprint"]  = _data_fp
+    st.session_state["last_dq_report"]     = None
+    st.session_state["last_multi_results"] = None
+    st.session_state["last_data"]          = None
+    st.session_state["_pending_analysis"]  = False
+    st.session_state["_corrected_csv"]     = None
+    st.session_state["_corrected_df"]      = None
+    st.session_state["_pump_physics_result"] = None
 
 tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "History", "Maintenance Logs"])
 
