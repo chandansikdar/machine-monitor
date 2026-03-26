@@ -1422,15 +1422,26 @@ with st.sidebar:
                     index=list(_file_options.keys()).index(_current_active),
                     key=f"active_file_select_{selected_id}",
                 )
-                if _selected_file != st.session_state.get(f"active_file_{selected_id}"):
+                _file_changed = _selected_file != _current_active
+                if st.button(
+                    "✓ Use selected file for analysis",
+                    key="use_selected_file_btn",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=not _file_changed,
+                ):
                     st.session_state[f"active_file_{selected_id}"] = _selected_file
-                    st.session_state["last_data"] = None  # force reload
+                    st.session_state["last_data"]          = None
                     st.session_state["last_multi_results"] = None
+                    st.session_state["last_dq_report"]     = None
+                    st.session_state["_pending_analysis"]  = False
+                    st.session_state["_corrected_csv"]     = None
+                    st.session_state["_corrected_df"]      = None
                     st.rerun()
-                st.caption(
-                    f"ℹ️ Analysis will use: **{_current_active}**. "
-                    f"Change selection above to switch files."
-                )
+                if _file_changed:
+                    st.caption(f"⚠️ Currently using: **{_current_active}**. Click above to switch.")
+                else:
+                    st.caption(f"ℹ️ Analysis will use: **{_current_active}**.")
             if st.button("Delete ALL files for this machine", type="primary",
                          key="del_all_files", use_container_width=True):
                 db.delete_all_files(selected_id)
