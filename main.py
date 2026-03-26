@@ -1195,7 +1195,7 @@ with st.sidebar:
             _sidebar_active = file_info[-1]["file"]
             st.session_state[f"active_file_{selected_id}"] = _sidebar_active
         st.markdown("")
-        st.caption(f"Currently using: **{_sidebar_active}**")
+        st.markdown(f"Currently using: **{_sidebar_active}**")
         st.markdown("**📂 Choose which file to use for analysis:**")
         _file_options = {
             _f["file"]: (
