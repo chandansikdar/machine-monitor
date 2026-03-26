@@ -1219,9 +1219,10 @@ with st.sidebar:
                             _fdata = _fp.read_bytes()
                         else:
                             import io as _io3
-                            _fdf = db.get_data(selected_id)
+                            _fdf = db.get_data_from_file(selected_id, _fi["file"])
                             _buf3 = _io3.StringIO()
-                            _fdf.to_csv(_buf3)
+                            if _fdf is not None:
+                                _fdf.to_csv(_buf3)
                             _fdata = _buf3.getvalue().encode("utf-8")
                         st.download_button(
                             label="\u2b07\ufe0f",
@@ -1816,13 +1817,20 @@ with st.expander("📋 Maintenance logs", expanded=False):
     else:
         st.caption("No logs stored yet.")
 
-# Load data from active file if one is selected, otherwise load all files
-_active_file = st.session_state.get(f"active_file_{selected_id}")
-if _active_file and db.get_file_info(selected_id) and len(db.get_file_info(selected_id)) > 1:
+# Load data — always use a single specific file, never union multiple files
+_all_file_info  = db.get_file_info(selected_id)
+_active_file    = st.session_state.get(f"active_file_{selected_id}")
+
+# If no active file chosen yet, default to the most recently ingested file
+if not _active_file and _all_file_info:
+    _active_file = _all_file_info[-1]["file"]
+    st.session_state[f"active_file_{selected_id}"] = _active_file
+
+if _active_file:
     _file_data = db.get_data_from_file(selected_id, _active_file)
-    data = _file_data if _file_data is not None else db.get_data(selected_id)
+    data = _file_data if _file_data is not None else None
 else:
-    data = db.get_data(selected_id)
+    data = None
 
 # ── Data fingerprint: auto-clear stale DQ/analysis results when data changes ──
 # Computed on every render — no need to intercept individual file buttons.
@@ -1855,8 +1863,12 @@ def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
     _sel         = meta["selected_analyses"]
     for _i, _atype in enumerate(_sel):
         _status.text(f"Running {_atype} ({_i+1} of {len(_sel)})...")
-        _data_to_use = override_data if override_data is not None \
-                       else db.get_data(meta["machine_info"]["machine_id"])
+        _mid = meta["machine_info"]["machine_id"]
+        _af  = st.session_state.get(f"active_file_{_mid}")
+        _data_to_use = (
+            override_data if override_data is not None
+            else (db.get_data_from_file(_mid, _af) if _af else db.get_data(_mid))
+        )
         _result = _analyzer.analyze(
             machine_info         = meta["machine_info"],
             data                 = _data_to_use,
@@ -2695,7 +2707,7 @@ with tab_analysis:
                     )
 
                     # Detect what energy-related columns exist in the loaded data
-                    _data_now = db.get_data(selected_id)
+                    _data_now = data  # use already-loaded active file data
                     _cols     = list(_data_now.columns) if _data_now is not None else []
 
                     _has_kwh     = any(any(k in c.lower() for k in ["kwh","kw_h","energy","consumption"]) for c in _cols)
