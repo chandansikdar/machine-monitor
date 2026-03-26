@@ -1499,6 +1499,83 @@ with st.expander("Edit parameter thresholds", expanded=False):
         st.success("Thresholds saved.")
         st.rerun()
 
+# ── Edit machine specifications ─────────────────────────────────────────────────────
+with st.expander("✏️ Edit machine specifications", expanded=False):
+    st.caption("Update nameplate data, installation details, or notes. Threshold block is preserved automatically.")
+
+    _edit_mtype = machine_info.get("machine_type", "")
+    _edit_desc  = machine_info.get("description", "")
+    # Strip threshold block — edit only the spec portion
+    _edit_base  = _edit_desc.split("=== PARAMETER THRESHOLDS ===")[0].strip()
+    _edit_thresh_block = (
+        "\n\n=== PARAMETER THRESHOLDS ===\n" +
+        _edit_desc.split("=== PARAMETER THRESHOLDS ===")[1].strip()
+        if "=== PARAMETER THRESHOLDS ===" in _edit_desc else ""
+    )
+
+    _edit_tab1, _edit_tab2 = st.tabs(["✏️ Enter manually", "📎 Upload file"])
+
+    _edit_new_desc = _edit_base
+
+    with _edit_tab1:
+        _edit_new_desc = st.text_area(
+            "Specifications",
+            value=_edit_base,
+            height=180,
+            label_visibility="collapsed",
+            help=(
+                "Edit nameplate data, ratings, installation details, and notes.  ❙  "
+                "For pumps: Rated power (kW), Rated flow (m³/h), Rated head (m), Pump efficiency (%).  ❙  "
+                "Threshold block is stored separately and will be re-appended on save."
+            ),
+            key="edit_spec_textarea",
+        )
+
+    with _edit_tab2:
+        st.caption(
+            "Upload a PDF, image, or text file containing the machine datasheet, "
+            "nameplate photo, or specification document."
+        )
+        _edit_spec_file = st.file_uploader(
+            "Upload specification file",
+            type=["pdf", "png", "jpg", "jpeg", "webp", "txt"],
+            key="edit_spec_file",
+            label_visibility="collapsed",
+        )
+        if _edit_spec_file:
+            _edit_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            if st.button(
+                "📤 Extract text from file",
+                key="edit_extract_spec_btn",
+                type="secondary",
+                use_container_width=True,
+            ):
+                with st.spinner("Extracting text from file…"):
+                    try:
+                        _edit_extracted = _extract_spec_text(_edit_spec_file, _edit_api_key)
+                        st.session_state["_edit_extracted_spec"] = _edit_extracted
+                    except Exception as _ex:
+                        st.error(f"Extraction failed: {_ex}")
+            _edit_extracted_text = st.session_state.get("_edit_extracted_spec", "")
+            if _edit_extracted_text:
+                st.success(f"✅ Text extracted ({len(_edit_extracted_text)} characters)")
+                _edit_new_desc = st.text_area(
+                    "Extracted text (review and edit before saving)",
+                    value=_edit_extracted_text,
+                    height=180,
+                    key="edit_extracted_desc",
+                    label_visibility="collapsed",
+                )
+            elif _edit_spec_file:
+                st.info("Click 'Extract text from file' to read the content.")
+
+    if st.button("Save specifications", key="save_edit_spec_btn", use_container_width=True):
+        _updated_full = (_edit_new_desc.strip() + _edit_thresh_block).strip()
+        db.register_machine(selected_id, _edit_mtype, _updated_full)
+        st.session_state.pop("_edit_extracted_spec", None)
+        st.success("✓ Specifications updated.")
+        st.rerun()
+
 # Load data from active file if one is selected, otherwise load all files
 _active_file = st.session_state.get(f"active_file_{selected_id}")
 if _active_file and db.get_file_info(selected_id) and len(db.get_file_info(selected_id)) > 1:
