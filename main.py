@@ -712,6 +712,12 @@ MACHINE_TYPES = {
         "Gearbox",
         "Turbine",
     ],
+    "Refrigeration & HVAC": [
+        "Vapour Compression Chiller — Centrifugal",
+        "Vapour Compression Chiller — Screw",
+        "Vapour Compression Chiller — Scroll",
+        "Vapour Compression Chiller — Reciprocating",
+    ],
     "Static Equipment": [
         "Shell & Tube Heat Exchanger",
         "Plate Heat Exchanger",
@@ -739,6 +745,10 @@ PHYSICS_MODULE_STATUS = {
     "Centrifugal Fan / Blower":             ("planned",      "In development",    "🚧"),
     "Electric Motor (standalone)":          ("planned",      "In development",    "🚧"),
     "Gearbox":                              ("planned",      "In development",    "🚧"),
+    "Vapour Compression Chiller — Centrifugal":    ("available",    "Phase 1 active",    "🔧"),
+    "Vapour Compression Chiller — Screw":          ("available",    "Phase 1 active",    "🔧"),
+    "Vapour Compression Chiller — Scroll":         ("available",    "Phase 1 active",    "🔧"),
+    "Vapour Compression Chiller — Reciprocating":  ("available",    "Phase 1 active",    "🔧"),
     "Shell & Tube Heat Exchanger":          ("future",       "Planned",           "📋"),
     "Plate Heat Exchanger":                 ("future",       "Planned",           "📋"),
     "Boiler / Steam Generator":             ("future",       "Planned",           "📋"),
@@ -772,6 +782,19 @@ DRIVE_TYPES_SUPPORTED = [
     "Induction motor — belt drive (V-belt / flat belt)",
     "Induction motor — gearbox speed reducer",
     "Induction motor — gearbox speed increaser",
+]
+
+# Machine types where drive type is not applicable (self-contained units)
+MACHINE_TYPES_NO_DRIVE = [
+    "Vapour Compression Chiller — Centrifugal",
+    "Vapour Compression Chiller — Screw",
+    "Vapour Compression Chiller — Scroll",
+    "Vapour Compression Chiller — Reciprocating",
+    "Shell & Tube Heat Exchanger",
+    "Plate Heat Exchanger",
+    "Boiler / Steam Generator",
+    "Cooling Tower",
+    "Pressure Vessel",
 ]
 
 
@@ -921,8 +944,13 @@ with st.sidebar:
             if _phys:
                 _status, _detail, _icon = _phys
                 if _status == "available":
-                    # Show full availability only if drive type is also supported or not yet selected
-                    if not drive_type or drive_type == "-- Select drive type --":
+                    # Self-contained machines (chillers) don't need drive type
+                    if machine_type in MACHINE_TYPES_NO_DRIVE:
+                        st.success(
+                            f"{_icon} **Physics module available:** {machine_type} \u2014 {_detail}.  \n"
+                            f"No drive type required. Physics analytics will activate automatically."
+                        )
+                    elif not drive_type or drive_type == "-- Select drive type --":
                         st.success(
                             f"{_icon} **Physics module available:** {machine_type} \u2014 {_detail}.  \n"
                             f"Select a drive type below to confirm full physics support."
@@ -948,34 +976,42 @@ with st.sidebar:
             else:
                 st.info("\u2139\ufe0f AI statistical analytics will run. No physics module currently planned for this type.")
 
-        # ── Drive type ──────────────────────────────────────────────────
-        st.markdown("**Drive type**")
-        drive_type = st.selectbox(
-            "Drive",
-            options=["-- Select drive type --"] + DRIVE_TYPES,
-            key="reg_drive_type",
-            label_visibility="collapsed",
-        )
-        drive_type = drive_type if drive_type != "-- Select drive type --" else ""
+        # ── Drive type (hidden for self-contained machines like chillers) ───
+        _no_drive_machine = machine_type in MACHINE_TYPES_NO_DRIVE
+        if _no_drive_machine:
+            drive_type = "Not applicable — self-contained unit"
+            st.info(
+                f"ℹ️ **{machine_type}** is a self-contained unit. "
+                "Drive type is managed internally by the chiller and is not required here."
+            )
+        else:
+            st.markdown("**Drive type**")
+            drive_type = st.selectbox(
+                "Drive",
+                options=["-- Select drive type --"] + DRIVE_TYPES,
+                key="reg_drive_type",
+                label_visibility="collapsed",
+            )
+            drive_type = drive_type if drive_type != "-- Select drive type --" else ""
 
-        # Drive type support badge
-        if drive_type and drive_type != "-- Select drive type --":
-            if drive_type in DRIVE_TYPES_SUPPORTED:
-                st.success(
-                    "✅ **Induction motor drive — full physics supported.**  \n"
-                    "All applicable physics phases will run for this drive type."
-                )
-            elif drive_type in ["Not applicable — static equipment"]:
-                st.info("ℹ️ Static equipment — no drive physics applicable.")
-            elif drive_type in ["Unknown", "Hydraulic coupling"]:
-                st.info("ℹ️ AI statistical analytics will run. Drive physics not applicable.")
-            else:
-                st.warning(
-                    f"⚠️ **Physics module not available for this drive type.**  \n"
-                    f"**{drive_type}**  \n"
-                    f"Only induction motor drives are currently supported for physics-based analytics.  \n"
-                    f"AI statistical analytics (Layer 1) will run for all analysis types."
-                )
+            # Drive type support badge
+            if drive_type and drive_type != "-- Select drive type --":
+                if drive_type in DRIVE_TYPES_SUPPORTED:
+                    st.success(
+                        "✅ **Induction motor drive — full physics supported.**  \n"
+                        "All applicable physics phases will run for this drive type."
+                    )
+                elif drive_type in ["Not applicable — static equipment"]:
+                    st.info("ℹ️ Static equipment — no drive physics applicable.")
+                elif drive_type in ["Unknown", "Hydraulic coupling"]:
+                    st.info("ℹ️ AI statistical analytics will run. Drive physics not applicable.")
+                else:
+                    st.warning(
+                        f"⚠️ **Physics module not available for this drive type.**  \n"
+                        f"**{drive_type}**  \n"
+                        f"Only induction motor drives are currently supported for physics-based analytics.  \n"
+                        f"AI statistical analytics (Layer 1) will run for all analysis types."
+                    )
 
         _drive_extra = ""
         if "VFD" in (drive_type or "") and "Induction motor" in (drive_type or ""):
