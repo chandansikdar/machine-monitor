@@ -1292,28 +1292,7 @@ with st.sidebar:
                 st.success("All data files deleted. Please re-upload.")
                 st.rerun()
 
-    st.divider()
-    st.subheader("Maintenance logs")
-    log_file = st.file_uploader(
-        "Upload log (CSV, PDF, image)",
-        type=["csv", "xlsx", "pdf", "png", "jpg", "jpeg", "webp", "txt"],
-        key="log_uploader",
-        help="Handwritten or printed maintenance logs, service records, inspection reports.",
-    )
-    if log_file:
-        if st.button("Read & store log", use_container_width=True):
-            with st.spinner("Reading log file…"):
-                result = read_log(log_file, api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-            if result["success"]:
-                db.save_log(selected_id, log_file.name, result["method"], result["text"])
-                st.success(f"Log stored — {result['method']} ({len(result['text'])} chars)")
-                st.rerun()
-            else:
-                st.error(result["error"])
 
-    stored_logs = db.get_logs(selected_id)
-    if stored_logs:
-        st.caption(f"{len(stored_logs)} log file(s) stored")
 
 
 # ================================================================== #
@@ -1672,6 +1651,38 @@ with st.expander("✏️ Machine specifications", expanded=False):
         st.session_state.pop("_tab_extracted_spec", None)
         st.success("✓ Specifications updated.")
         st.rerun()
+
+# ── Maintenance logs ─────────────────────────────────────────────────────────
+with st.expander("📋 Maintenance logs", expanded=False):
+    st.caption("Upload service records, inspection reports, or handwritten logs. Stored logs are included automatically in every analysis.")
+    _ml_file = st.file_uploader(
+        "Upload log (CSV, PDF, image)",
+        type=["csv", "xlsx", "pdf", "png", "jpg", "jpeg", "webp", "txt"],
+        key="log_uploader",
+        help="Handwritten or printed maintenance logs, service records, inspection reports.",
+    )
+    if st.button("Read & store log", use_container_width=True, disabled=not _ml_file):
+        if _ml_file:
+            with st.spinner("Reading log file…"):
+                result = read_log(_ml_file, api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+            if result["success"]:
+                db.save_log(selected_id, _ml_file.name, result["method"], result["text"])
+                st.success(f"✓ Log stored ({result['method']}, {len(result['text'])} chars)")
+                st.rerun()
+            else:
+                st.error(result["error"])
+    stored_logs = db.get_logs(selected_id)
+    if stored_logs:
+        st.caption(f"{len(stored_logs)} log file(s) stored — included in every analysis")
+        for _sl in stored_logs:
+            _slc1, _slc2 = st.columns([0.85, 0.15])
+            _slc1.caption(f"📄 {_sl['filename']}  ·  {str(_sl['uploaded_at'])[:10]}")
+            with _slc2:
+                if st.button("Delete", key=f"del_log_{_sl['filename']}", type="secondary"):
+                    db.delete_log(selected_id, _sl["filename"])
+                    st.rerun()
+    else:
+        st.caption("No logs stored yet.")
 
 # Load data from active file if one is selected, otherwise load all files
 _active_file = st.session_state.get(f"active_file_{selected_id}")
