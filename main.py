@@ -1495,6 +1495,184 @@ with st.expander("Edit parameter thresholds", expanded=False):
         st.success("Thresholds saved.")
         st.rerun()
 
+# ── Machine specifications ────────────────────────────────────────
+with st.expander("✏️ Machine specifications", expanded=False):
+    st.caption("Enter or update nameplate data, installation details, and notes. Threshold block is preserved automatically.")
+    _tab_mtype  = machine_info.get("machine_type", "")
+    _tab_desc   = machine_info.get("description", "")
+    _tab_base   = _tab_desc.split("=== PARAMETER THRESHOLDS ===")[0].strip()
+    _tab_thresh_block = (
+        "\n\n=== PARAMETER THRESHOLDS ===\n" +
+        _tab_desc.split("=== PARAMETER THRESHOLDS ===")[1].strip()
+        if "=== PARAMETER THRESHOLDS ===" in _tab_desc else ""
+    )
+    _tab_is_pump = (_tab_mtype == "Centrifugal Pump" or "pump" in _tab_mtype.lower())
+
+    # Pre-parse existing description to pre-populate fields
+    _tab_np = parse_nameplate(_tab_base) if PUMP_PHYSICS_AVAILABLE and _tab_is_pump else {}
+
+    def _tab_fv(key, default=0.0):
+        """Get float value from parsed nameplate or default."""
+        v = _tab_np.get(key, default)
+        try: return float(v) if v else default
+        except: return default
+
+    _tab_stab1, _tab_stab2 = st.tabs(["✏️ Enter manually", "📎 Upload file"])
+    _tab_new_desc = _tab_base
+
+    with _tab_stab1:
+        if _tab_is_pump:
+            # ── Tier 1: Recommended ───────────────────────────
+            st.caption("⭐ Recommended — improves accuracy for all phases")
+            _tr1, _tr2 = st.columns(2)
+            _tnp_rated_kw  = _tr1.number_input("Rated power (kW)", min_value=0.0,
+                value=_tab_fv("rated_power_kw"), step=0.1, format="%.1f", key="tnp_rated_kw",
+                help="Motor electrical input rating.")
+            _tnp_flow      = _tr2.number_input("Rated flow (m³/h)", min_value=0.0,
+                value=_tab_fv("rated_flow"), step=0.1, format="%.1f", key="tnp_flow",
+                help="Design flow at rated duty point.")
+            _tr3, _tr4 = st.columns(2)
+            _tnp_head      = _tr3.number_input("Rated head (m)", min_value=0.0,
+                value=_tab_fv("rated_head"), step=0.1, format="%.1f", key="tnp_head",
+                help="Design head at rated duty point.")
+            _tnp_pump_eff  = _tr4.number_input("Pump efficiency (%)", min_value=0.0, max_value=100.0,
+                value=_tab_fv("pump_efficiency"), step=0.1, format="%.1f", key="tnp_pump_eff",
+                help="Hydraulic efficiency at rated point.")
+
+            # ── Tier 2: Optional ──────────────────────────────
+            with st.expander("Optional — improves accuracy", expanded=False):
+                st.caption("Motor nameplate data. Defaults are used if not entered.")
+                _to1, _to2, _to3 = st.columns(3)
+                _tnp_rated_rpm = _to1.number_input("Rated speed (RPM)", min_value=0,
+                    value=int(_tab_fv("rated_speed", 0)), step=10, key="tnp_rated_rpm")
+                _tnp_fla       = _to2.number_input("FLA (A)", min_value=0.0,
+                    value=_tab_fv("fla"), step=0.1, format="%.1f", key="tnp_fla")
+                _tnp_voltage   = _to3.number_input("Voltage (V)", min_value=0.0,
+                    value=_tab_fv("voltage", 415.0), step=1.0, format="%.0f", key="tnp_voltage")
+                _to4, _to5, _to6 = st.columns(3)
+                _tnp_pf        = _to4.number_input("Power factor", min_value=0.0, max_value=1.0,
+                    value=_tab_fv("power_factor"), step=0.01, format="%.2f", key="tnp_pf")
+                _tnp_motor_eff = _to5.number_input("Motor efficiency (%)", min_value=0.0, max_value=100.0,
+                    value=_tab_fv("motor_efficiency"), step=0.1, format="%.1f", key="tnp_motor_eff")
+                _tnp_ie        = _to6.selectbox("IE class", ["--","IE1","IE2","IE3","IE4"],
+                    index=0, key="tnp_ie")
+                _to7, _to8 = st.columns(2)
+                _tnp_poles     = _to7.selectbox("Poles", [0,2,4,6,8], index=0, key="tnp_poles")
+                _tnp_freq      = _to8.selectbox("Frequency (Hz)", [50,60], index=0, key="tnp_freq")
+
+            # ── Tier 3: Advanced ──────────────────────────────
+            with st.expander("Advanced diagnostics", expanded=False):
+                st.caption("Enables BEP deviation, cavitation checks, blade pass frequency, and commissioning comparison.")
+                _ta1, _ta2, _ta3 = st.columns(3)
+                _tnp_bep_flow  = _ta1.number_input("BEP flow (m³/h)", min_value=0.0,
+                    value=_tab_fv("bep_flow"), step=0.1, format="%.1f", key="tnp_bep_flow")
+                _tnp_npsh_r    = _ta2.number_input("NPSH required (m)", min_value=0.0,
+                    value=_tab_fv("npsh_r"), step=0.1, format="%.1f", key="tnp_npsh_r")
+                _tnp_imp_dia   = _ta3.number_input("Impeller ø (mm)", min_value=0,
+                    value=int(_tab_fv("impeller_diameter", 0)), step=1, key="tnp_imp_dia")
+                _ta4, _ta5, _ta6 = st.columns(3)
+                _tnp_vanes     = _ta4.number_input("Number of vanes", min_value=0,
+                    value=int(_tab_fv("vanes", 0)), step=1, key="tnp_vanes")
+                _tnp_pump_rpm  = _ta5.number_input("Pump speed (RPM)", min_value=0,
+                    value=int(_tab_fv("pump_speed", 0)), step=10, key="tnp_pump_rpm")
+                _tnp_comm_kw   = _ta6.number_input("Commissioning power (kW)", min_value=0.0,
+                    value=_tab_fv("commissioning_power"), step=0.1, format="%.1f", key="tnp_comm_kw")
+                _ta7, _ = st.columns(2)
+                _tnp_density   = _ta7.number_input("Fluid density (kg/m³)", min_value=0.0,
+                    value=_tab_fv("fluid_density", 998.0), step=1.0, format="%.0f", key="tnp_density")
+
+            _tnp_notes = st.text_area(
+                "Additional notes",
+                value=_tab_base if not any([_tnp_rated_kw, _tnp_flow, _tnp_head]) else "",
+                placeholder="e.g. Commissioning date: 2024-01-15, seal type: mechanical, bearing: 6308",
+                height=60, key="tnp_extra_notes", label_visibility="collapsed",
+            )
+
+            # Serialise structured fields to description text
+            _tab_desc_parts = []
+            if _tnp_rated_kw > 0:   _tab_desc_parts.append(f"Rated power: {_tnp_rated_kw} kW")
+            if _tnp_rated_rpm > 0:  _tab_desc_parts.append(f"Rated speed: {_tnp_rated_rpm} RPM")
+            if _tnp_poles > 0:      _tab_desc_parts.append(f"{_tnp_poles}-pole")
+            if _tnp_freq:           _tab_desc_parts.append(f"Frequency: {_tnp_freq} Hz")
+            if _tnp_fla > 0:        _tab_desc_parts.append(f"FLA: {_tnp_fla} A")
+            if _tnp_voltage > 0:    _tab_desc_parts.append(f"Voltage: {_tnp_voltage} V")
+            if _tnp_pf > 0:         _tab_desc_parts.append(f"Power factor: {_tnp_pf}")
+            if _tnp_motor_eff > 0:  _tab_desc_parts.append(f"Motor efficiency: {_tnp_motor_eff}%")
+            if _tnp_ie != "--":     _tab_desc_parts.append(f"{_tnp_ie}")
+            if _tnp_flow > 0:       _tab_desc_parts.append(f"Rated flow: {_tnp_flow} m3/h")
+            if _tnp_head > 0:       _tab_desc_parts.append(f"Rated head: {_tnp_head} m")
+            if _tnp_pump_eff > 0:   _tab_desc_parts.append(f"Pump efficiency: {_tnp_pump_eff}%")
+            if _tnp_bep_flow > 0:   _tab_desc_parts.append(f"BEP flow: {_tnp_bep_flow} m3/h")
+            if _tnp_npsh_r > 0:     _tab_desc_parts.append(f"NPSH_r: {_tnp_npsh_r} m")
+            if _tnp_imp_dia > 0:    _tab_desc_parts.append(f"Impeller: {_tnp_imp_dia} mm")
+            if _tnp_vanes > 0:      _tab_desc_parts.append(f"Vanes: {_tnp_vanes}")
+            if _tnp_pump_rpm > 0:   _tab_desc_parts.append(f"Pump speed: {_tnp_pump_rpm} RPM")
+            if _tnp_comm_kw > 0:    _tab_desc_parts.append(f"Commissioning power: {_tnp_comm_kw} kW")
+            if _tnp_density != 998: _tab_desc_parts.append(f"Density: {_tnp_density} kg/m3")
+            # Preserve drive type line from existing description
+            for _ln in _tab_base.splitlines():
+                if _ln.strip().lower().startswith("drive type:"):
+                    _tab_desc_parts.append(_ln.strip())
+                    break
+            if _tnp_notes.strip():  _tab_desc_parts.append(_tnp_notes.strip())
+            _tab_new_desc = "\n".join(_tab_desc_parts)
+
+        else:
+            # Non-pump: free text
+            _tab_new_desc = st.text_area(
+                "Specifications",
+                value=_tab_base,
+                height=180,
+                label_visibility="collapsed",
+                help="Enter nameplate data, installation details, and notes.",
+                key="tab_spec_textarea",
+            )
+
+    with _tab_stab2:
+        st.caption(
+            "Upload a PDF, image, or text file containing the machine datasheet, "
+            "nameplate photo, or specification document."
+        )
+        _tab_spec_file = st.file_uploader(
+            "Upload specification file",
+            type=["pdf", "png", "jpg", "jpeg", "webp", "txt"],
+            key="tab_edit_spec_file",
+            label_visibility="collapsed",
+        )
+        if _tab_spec_file:
+            _tab_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            if st.button(
+                "📤 Extract text from file",
+                key="tab_extract_spec_btn",
+                type="secondary",
+                use_container_width=True,
+            ):
+                with st.spinner("Extracting text from file…"):
+                    try:
+                        _tab_extracted = _extract_spec_text(_tab_spec_file, _tab_api_key)
+                        st.session_state["_tab_extracted_spec"] = _tab_extracted
+                    except Exception as _tex:
+                        st.error(f"Extraction failed: {_tex}")
+            _tab_extracted_text = st.session_state.get("_tab_extracted_spec", "")
+            if _tab_extracted_text:
+                st.success(f"✅ Text extracted ({len(_tab_extracted_text)} characters)")
+                _tab_new_desc = st.text_area(
+                    "Extracted text (review and edit before saving)",
+                    value=_tab_extracted_text,
+                    height=180,
+                    key="tab_extracted_desc",
+                    label_visibility="collapsed",
+                )
+            elif _tab_spec_file:
+                st.info("Click 'Extract text from file' to read the content.")
+
+    if st.button("Save specifications", key="tab_save_spec_btn", use_container_width=True):
+        _tab_updated = (_tab_new_desc.strip() + _tab_thresh_block).strip()
+        db.register_machine(selected_id, _tab_mtype, _tab_updated)
+        st.session_state.pop("_tab_extracted_spec", None)
+        st.success("✓ Specifications updated.")
+        st.rerun()
+
 # Load data from active file if one is selected, otherwise load all files
 _active_file = st.session_state.get(f"active_file_{selected_id}")
 if _active_file and db.get_file_info(selected_id) and len(db.get_file_info(selected_id)) > 1:
@@ -1812,183 +1990,7 @@ with tab_data:
                             use_container_width=False,
                         )
 
-        # ── Machine specifications ────────────────────────────────────────
-        with st.expander("✏️ Machine specifications", expanded=False):
-            st.caption("Enter or update nameplate data, installation details, and notes. Threshold block is preserved automatically.")
-            _tab_mtype  = machine_info.get("machine_type", "")
-            _tab_desc   = machine_info.get("description", "")
-            _tab_base   = _tab_desc.split("=== PARAMETER THRESHOLDS ===")[0].strip()
-            _tab_thresh_block = (
-                "\n\n=== PARAMETER THRESHOLDS ===\n" +
-                _tab_desc.split("=== PARAMETER THRESHOLDS ===")[1].strip()
-                if "=== PARAMETER THRESHOLDS ===" in _tab_desc else ""
-            )
-            _tab_is_pump = (_tab_mtype == "Centrifugal Pump" or "pump" in _tab_mtype.lower())
 
-            # Pre-parse existing description to pre-populate fields
-            _tab_np = parse_nameplate(_tab_base) if PUMP_PHYSICS_AVAILABLE and _tab_is_pump else {}
-
-            def _tab_fv(key, default=0.0):
-                """Get float value from parsed nameplate or default."""
-                v = _tab_np.get(key, default)
-                try: return float(v) if v else default
-                except: return default
-
-            _tab_stab1, _tab_stab2 = st.tabs(["✏️ Enter manually", "📎 Upload file"])
-            _tab_new_desc = _tab_base
-
-            with _tab_stab1:
-                if _tab_is_pump:
-                    # ── Tier 1: Recommended ───────────────────────────
-                    st.caption("⭐ Recommended — improves accuracy for all phases")
-                    _tr1, _tr2 = st.columns(2)
-                    _tnp_rated_kw  = _tr1.number_input("Rated power (kW)", min_value=0.0,
-                        value=_tab_fv("rated_power_kw"), step=0.1, format="%.1f", key="tnp_rated_kw",
-                        help="Motor electrical input rating.")
-                    _tnp_flow      = _tr2.number_input("Rated flow (m³/h)", min_value=0.0,
-                        value=_tab_fv("rated_flow"), step=0.1, format="%.1f", key="tnp_flow",
-                        help="Design flow at rated duty point.")
-                    _tr3, _tr4 = st.columns(2)
-                    _tnp_head      = _tr3.number_input("Rated head (m)", min_value=0.0,
-                        value=_tab_fv("rated_head"), step=0.1, format="%.1f", key="tnp_head",
-                        help="Design head at rated duty point.")
-                    _tnp_pump_eff  = _tr4.number_input("Pump efficiency (%)", min_value=0.0, max_value=100.0,
-                        value=_tab_fv("pump_efficiency"), step=0.1, format="%.1f", key="tnp_pump_eff",
-                        help="Hydraulic efficiency at rated point.")
-
-                    # ── Tier 2: Optional ──────────────────────────────
-                    with st.expander("Optional — improves accuracy", expanded=False):
-                        st.caption("Motor nameplate data. Defaults are used if not entered.")
-                        _to1, _to2, _to3 = st.columns(3)
-                        _tnp_rated_rpm = _to1.number_input("Rated speed (RPM)", min_value=0,
-                            value=int(_tab_fv("rated_speed", 0)), step=10, key="tnp_rated_rpm")
-                        _tnp_fla       = _to2.number_input("FLA (A)", min_value=0.0,
-                            value=_tab_fv("fla"), step=0.1, format="%.1f", key="tnp_fla")
-                        _tnp_voltage   = _to3.number_input("Voltage (V)", min_value=0.0,
-                            value=_tab_fv("voltage", 415.0), step=1.0, format="%.0f", key="tnp_voltage")
-                        _to4, _to5, _to6 = st.columns(3)
-                        _tnp_pf        = _to4.number_input("Power factor", min_value=0.0, max_value=1.0,
-                            value=_tab_fv("power_factor"), step=0.01, format="%.2f", key="tnp_pf")
-                        _tnp_motor_eff = _to5.number_input("Motor efficiency (%)", min_value=0.0, max_value=100.0,
-                            value=_tab_fv("motor_efficiency"), step=0.1, format="%.1f", key="tnp_motor_eff")
-                        _tnp_ie        = _to6.selectbox("IE class", ["--","IE1","IE2","IE3","IE4"],
-                            index=0, key="tnp_ie")
-                        _to7, _to8 = st.columns(2)
-                        _tnp_poles     = _to7.selectbox("Poles", [0,2,4,6,8], index=0, key="tnp_poles")
-                        _tnp_freq      = _to8.selectbox("Frequency (Hz)", [50,60], index=0, key="tnp_freq")
-
-                    # ── Tier 3: Advanced ──────────────────────────────
-                    with st.expander("Advanced diagnostics", expanded=False):
-                        st.caption("Enables BEP deviation, cavitation checks, blade pass frequency, and commissioning comparison.")
-                        _ta1, _ta2, _ta3 = st.columns(3)
-                        _tnp_bep_flow  = _ta1.number_input("BEP flow (m³/h)", min_value=0.0,
-                            value=_tab_fv("bep_flow"), step=0.1, format="%.1f", key="tnp_bep_flow")
-                        _tnp_npsh_r    = _ta2.number_input("NPSH required (m)", min_value=0.0,
-                            value=_tab_fv("npsh_r"), step=0.1, format="%.1f", key="tnp_npsh_r")
-                        _tnp_imp_dia   = _ta3.number_input("Impeller ø (mm)", min_value=0,
-                            value=int(_tab_fv("impeller_diameter", 0)), step=1, key="tnp_imp_dia")
-                        _ta4, _ta5, _ta6 = st.columns(3)
-                        _tnp_vanes     = _ta4.number_input("Number of vanes", min_value=0,
-                            value=int(_tab_fv("vanes", 0)), step=1, key="tnp_vanes")
-                        _tnp_pump_rpm  = _ta5.number_input("Pump speed (RPM)", min_value=0,
-                            value=int(_tab_fv("pump_speed", 0)), step=10, key="tnp_pump_rpm")
-                        _tnp_comm_kw   = _ta6.number_input("Commissioning power (kW)", min_value=0.0,
-                            value=_tab_fv("commissioning_power"), step=0.1, format="%.1f", key="tnp_comm_kw")
-                        _ta7, _ = st.columns(2)
-                        _tnp_density   = _ta7.number_input("Fluid density (kg/m³)", min_value=0.0,
-                            value=_tab_fv("fluid_density", 998.0), step=1.0, format="%.0f", key="tnp_density")
-
-                    _tnp_notes = st.text_area(
-                        "Additional notes",
-                        value=_tab_base if not any([_tnp_rated_kw, _tnp_flow, _tnp_head]) else "",
-                        placeholder="e.g. Commissioning date: 2024-01-15, seal type: mechanical, bearing: 6308",
-                        height=60, key="tnp_extra_notes", label_visibility="collapsed",
-                    )
-
-                    # Serialise structured fields to description text
-                    _tab_desc_parts = []
-                    if _tnp_rated_kw > 0:   _tab_desc_parts.append(f"Rated power: {_tnp_rated_kw} kW")
-                    if _tnp_rated_rpm > 0:  _tab_desc_parts.append(f"Rated speed: {_tnp_rated_rpm} RPM")
-                    if _tnp_poles > 0:      _tab_desc_parts.append(f"{_tnp_poles}-pole")
-                    if _tnp_freq:           _tab_desc_parts.append(f"Frequency: {_tnp_freq} Hz")
-                    if _tnp_fla > 0:        _tab_desc_parts.append(f"FLA: {_tnp_fla} A")
-                    if _tnp_voltage > 0:    _tab_desc_parts.append(f"Voltage: {_tnp_voltage} V")
-                    if _tnp_pf > 0:         _tab_desc_parts.append(f"Power factor: {_tnp_pf}")
-                    if _tnp_motor_eff > 0:  _tab_desc_parts.append(f"Motor efficiency: {_tnp_motor_eff}%")
-                    if _tnp_ie != "--":     _tab_desc_parts.append(f"{_tnp_ie}")
-                    if _tnp_flow > 0:       _tab_desc_parts.append(f"Rated flow: {_tnp_flow} m3/h")
-                    if _tnp_head > 0:       _tab_desc_parts.append(f"Rated head: {_tnp_head} m")
-                    if _tnp_pump_eff > 0:   _tab_desc_parts.append(f"Pump efficiency: {_tnp_pump_eff}%")
-                    if _tnp_bep_flow > 0:   _tab_desc_parts.append(f"BEP flow: {_tnp_bep_flow} m3/h")
-                    if _tnp_npsh_r > 0:     _tab_desc_parts.append(f"NPSH_r: {_tnp_npsh_r} m")
-                    if _tnp_imp_dia > 0:    _tab_desc_parts.append(f"Impeller: {_tnp_imp_dia} mm")
-                    if _tnp_vanes > 0:      _tab_desc_parts.append(f"Vanes: {_tnp_vanes}")
-                    if _tnp_pump_rpm > 0:   _tab_desc_parts.append(f"Pump speed: {_tnp_pump_rpm} RPM")
-                    if _tnp_comm_kw > 0:    _tab_desc_parts.append(f"Commissioning power: {_tnp_comm_kw} kW")
-                    if _tnp_density != 998: _tab_desc_parts.append(f"Density: {_tnp_density} kg/m3")
-                    # Preserve drive type line from existing description
-                    for _ln in _tab_base.splitlines():
-                        if _ln.strip().lower().startswith("drive type:"):
-                            _tab_desc_parts.append(_ln.strip())
-                            break
-                    if _tnp_notes.strip():  _tab_desc_parts.append(_tnp_notes.strip())
-                    _tab_new_desc = "\n".join(_tab_desc_parts)
-
-                else:
-                    # Non-pump: free text
-                    _tab_new_desc = st.text_area(
-                        "Specifications",
-                        value=_tab_base,
-                        height=180,
-                        label_visibility="collapsed",
-                        help="Enter nameplate data, installation details, and notes.",
-                        key="tab_spec_textarea",
-                    )
-
-            with _tab_stab2:
-                st.caption(
-                    "Upload a PDF, image, or text file containing the machine datasheet, "
-                    "nameplate photo, or specification document."
-                )
-                _tab_spec_file = st.file_uploader(
-                    "Upload specification file",
-                    type=["pdf", "png", "jpg", "jpeg", "webp", "txt"],
-                    key="tab_edit_spec_file",
-                    label_visibility="collapsed",
-                )
-                if _tab_spec_file:
-                    _tab_api_key = os.getenv("ANTHROPIC_API_KEY", "")
-                    if st.button(
-                        "📤 Extract text from file",
-                        key="tab_extract_spec_btn",
-                        type="secondary",
-                        use_container_width=True,
-                    ):
-                        with st.spinner("Extracting text from file…"):
-                            try:
-                                _tab_extracted = _extract_spec_text(_tab_spec_file, _tab_api_key)
-                                st.session_state["_tab_extracted_spec"] = _tab_extracted
-                            except Exception as _tex:
-                                st.error(f"Extraction failed: {_tex}")
-                    _tab_extracted_text = st.session_state.get("_tab_extracted_spec", "")
-                    if _tab_extracted_text:
-                        st.success(f"✅ Text extracted ({len(_tab_extracted_text)} characters)")
-                        _tab_new_desc = st.text_area(
-                            "Extracted text (review and edit before saving)",
-                            value=_tab_extracted_text,
-                            height=180,
-                            key="tab_extracted_desc",
-                            label_visibility="collapsed",
-                        )
-                    elif _tab_spec_file:
-                        st.info("Click 'Extract text from file' to read the content.")
-
-            if st.button("Save specifications", key="tab_save_spec_btn", use_container_width=True):
-                _tab_updated = (_tab_new_desc.strip() + _tab_thresh_block).strip()
-                db.register_machine(selected_id, _tab_mtype, _tab_updated)
-                st.session_state.pop("_tab_extracted_spec", None)
-                st.success("✓ Specifications updated.")
-                st.rerun()
 
         st.subheader("Recent readings")
         st.dataframe(data.tail(200), use_container_width=True, height=280)
