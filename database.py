@@ -198,10 +198,12 @@ class Database:
             FROM data_files WHERE machine_id = ?
             ORDER BY ingested_at
         """, [machine_id]).fetchall()
-        return [
-            {"file": Path(r[0]).name, "file_path": r[0], "rows": r[1], "columns": r[2], "ingested_at": r[3]}
-            for r in rows
-        ]
+        # Deduplicate by filename — keep latest entry for each name
+        seen = {}
+        for r in rows:
+            name = Path(r[0]).name
+            seen[name] = {"file": name, "file_path": r[0], "rows": r[1], "columns": r[2], "ingested_at": r[3]}
+        return list(seen.values())
 
     # ------------------------------------------------------------------ #
     # Analysis history
