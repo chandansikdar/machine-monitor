@@ -776,7 +776,7 @@ DRIVE_TYPES_SUPPORTED = [
 
 
 @st.cache_resource
-def get_services(_version=6):
+def get_services(_version=7):
     return Database(), Visualizer()
 
 db, viz = get_services()
