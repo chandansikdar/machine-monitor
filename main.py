@@ -1923,6 +1923,19 @@ with tab_data:
         c3.metric("From",       str(data.index.min().date()))
         c4.metric("To",         str(data.index.max().date()))
 
+        # ── Corrections applied message (shown immediately after Option 3) ──────
+        _corr_fname = st.session_state.get("_corrections_applied")
+        if _corr_fname:
+            st.session_state["_corrections_applied"] = False
+            st.success(
+                f"\u2705 **Corrections applied successfully.** "
+                f"Corrected file **{_corr_fname}** saved and available in the left panel."
+            )
+            st.info(
+                "\u2139\ufe0f The corrected file is now the active file for analysis.  \n"
+                "Go to the **Analysis** tab to continue."
+            )
+
         # ── Data quality — auto-run and display ─────────────────────────────
         if DQ_AVAILABLE and st.session_state.get("last_dq_report") is None:
             with st.spinner("Running data quality checks…"):
@@ -1946,19 +1959,7 @@ with tab_data:
                 _dq_sev_bg    = {"critical": "#FFF0F0", "warning": "#FFFBF0", "info": "#EAF4FF"}
 
                 if not _tab_dq.get("issues"):
-                    _corr_fname = st.session_state.get("_corrections_applied")
-                    if _corr_fname:
-                        st.session_state["_corrections_applied"] = False
-                        st.success(
-                            f"\u2705 **Corrections applied.** Corrected file **{_corr_fname}** "
-                            "saved and available in the left panel."
-                        )
-                        st.info(
-                            "\u2139\ufe0f The corrected file is now set as the active file for analysis.  \n"
-                            "Go to the **Analysis** tab to continue."
-                        )
-                    else:
-                        st.success("All sensor data quality checks passed. Data is suitable for analysis.")
+                    st.success("All sensor data quality checks passed. Data is suitable for analysis.")
                 else:
                     for _tdq_iss in _tab_dq.get("issues", []):
                         _tdq_sev  = _tdq_iss["severity"]
