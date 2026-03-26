@@ -127,6 +127,12 @@ class Database:
             file_path = machine_dir / f"{stem}.csv"
             df.to_csv(file_path, index=False)
 
+            # Remove any existing DB rows for this filename before inserting
+            self.conn.execute(
+                "DELETE FROM data_files WHERE machine_id = ? AND file_path LIKE ?",
+                [machine_id, f"%{stem}.csv"],
+            )
+
             # Register in metadata table
             col_list = ",".join(df.columns.tolist())
             self.conn.execute(
