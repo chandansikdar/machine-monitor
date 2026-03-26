@@ -1485,48 +1485,65 @@ with st.expander("Parameter thresholds", expanded=False):
     if not _thr_cols:
         st.info("Upload data first — parameter columns will appear here.")
     else:
-        st.markdown(
-            '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:4px 8px;'
-            'font-size:0.82em;font-weight:600;color:#555;padding:0 4px 4px 4px;">'
-            '<span>Parameter</span><span style="color:#BA7517">⚠️ Warning</span>'
-            '<span style="color:#A32D2D">❌ Critical</span></div>',
-            unsafe_allow_html=True,
+        st.caption(
+            "Tick the checkbox to activate thresholds for a parameter. "
+            "Only ticked parameters are used in health scoring even if values are entered for others."
         )
+        # Header row
+        _th1, _th2, _th3, _th4 = st.columns([0.15, 1.85, 1, 1])
+        _th1.markdown('<div style="font-size:0.8em;font-weight:600;color:#555;">Use</div>', unsafe_allow_html=True)
+        _th2.markdown('<div style="font-size:0.8em;font-weight:600;color:#555;">Parameter</div>', unsafe_allow_html=True)
+        _th3.markdown('<div style="font-size:0.8em;font-weight:600;color:#BA7517;">⚠️ Warning</div>', unsafe_allow_html=True)
+        _th4.markdown('<div style="font-size:0.8em;font-weight:600;color:#A32D2D;">❌ Critical</div>', unsafe_allow_html=True)
+
         _thr_new = {}
         for _col in _thr_cols:
-            _ex = _thr_existing.get(_col, {})
+            _ex       = _thr_existing.get(_col, {})
             _warn_cur = _ex.get("warning", None)
             _crit_cur = _ex.get("critical", None)
-            _c1, _c2, _c3 = st.columns([2, 1, 1])
-            _c1.markdown(
-                f'<div style="font-size:0.85em;padding-top:10px;color:#222;">'
-                f'<code>{_col}</code></div>',
+            _is_active = _col in _thr_existing
+            _cb, _cl, _cw, _cc = st.columns([0.15, 1.85, 1, 1])
+            _use_col = _cb.checkbox(
+                " ", value=_is_active,
+                key=f"thr_use_{_col}",
+                label_visibility="collapsed",
+            )
+            _cl.markdown(
+                f'<div style="font-size:0.85em;padding-top:8px;'
+                f'color:{"#222" if _use_col else "#AAA"};">'
+                f"<code>{_col}</code></div>",
                 unsafe_allow_html=True,
             )
-            _warn_val = _c2.text_input(
-                f"W_{_col}", value=str(_warn_cur) if _warn_cur is not None else "",
-                placeholder="e.g. 2.8", label_visibility="collapsed",
+            _warn_val = _cw.text_input(
+                f"W_{_col}",
+                value=str(_warn_cur) if _warn_cur is not None else "",
+                placeholder="e.g. 2.8",
+                label_visibility="collapsed",
                 key=f"thr_warn_{_col}",
+                disabled=not _use_col,
             )
-            _crit_val = _c3.text_input(
-                f"C_{_col}", value=str(_crit_cur) if _crit_cur is not None else "",
-                placeholder="e.g. 4.5", label_visibility="collapsed",
+            _crit_val = _cc.text_input(
+                f"C_{_col}",
+                value=str(_crit_cur) if _crit_cur is not None else "",
+                placeholder="e.g. 4.5",
+                label_visibility="collapsed",
                 key=f"thr_crit_{_col}",
+                disabled=not _use_col,
             )
-            # Only keep if at least one value is set
-            _lims = {}
-            try:
-                if _warn_val.strip():
-                    _lims["warning"] = float(_warn_val.strip())
-            except ValueError:
-                pass
-            try:
-                if _crit_val.strip():
-                    _lims["critical"] = float(_crit_val.strip())
-            except ValueError:
-                pass
-            if _lims:
-                _thr_new[_col] = _lims
+            if _use_col:
+                _lims = {}
+                try:
+                    if _warn_val.strip():
+                        _lims["warning"] = float(_warn_val.strip())
+                except ValueError:
+                    pass
+                try:
+                    if _crit_val.strip():
+                        _lims["critical"] = float(_crit_val.strip())
+                except ValueError:
+                    pass
+                if _lims:
+                    _thr_new[_col] = _lims
 
         if st.button("Save thresholds", key="save_thresh_btn", use_container_width=True):
             _thresh_lines = [
