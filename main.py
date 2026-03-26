@@ -856,9 +856,22 @@ def _extract_spec_text(uploaded_file, api_key: str) -> str:
 
 
 with st.sidebar:
+    # ── Compact sidebar CSS ───────────────────────────────────────────
+    st.markdown("""
+        <style>
+        /* Tighten vertical gaps between sidebar elements */
+        section[data-testid="stSidebar"] .block-container { padding-top: 0.5rem; }
+        section[data-testid="stSidebar"] .stMarkdown { margin-bottom: 0; }
+        section[data-testid="stSidebar"] hr { margin: 0.4rem 0; }
+        section[data-testid="stSidebar"] .stButton { margin-top: 0.2rem; margin-bottom: 0.2rem; }
+        section[data-testid="stSidebar"] .stExpander { margin-bottom: 0.3rem; }
+        section[data-testid="stSidebar"] .stSelectbox { margin-bottom: 0.2rem; }
+        section[data-testid="stSidebar"] .stTextInput { margin-bottom: 0.2rem; }
+        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.3rem; }
+        </style>""", unsafe_allow_html=True)
+
     st.title("Machine Analytics")
     st.caption("Continuous monitoring - Powered by Claude")
-    st.divider()
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -869,8 +882,6 @@ with st.sidebar:
         )
         if api_key:
             os.environ["ANTHROPIC_API_KEY"] = api_key
-
-    st.divider()
 
     with st.expander("Register new machine", expanded=not db.get_machines()):
 
@@ -1021,8 +1032,7 @@ with st.sidebar:
                 if not machine_type:
                     st.error("Please select a machine type.")
 
-    st.divider()
-
+    st.markdown("---")
     machines = db.get_machines()
     if not machines:
         st.info("Register a machine above to get started.")
@@ -1077,8 +1087,7 @@ with st.sidebar:
                 else:
                     st.error("Delete failed — check logs.")
 
-    st.divider()
-
+    st.markdown("---")
     st.subheader("Upload data")
     uploaded_file = st.file_uploader(
         "CSV or Excel",
