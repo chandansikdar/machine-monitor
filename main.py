@@ -1499,9 +1499,9 @@ with st.expander("Edit parameter thresholds", expanded=False):
         st.success("Thresholds saved.")
         st.rerun()
 
-# ── Edit machine specifications ─────────────────────────────────────────────────────
-with st.expander("✏️ Edit machine specifications", expanded=False):
-    st.caption("Update nameplate data, installation details, or notes. Threshold block is preserved automatically.")
+# ── Machine specifications ───────────────────────────────────────────────────────────
+with st.expander("✏️ Machine specifications", expanded=False):
+    st.caption("Enter or update nameplate data, installation details, and notes. Threshold block is preserved automatically.")
 
     _edit_mtype = machine_info.get("machine_type", "")
     _edit_desc  = machine_info.get("description", "")
