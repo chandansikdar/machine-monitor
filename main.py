@@ -1746,6 +1746,41 @@ if st.session_state.get("_data_fingerprint") != _data_fp:
     st.session_state["_corrected_df"]      = None
     st.session_state["_pump_physics_result"] = None
 
+
+def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
+    """Run the actual analysis loop and store results in session state."""
+    _analyzer    = Analyzer()
+    _all_results = {}
+    _progress    = st.progress(0)
+    _status      = st.empty()
+    _sel         = meta["selected_analyses"]
+    for _i, _atype in enumerate(_sel):
+        _status.text(f"Running {_atype} ({_i+1} of {len(_sel)})...")
+        _data_to_use = override_data if override_data is not None \
+                       else db.get_data(meta["machine_info"]["machine_id"])
+        _result = _analyzer.analyze(
+            machine_info         = meta["machine_info"],
+            data                 = _data_to_use,
+            analysis_type        = _atype,
+            date_range           = meta["date_range"],
+            baseline_period      = meta.get("baseline_period"),
+            extra_context        = meta["extra_context"],
+            schedule             = meta["schedule"] if _atype == "Operational Schedule Compliance" else None,
+            logs_text            = meta["logs_text"],
+            data_quality_context = dq_ctx,
+        )
+        if _result["success"]:
+            _all_results[_atype] = _result["insights"]
+            db.save_analysis(selected_id, _atype, _result["insights"])
+        else:
+            _all_results[_atype] = {"error": _result["error"]}
+        _progress.progress((_i + 1) / len(_sel))
+    _status.empty()
+    _progress.empty()
+    st.session_state["last_multi_results"] = _all_results
+    st.session_state["last_data"]          = override_data if override_data is not None else meta["filtered_data"]
+    st.rerun()
+
 tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "History", "Maintenance Logs"])
 
 
@@ -1764,6 +1799,144 @@ with tab_data:
         c2.metric("Parameters", len(numeric_cols))
         c3.metric("From",       str(data.index.min().date()))
         c4.metric("To",         str(data.index.max().date()))
+
+        # ── Data quality — auto-run and display ─────────────────────────────
+        if DQ_AVAILABLE and st.session_state.get("last_dq_report") is None:
+            with st.spinner("Running data quality checks…"):
+                _dq_auto = run_data_quality_checks(data)
+                st.session_state["last_dq_report"] = _dq_auto
+                st.session_state["_dq_ctx"] = format_quality_report_for_claude(_dq_auto)
+
+        _tab_dq = st.session_state.get("last_dq_report") or {}
+        if _tab_dq:
+            _tdq_score = _tab_dq.get("score", 100)
+            _tdq_crits = [x for x in _tab_dq.get("issues", []) if x["severity"] == "critical"]
+            _tdq_warns = [x for x in _tab_dq.get("issues", []) if x["severity"] == "warning"]
+            _tdq_label = (
+                (f"  ·  {len(_tdq_crits)} critical" if _tdq_crits else "") +
+                (f"  ·  {len(_tdq_warns)} warning(s)" if _tdq_warns else "") +
+                ("  ·  All checks passed" if not _tab_dq.get("issues") else "")
+            )
+            with st.expander(f"Data quality — score {_tdq_score}/100{_tdq_label}",
+                             expanded=bool(_tdq_crits)):
+                _dq_sev_color = {"critical": "#A32D2D", "warning": "#BA7517", "info": "#185FA5"}
+                _dq_sev_bg    = {"critical": "#FFF0F0", "warning": "#FFFBF0", "info": "#EAF4FF"}
+
+                if not _tab_dq.get("issues"):
+                    st.success("All sensor data quality checks passed. Data is suitable for analysis.")
+                else:
+                    for _tdq_iss in _tab_dq.get("issues", []):
+                        _tdq_sev  = _tdq_iss["severity"]
+                        _tdq_fc   = _dq_sev_color.get(_tdq_sev, "#333")
+                        _tdq_bg   = _dq_sev_bg.get(_tdq_sev, "#F8F8F8")
+                        _tdq_icon = {
+                            "critical": "❌", "warning": "⚠️", "info": "ℹ️"
+                        }.get(_tdq_sev, "•")
+                        _tdq_sugg = CORRECTION_SUGGESTIONS.get(
+                            _tdq_iss["check"], {}).get("suggestion", "")
+                        st.markdown(
+                            f'<div style="background:{_tdq_bg};border-left:5px solid {_tdq_fc};'
+                            f'padding:10px 14px;margin-bottom:4px;border-radius:3px;">'
+                            f'<span style="font-weight:700;color:{_tdq_fc}">'
+                            f'{_tdq_icon} {_tdq_iss["check"]}</span>'
+                            f' &nbsp;·&nbsp; <code>{_tdq_iss["col"]}</code>'
+                            f' &nbsp;·&nbsp; <span style="color:#888;font-size:0.82em">'
+                            f'{_tdq_iss["affected_pct"]}% affected</span><br>'
+                            f'<span style="font-size:0.87em;color:#444">'
+                            f'{_tdq_iss["detail"]}</span></div>',
+                            unsafe_allow_html=True)
+                        if _tdq_sugg:
+                            st.markdown(
+                                f'<div style="background:#F0F4F8;border-left:3px solid #185FA5;'
+                                f'padding:6px 12px;margin-bottom:10px;border-radius:2px;">'
+                                f'<span style="font-size:0.85em;color:#185FA5;font-weight:600">'
+                                f'💡 Suggestion: </span>'
+                                f'<span style="font-size:0.85em;color:#333">{_tdq_sugg}</span></div>',
+                                unsafe_allow_html=True)
+
+                    # ── Auto-correction ───────────────────────────────────────
+                    _tdq_fixable = [
+                        i for i in _tdq_crits
+                        if CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
+                        and i["col"] != "[timestamp]"
+                    ]
+                    if _tdq_fixable:
+                        st.markdown("---")
+                        st.markdown("**Auto-correct and save to database**")
+                        st.caption(
+                            f"{len(_tdq_fixable)} issue(s) can be corrected automatically. "
+                            "Select corrections to apply, then save. "
+                            "The corrected file will be stored alongside the original."
+                        )
+                        _tfc1, _tfc2 = st.columns(2)
+                        _tdq_fix_keys = {}
+                        for _tfi_idx, _tfi in enumerate(_tdq_fixable):
+                            _tfkey = f"tab_apply_{_tfi['col']}_{_tfi['check'].replace(' ','_')}"
+                            _tsugg = CORRECTION_SUGGESTIONS.get(_tfi["check"],{}).get("suggestion","")
+                            _tcol_sel = _tfc1 if _tfi_idx % 2 == 0 else _tfc2
+                            with _tcol_sel:
+                                _tdq_fix_keys[_tfkey] = st.checkbox(
+                                    f"{_tfi['check']} · `{_tfi['col']}`",
+                                    key=_tfkey, value=True, help=_tsugg)
+
+                        if st.button("🔧 Apply corrections and save to database",
+                                     key="tab_apply_fixes_btn", type="primary",
+                                     use_container_width=True):
+                            import io as _tio
+                            _tcorr = data.copy()
+                            _tlog  = []
+                            for _tfi in _tdq_fixable:
+                                _tfkey   = f"tab_apply_{_tfi['col']}_{_tfi['check'].replace(' ','_')}"
+                                if not _tdq_fix_keys.get(_tfkey, False):
+                                    continue
+                                _tfn = CORRECTION_SUGGESTIONS.get(_tfi["check"],{}).get("fn","")
+                                _tc  = _tfi["col"]
+                                try:
+                                    if _tfn in ("fix_flatline","fix_frozen_value_run"):
+                                        _tr = fix_flatline(_tcorr, _tc)
+                                    elif _tfn == "fix_isolated_spikes":
+                                        _tr = fix_isolated_spikes(_tcorr, _tc)
+                                    elif _tfn == "fix_physical_impossibles":
+                                        _tr = fix_physical_impossibles(_tcorr, _tc)
+                                    elif _tfn == "fix_missing_gaps":
+                                        _tr = fix_missing_gaps(_tcorr)
+                                    elif _tfn == "fix_duplicate_timestamps":
+                                        _tr = fix_duplicate_timestamps(_tcorr)
+                                    else:
+                                        continue
+                                    _tcorr = _tr["corrected_df"]
+                                    _tlog.append(f"✅ {_tfi['check']} ({_tc}): {_tr['description']}")
+                                except Exception as _tfe:
+                                    _tlog.append(f"❌ {_tfi['check']} ({_tc}): Failed — {_tfe}")
+                            _tcorr_buf  = _tio.BytesIO(_tcorr.to_csv().encode("utf-8"))
+                            _tcorr_name = f"{selected_id}_corrected.csv"
+                            _tcorr_buf.name = _tcorr_name
+                            _tsave = db.ingest_file(_tcorr_buf, selected_id)
+                            if _tsave.get("success"):
+                                for _te in _tlog:
+                                    st.caption(_te)
+                                st.success(
+                                    f"✓ Corrected file saved as **{_tcorr_name}**. "
+                                    "Data quality check will re-run automatically."
+                                )
+                                st.session_state["last_dq_report"]     = None
+                                st.session_state["last_multi_results"] = None
+                                st.session_state["_pending_analysis"]  = False
+                                st.rerun()
+                            else:
+                                st.error(f"Save failed: {_tsave.get('error')}")
+
+                    # Download original
+                    import io as _tdl_io
+                    _tdl_buf = _tdl_io.BytesIO(data.to_csv().encode("utf-8"))
+                    st.download_button(
+                        "⬇️ Download original data",
+                        data=_tdl_buf,
+                        file_name=f"{selected_id}_original.csv",
+                        mime="text/csv",
+                        key="tab_dl_original_dq",
+                        use_container_width=False,
+                    )
 
         st.subheader("Recent readings")
         st.dataframe(data.tail(200), use_container_width=True, height=280)
@@ -2406,40 +2579,6 @@ with tab_analysis:
             if no_selection and has_key:
                 st.caption("Select at least one analysis type above.")
 
-        def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
-            """Run the actual analysis loop and store results in session state."""
-            _analyzer    = Analyzer()
-            _all_results = {}
-            _progress    = st.progress(0)
-            _status      = st.empty()
-            _sel         = meta["selected_analyses"]
-            for _i, _atype in enumerate(_sel):
-                _status.text(f"Running {_atype} ({_i+1} of {len(_sel)})...")
-                # Use corrected data if provided, otherwise fetch from DB
-                _data_to_use = override_data if override_data is not None                                else db.get_data(meta["machine_info"]["machine_id"])
-                _result = _analyzer.analyze(
-                    machine_info         = meta["machine_info"],
-                    data                 = _data_to_use,
-                    analysis_type        = _atype,
-                    date_range           = meta["date_range"],
-                    baseline_period      = meta.get("baseline_period"),
-                    extra_context        = meta["extra_context"],
-                    schedule             = meta["schedule"] if _atype == "Operational Schedule Compliance" else None,
-                    logs_text            = meta["logs_text"],
-                    data_quality_context = dq_ctx,
-                )
-                if _result["success"]:
-                    _all_results[_atype] = _result["insights"]
-                    db.save_analysis(selected_id, _atype, _result["insights"])
-                else:
-                    _all_results[_atype] = {"error": _result["error"]}
-                _progress.progress((_i + 1) / len(_sel))
-            _status.empty()
-            _progress.empty()
-            st.session_state["last_multi_results"] = _all_results
-            st.session_state["last_data"]          = override_data if override_data is not None else meta["filtered_data"]
-            st.rerun()
-
         with right:
             if analyze_clicked:
                 # Clear old results so they don't show during DQ gate
@@ -2478,296 +2617,65 @@ with tab_analysis:
                         _pump_physics_summary = _phys_result.get("summary","")
                         st.session_state["_pump_physics_result"] = _phys_result
 
-                # ── Data quality check ─────────────────────────────────
-                _dq_ctx = ""
-                if data is not None and not data.empty:
-                    _dq = run_data_quality_checks(data)
-                    st.session_state["last_dq_report"]     = _dq
-                    st.session_state["_dq_ctx"]            = format_quality_report_for_claude(_dq)
-                    st.session_state["_pending_analysis"]  = True
-                    st.session_state["_pending_meta"]      = {
-                        "selected_analyses": selected_analyses,
-                        "machine_info":      machine_info,
-                        "date_range":        date_range,
-                        "baseline_period":   st.session_state.get("baseline_period", (min_d, min_d)),
-                        "extra_context":     (extra_context + "\n\n" + _pump_physics_summary).strip() if _pump_physics_summary else extra_context,
-                        "schedule":          schedule,
-                        "logs_text":         db.get_logs_text(selected_id),
-                        "filtered_data":     filtered_data,
-                    }
+                # ── Use DQ already computed in Data tab ───────────────────
+                _dq_ctx = st.session_state.get("_dq_ctx", "")
+                _dq_stored = st.session_state.get("last_dq_report") or {}
+                _dq_crits_now = [x for x in _dq_stored.get("issues", []) if x["severity"] == "critical"]
+                _pending_meta_now = {
+                    "selected_analyses": selected_analyses,
+                    "machine_info":      machine_info,
+                    "date_range":        date_range,
+                    "baseline_period":   st.session_state.get("baseline_period", (min_d, min_d)),
+                    "extra_context":     (extra_context + "\n\n" + _pump_physics_summary).strip() if _pump_physics_summary else extra_context,
+                    "schedule":          schedule,
+                    "logs_text":         db.get_logs_text(selected_id),
+                    "filtered_data":     filtered_data,
+                }
+                st.session_state["_pending_meta"] = _pending_meta_now
+                if _dq_crits_now:
+                    # Critical issues — show compact gate in Analysis tab
+                    st.session_state["_pending_analysis"] = True
                     st.rerun()
+                else:
+                    # Clean data — run immediately
+                    st.session_state["_pending_analysis"] = False
+                    _run_analysis(_pending_meta_now, _dq_ctx, db, selected_id)
 
 
-            # ── DQ gate UI + analysis runner ──────────────────────────
+            # ── DQ gate — compact banner (full details in Data tab) ──────────
             if not DQ_AVAILABLE:
                 st.warning("Data quality module not loaded — install data_checker.py")
             if st.session_state.get("_pending_analysis"):
-                _dq      = st.session_state.get("last_dq_report") or {}
+                _dq_gate = st.session_state.get("last_dq_report") or {}
                 _meta    = st.session_state.get("_pending_meta", {})
                 _dq_ctx  = st.session_state.get("_dq_ctx", "")
-                _crits   = [x for x in _dq.get("issues",[]) if x["severity"]=="critical"]
-                _warns   = [x for x in _dq.get("issues",[]) if x["severity"]=="warning"]
+                _crits   = [x for x in _dq_gate.get("issues", []) if x["severity"] == "critical"]
 
                 if _crits:
-                    # ── Header ───────────────────────────────────────────────
                     st.error(
-                        f"**Data quality check — {len(_crits)} critical issue(s) found in the sensor data.**  \n"
-                        "These indicate readings that may be invalid, corrupted, or untrustworthy — "
-                        "**not** performance problems. Gradual trends, efficiency drops, and process changes "
-                        "are intentionally not flagged here; those are analysed by the AI and physics engines.  \n"
-                        "Please choose one of the three options below before continuing."
+                        f"**{len(_crits)} critical data quality issue(s) detected in the sensor data.**  \n"
+                        "Review the **Data quality** panel in the **Data** tab for details and "
+                        "correction options. You can also acknowledge the issues and proceed."
                     )
-
-                    # ── Issue cards with suggestions ─────────────────────────
-                    for _iss in _crits:
-                        _check   = _iss["check"]
-                        _col     = _iss["col"]
-                        _sugg    = CORRECTION_SUGGESTIONS.get(_check, {}).get("suggestion", "Review and correct manually.")
+                    for _gc_iss in _crits:
+                        _gc_sev  = _gc_iss["severity"]
+                        _gc_icon = "\u274c" if _gc_sev == "critical" else "\u26a0\ufe0f"
                         st.markdown(
-                            f'<div style="background:#FFF0F0;border-left:5px solid #A32D2D;padding:10px 14px;margin-bottom:4px;border-radius:3px;">' +
-                            f'<span style="font-weight:700;color:#A32D2D">\u274c {_check}</span>' +
-                            f' &nbsp;\u00b7&nbsp; <code>{_col}</code>' +
-                            f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.82em">{_iss["affected_pct"]}% affected</span><br>' +
-                            f'<span style="font-size:0.87em;color:#444">{_iss["detail"]}</span></div>',
+                            f"- {_gc_icon} **{_gc_iss['check']}** "
+                            f"\u00b7 `{_gc_iss['col']}` "
+                            f"\u00b7 <span style=\"color:#888;font-size:0.9em\">"
+                            f"{_gc_iss['affected_pct']}% affected</span>",
                             unsafe_allow_html=True)
-                        if _sugg:
-                            st.markdown(
-                                f'<div style="background:#F0F4F8;border-left:3px solid #185FA5;padding:6px 12px;margin-bottom:10px;border-radius:2px;">' +
-                                f'<span style="font-size:0.85em;color:#185FA5;font-weight:600">\U0001f4a1 Suggestion: </span>' +
-                                f'<span style="font-size:0.85em;color:#333">{_sugg}</span></div>',
-                                unsafe_allow_html=True)
-
-
-                    # ── Three options ─────────────────────────────────────────
-                    _opt1, _opt2 = st.columns(2)
-
-                    with _opt1:
-                        st.markdown(
-                            '<div style="background:#EAF4FF;border:1.5px solid #185FA5;border-radius:6px;padding:14px 16px;min-height:80px;">' +
-                            '<span style="font-weight:700;color:#185FA5;font-size:1em">\u2b50 Option 1 — Recommended</span><br>' +
-                            '<span style="font-size:0.9em;color:#1A1A2E;">Correct the data manually and re-upload for accurate analysis.</span>' +
-                            '</div>',
-                            unsafe_allow_html=True)
-                        st.markdown("")
-                        with st.expander("\U0001f4cb How to correct the data", expanded=True):
-                            st.markdown(
-                                "1. Download your original data file  \n"
-                                "2. Correct or remove the affected rows/columns  \n"
-                                "3. In the **Data** tab, delete the existing uploaded file  \n"
-                                "4. Re-upload the corrected file  \n"
-                                "5. Press **Analyze** again"
-                            )
-
-                    with _opt2:
-                        st.markdown(
-                            '<div style="background:#FFF8F0;border:1.5px solid #BA7517;border-radius:6px;padding:14px 16px;min-height:80px;">' +
-                            '<span style="font-weight:700;color:#BA7517;font-size:1em">\u26a0\ufe0f Option 2 — Ignore and continue</span><br>' +
-                            '<span style="font-size:0.9em;color:#1A1A2E;">Acknowledge each issue and proceed. Analysis may be affected.</span>' +
-                            '</div>',
-                            unsafe_allow_html=True)
-                        st.markdown("")
-                        _ignored = {}
-                        for _iss in _crits:
-                            _key = f"dq_ack_{_iss['col']}_{_iss['check'].replace(' ','_')}"
-                            _c1, _c2 = st.columns([0.12, 0.88])
-                            with _c1:
-                                _ignored[_key] = st.checkbox(" ", key=_key, value=False, label_visibility="collapsed")
-                            with _c2:
-                                _bc   = "#2E7D32" if _ignored[_key] else "#A32D2D"
-                                _icon = "\u2705" if _ignored[_key] else "\u274c"
-                                _lbl  = "Acknowledged" if _ignored[_key] else "Unacknowledged"
-                                st.markdown(
-                                    f'<span style="color:{_bc};font-size:0.88em;font-weight:600">{_icon} {_iss["check"]} &nbsp;·&nbsp; <code>{_iss["col"]}</code> &nbsp;·&nbsp; <i>{_lbl}</i></span>',
-                                    unsafe_allow_html=True)
-                        st.markdown("")
-                        _all_acked = all(_ignored.values()) if _ignored else False
-                        _n_remain  = sum(1 for v in _ignored.values() if not v)
-                        if not _all_acked:
-                            st.caption(f"{_n_remain} issue(s) still unacknowledged. Tick all to enable Continue Analysis.")
-                        else:
-                            st.success("All issues acknowledged.")
-                            if st.button("Continue Analysis", type="primary", key="dq_continue_btn", use_container_width=True):
-                                st.session_state["_pending_analysis"] = False
-                                _run_analysis(_meta, _dq_ctx, db, selected_id)
-
-                    # ── Option 3 — full width below ────────────────────────────
-                    _fixable = [
-                        i for i in _crits
-                        if CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
-                        and i["col"] != "[timestamp]"
-                    ]
-                    _manual_only = [
-                        i for i in _crits
-                        if not CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
-                        or i["col"] == "[timestamp]"
-                    ]
-                    _raw_data = st.session_state.get("last_data") or                                 db.get_data(_meta["machine_info"]["machine_id"])
-
                     st.markdown("")
-                    st.markdown(
-                        '<div style="background:#F0FFF4;border:1.5px solid #2E7D32;border-radius:6px;padding:14px 16px;">' +
-                        '<span style="font-weight:700;color:#2E7D32;font-size:1em">\U0001f527 Option 3 — Auto-correct and download</span><br>' +
-                        '<span style="font-size:0.9em;color:#1A1A2E;">Apply suggested corrections automatically. Download the corrected file, re-upload and analyze.</span>' +
-                        '</div>',
-                        unsafe_allow_html=True)
-                    st.markdown("")
-
-                    if not _fixable:
-                        st.info("No auto-corrections available for the detected issues. Use Option 1 to correct manually.")
-                    elif _raw_data is None:
-                        st.warning("Data not available for auto-correction.")
-                    else:
-                        st.caption(f"{len(_fixable)} auto-correction(s) available. Select which to apply:")
-                        _fix_keys = {}
-                        _fc1, _fc2 = st.columns(2)
-                        for _fi_idx, _fi in enumerate(_fixable):
-                            _fkey = f"apply_{_fi['col']}_{_fi['check'].replace(' ','_')}"
-                            _sugg = CORRECTION_SUGGESTIONS.get(_fi["check"],{}).get("suggestion","")
-                            _col_sel = _fc1 if _fi_idx % 2 == 0 else _fc2
-                            with _col_sel:
-                                _fix_keys[_fkey] = st.checkbox(
-                                    f"{_fi['check']} · `{_fi['col']}`",
-                                    key=_fkey, value=True, help=_sugg)
-
-                        if _manual_only:
-                            st.caption(f"\u2139\ufe0f {len(_manual_only)} issue(s) cannot be auto-corrected (manual review needed): " +
-                                       ", ".join(f"`{i['col']}`" for i in _manual_only))
-
-                        st.markdown("")
-                        if st.button("\U0001f527 Apply selected corrections and prepare download",
-                                     key="apply_fixes_btn", type="secondary", use_container_width=True):
-                            import io as _io
-                            _corrected = _raw_data.copy()
-                            _log = []
-                            for _fi in _fixable:
-                                _fkey = f"apply_{_fi['col']}_{_fi['check'].replace(' ','_')}"
-                                if not _fix_keys.get(_fkey, False):
-                                    continue
-                                _fn_name = CORRECTION_SUGGESTIONS.get(_fi["check"],{}).get("fn","")
-                                _col     = _fi["col"]
-                                try:
-                                    if _fn_name in ("fix_flatline", "fix_frozen_value_run"):
-                                        _res = fix_flatline(_corrected, _col)
-                                    elif _fn_name == "fix_isolated_spikes":
-                                        _res = fix_isolated_spikes(_corrected, _col)
-                                    elif _fn_name == "fix_physical_impossibles":
-                                        _res = fix_physical_impossibles(_corrected, _col)
-                                    elif _fn_name == "fix_missing_gaps":
-                                        _res = fix_missing_gaps(_corrected)
-                                    elif _fn_name == "fix_duplicate_timestamps":
-                                        _res = fix_duplicate_timestamps(_corrected)
-                                    else:
-                                        continue
-                                    _corrected = _res["corrected_df"]
-                                    _log.append(f"\u2705 {_fi['check']} ({_col}): {_res['description']}")
-                                except Exception as _fe:
-                                    _log.append(f"\u274c {_fi['check']} ({_col}): Failed — {_fe}")
-                            _buf = _io.StringIO()
-                            _corrected.to_csv(_buf)
-                            st.session_state["_corrected_csv"]  = _buf.getvalue().encode("utf-8")
-                            st.session_state["_correction_log"] = _log
-                            st.session_state["_corrected_df"]   = _corrected
-                            st.session_state["_confirm_pending"] = False
-                            st.rerun()
-
-                        if st.session_state.get("_corrected_csv"):
-                            st.success("Corrections applied successfully.")
-                            for _entry in st.session_state.get("_correction_log", []):
-                                st.caption(_entry)
-                            st.markdown("---")
-                            st.markdown("**What would you like to do with the corrected data?**")
-                            _dl_col, _use_col = st.columns(2)
-                            with _dl_col:
-                                _fname = f"{_meta['machine_info'].get('machine_id','machine')}_corrected.csv"
-                                st.download_button(
-                                    label="\u2b07\ufe0f Download corrected file",
-                                    data=st.session_state["_corrected_csv"],
-                                    file_name=_fname,
-                                    mime="text/csv",
-                                    key="dl_corrected_csv",
-                                    use_container_width=True,
-                                    help="Save corrected CSV to your computer"
-                                )
-                            with _use_col:
-                                if st.button(
-                                    "\u25b6\ufe0f Use corrected data for analysis now",
-                                    key="use_corrected_btn",
-                                    type="primary",
-                                    use_container_width=True,
-                                    help="Run analysis immediately using the corrected data"
-                                ):
-                                    st.session_state["_confirm_pending"] = True
-                                    st.rerun()
-                            # Confirmation dialog
-                            # Also show download original button alongside download corrected
-                            _raw_data_for_dl = st.session_state.get("last_data") or                                                db.get_data(_meta["machine_info"]["machine_id"])
-                            if _raw_data_for_dl is not None:
-                                import io as _io_orig
-                                _orig_buf = _io_orig.StringIO()
-                                _raw_data_for_dl.to_csv(_orig_buf)
-                                _orig_fname = f"{_meta['machine_info'].get('machine_id','machine')}_original.csv"
-                                st.download_button(
-                                    label="\u2b07\ufe0f Download original file",
-                                    data=_orig_buf.getvalue().encode("utf-8"),
-                                    file_name=_orig_fname,
-                                    mime="text/csv",
-                                    key="dl_original_csv",
-                                    use_container_width=True,
-                                    help="Download the original unmodified data file"
-                                )
-
-                            # Confirmation dialog
-                            if st.session_state.get("_confirm_pending"):
-                                st.warning(
-                                    "\u26a0\ufe0f **Confirm:** The corrected file will be saved to the "
-                                    "database with a **_corrected** tag and used for this analysis.  \n"
-                                    "The original file remains unchanged and available in File Management."
-                                )
-                                _conf1, _conf2 = st.columns(2)
-                                with _conf1:
-                                    if st.button("\u2705 Yes, save corrected and analyze",
-                                                 key="confirm_yes_btn", type="primary",
-                                                 use_container_width=True):
-                                        _corrected_df = st.session_state.get("_corrected_df")
-                                        if _corrected_df is not None:
-                                            # Save corrected file to DB with _corrected tag
-                                            import io as _io_save
-                                            _machine_id  = _meta["machine_info"].get("machine_id","machine")
-                                            _corr_fname  = f"{_machine_id}_corrected.csv"
-                                            _save_buf    = _io_save.BytesIO(
-                                                st.session_state["_corrected_csv"])
-                                            _save_buf.name = _corr_fname
-                                            _save_res    = db.ingest_file(_save_buf, selected_id)
-                                            if _save_res.get("success"):
-                                                st.session_state["_corrected_saved"] = _corr_fname
-                                            # Run analysis with corrected data
-                                            _meta["filtered_data"] = _corrected_df
-                                            st.session_state["_pending_meta"]     = _meta
-                                            st.session_state["_pending_analysis"] = False
-                                            st.session_state["_confirm_pending"]  = False
-                                            st.session_state["_corrected_csv"]    = None
-                                            _run_analysis(_meta, _dq_ctx, db, selected_id,
-                                                          override_data=_corrected_df)
-                                with _conf2:
-                                    if st.button("\u274c Cancel", key="confirm_no_btn",
-                                                 use_container_width=True):
-                                        st.session_state["_confirm_pending"] = False
-                                        st.rerun()
-                    # ── Warnings ───────────────────────────────────────────────
-                    if _warns:
-                        st.markdown("")
-                        with st.expander(f"\u26a0\ufe0f {len(_warns)} additional warning(s) — informational only", expanded=False):
-                            for _iss in _warns:
-                                st.markdown(
-                                    f'<div style="background:#FFFBF0;border-left:4px solid #BA7517;padding:8px 12px;margin-bottom:6px;border-radius:2px;">' +
-                                    f'<span style="font-weight:600;color:#BA7517">\u26a0\ufe0f {_iss["check"]}</span>' +
-                                    f' &nbsp;\u00b7&nbsp; <code>{_iss["col"]}</code><br>' +
-                                    f'<span style="font-size:0.88em">{_iss["detail"]}</span></div>',
-                                    unsafe_allow_html=True)
-
-
+                    _gc_ack = st.checkbox(
+                        "I have reviewed the issues and want to proceed with analysis",
+                        key="dq_ack_all_chk")
+                    if _gc_ack:
+                        if st.button("Continue Analysis", type="primary",
+                                     key="dq_continue_btn", use_container_width=True):
+                            st.session_state["_pending_analysis"] = False
+                            _run_analysis(_meta, _dq_ctx, db, selected_id)
                 else:
-                    # No critical issues — run immediately
                     st.session_state["_pending_analysis"] = False
                     _run_analysis(_meta, _dq_ctx, db, selected_id)
 
