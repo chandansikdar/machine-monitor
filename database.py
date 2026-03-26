@@ -123,9 +123,8 @@ class Database:
             # Persist to disk
             machine_dir = self.data_dir / machine_id
             machine_dir.mkdir(parents=True, exist_ok=True)
-            tag = datetime.now().strftime("%Y%m%d_%H%M%S")
             stem = filename.rsplit(".", 1)[0]
-            file_path = machine_dir / f"{tag}_{stem}.csv"
+            file_path = machine_dir / f"{stem}.csv"
             df.to_csv(file_path, index=False)
 
             # Register in metadata table
