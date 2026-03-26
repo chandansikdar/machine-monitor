@@ -204,23 +204,29 @@ class Database:
             FROM data_files WHERE machine_id = ?
             ORDER BY ingested_at
         """, [machine_id]).fetchall()
-        # Deduplicate by filename in Python — keep latest ingested per name
+
+        # Deduplicate by filename — keep latest row per name
         seen = {}
         for r in rows:
             name = Path(r[0]).name
-            seen[name] = {"file": name, "file_path": r[0], "rows": r[1], "columns": r[2], "ingested_at": r[3]}
-        result = list(seen.values())
+            seen[name] = (r[0], r[1], r[2], r[3])
 
-        # Physically remove stale duplicate rows from DB so they don't accumulate
-        valid_paths = {v["file_path"] for v in result}
-        all_paths = [r[0] for r in rows]
-        stale = [p for p in all_paths if p not in valid_paths]
-        for p in stale:
+        # If duplicates existed, rebuild the table rows cleanly
+        if len(rows) > len(seen):
             self.conn.execute(
-                "DELETE FROM data_files WHERE machine_id = ? AND file_path = ?",
-                [machine_id, p]
+                "DELETE FROM data_files WHERE machine_id = ?", [machine_id]
             )
-        return result
+            for name, (fp, nrows, cols, ingested_at) in seen.items():
+                self.conn.execute(
+                    "INSERT INTO data_files (machine_id, file_path, rows, columns, ingested_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [machine_id, fp, nrows, cols, ingested_at]
+                )
+
+        return [
+            {"file": name, "file_path": fp, "rows": nrows, "columns": cols, "ingested_at": ingested_at}
+            for name, (fp, nrows, cols, ingested_at) in seen.items()
+        ]
 
     # ------------------------------------------------------------------ #
     # Analysis history
