@@ -1270,6 +1270,35 @@ with st.sidebar:
         type=["csv", "xlsx", "xls"],
         help="Any column named timestamp/date/time is auto-detected as the time axis.",
     )
+
+    # Duplicate check (only meaningful when a file is selected)
+    _existing_files = db.get_file_info(selected_id)
+    _upload_stem    = uploaded_file.name.rsplit(".", 1)[0] if uploaded_file else ""
+    _dup            = bool(_upload_stem and any(_upload_stem in f["file"] for f in _existing_files))
+
+    # Ingest button — always visible, disabled until a file is selected
+    if st.button("Ingest", use_container_width=True, disabled=not uploaded_file):
+        if _dup:
+            st.warning(
+                f"⚠️ **{uploaded_file.name}** has already been ingested. "
+                "Delete the existing file first to re-upload."
+            )
+        else:
+            with st.spinner("Reading and storing data…"):
+                result = db.ingest_file(uploaded_file, selected_id)
+            if result["success"]:
+                st.success(f"\u2713 {result['rows']:,} rows ingested")
+                st.caption("Columns: " + ", ".join(result["columns"]))
+                st.session_state["last_dq_report"]     = None
+                st.session_state["last_multi_results"] = None
+                st.session_state["last_data"]          = None
+                st.session_state["_pending_analysis"]  = False
+                st.session_state["_corrected_csv"]     = None
+                st.session_state["_corrected_df"]      = None
+                st.rerun()
+            else:
+                st.error(result["error"])
+
     if uploaded_file:
         # ── Timestamp format pre-check ──────────────────────────────
         if TS_CHECK_AVAILABLE:
@@ -1328,32 +1357,6 @@ with st.sidebar:
             else:
                 if _ts_check["sample_raw"]:
                     st.caption(f"\u2705 Timestamps OK · sample: {_ts_check['sample_raw'][0]}")
-
-        # Duplicate filename check — runs on click, not on file selection
-        _existing_files = db.get_file_info(selected_id)
-        _upload_stem    = uploaded_file.name.rsplit(".", 1)[0]
-        _dup = any(_upload_stem in f["file"] for f in _existing_files)
-        if st.button("Ingest", use_container_width=True):
-            if _dup:
-                st.warning(
-                    f"⚠️ **{uploaded_file.name}** has already been ingested. "
-                    "Delete the existing file first to re-upload."
-                )
-            else:
-                with st.spinner("Reading and storing data…"):
-                    result = db.ingest_file(uploaded_file, selected_id)
-                if result["success"]:
-                    st.success(f"\u2713 {result['rows']:,} rows ingested")
-                    st.caption("Columns: " + ", ".join(result["columns"]))
-                    st.session_state["last_dq_report"]     = None
-                    st.session_state["last_multi_results"] = None
-                    st.session_state["last_data"]          = None
-                    st.session_state["_pending_analysis"]  = False
-                    st.session_state["_corrected_csv"]     = None
-                    st.session_state["_corrected_df"]      = None
-                    st.rerun()
-                else:
-                    st.error(result["error"])
 
     file_info = db.get_file_info(selected_id)
     if file_info:
