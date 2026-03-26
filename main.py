@@ -1789,20 +1789,33 @@ if st.session_state.get("_switch_to_analysis"):
     import streamlit.components.v1 as _components
     _components.html(
         """<script>
-        // Wait for Streamlit to finish rendering, then click the Analysis tab
-        function switchTab() {
-            const tabs = window.parent.document.querySelectorAll(
-                '[data-baseweb="tab-list"] [role="tab"]'
-            );
+        // Traverse up to the top-level window (handles nested iframes)
+        function getTopDoc() {
+            try { return window.top.document; } catch(e) { return window.parent.document; }
+        }
+        function switchTab(attempt) {
+            attempt = attempt || 0;
+            if (attempt > 30) return;   // give up after 3 s
+            var doc = getTopDoc();
+            // Streamlit tabs: buttons with role="tab" inside a tab-list
+            // Try multiple selectors for different Streamlit versions
+            var tabs = doc.querySelectorAll('[role="tablist"] [role="tab"]');
+            if (!tabs || tabs.length === 0) {
+                tabs = doc.querySelectorAll('[data-baseweb="tab"]');
+            }
+            if (!tabs || tabs.length === 0) {
+                tabs = doc.querySelectorAll('button[role="tab"]');
+            }
             if (tabs && tabs.length > 1) {
                 tabs[1].click();
             } else {
-                setTimeout(switchTab, 100);
+                setTimeout(function() { switchTab(attempt + 1); }, 100);
             }
         }
-        setTimeout(switchTab, 150);
+        // Initial delay to let Streamlit finish the rerun render
+        setTimeout(function() { switchTab(0); }, 300);
         </script>""",
-        height=0,
+        height=1,
     )
 
 
