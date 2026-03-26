@@ -1245,7 +1245,7 @@ with st.sidebar:
             elif len(file_info) > 1:
                 st.warning(f"{len(file_info)} files stored — duplicates may cause incorrect row counts.")
 
-            for _fi in file_info:
+            for _fi_idx, _fi in enumerate(file_info):
                 _is_corrected = "_corrected" in _fi["file"].lower()
                 _fc1, _fc2, _fc3 = st.columns([0.62, 0.19, 0.19])
                 with _fc1:
@@ -1283,13 +1283,13 @@ with st.sidebar:
                             data=_fdata,
                             file_name=_fi["file"],
                             mime="text/csv",
-                            key=f"dl_file_{_fi['file']}",
+                            key=f"dl_file_{_fi_idx}_{_fi['file']}",
                             help=f"Download {'corrected' if _is_corrected else 'original'} file",
                         )
                     except Exception:
                         pass
                 with _fc3:
-                    if st.button("Delete", key=f"del_file_{_fi['file']}", type="secondary"):
+                    if st.button("Delete", key=f"del_file_{_fi_idx}_{_fi['file']}", type="secondary"):
                         db.delete_file(selected_id, _fi["file"])
                         st.success(f"Deleted {_fi['file']}")
                         st.rerun()
