@@ -127,10 +127,10 @@ class Database:
             file_path = machine_dir / f"{stem}.csv"
             df.to_csv(file_path, index=False)
 
-            # Remove any existing DB rows for this filename before inserting
+            # Remove ALL existing DB rows for this exact file_path before inserting
             self.conn.execute(
-                "DELETE FROM data_files WHERE machine_id = ? AND file_path LIKE ?",
-                [machine_id, f"%{stem}.csv"],
+                "DELETE FROM data_files WHERE machine_id = ? AND file_path = ?",
+                [machine_id, str(file_path)],
             )
 
             # Register in metadata table
@@ -139,6 +139,7 @@ class Database:
                 "INSERT INTO data_files (machine_id, file_path, rows, columns) VALUES (?, ?, ?, ?)",
                 [machine_id, str(file_path), len(df), col_list],
             )
+            self.conn.commit()
 
             return {
                 "success": True,
@@ -222,6 +223,7 @@ class Database:
                     "VALUES (?, ?, ?, ?, ?)",
                     [machine_id, fp, nrows, cols, ingested_at]
                 )
+            self.conn.commit()
 
         return [
             {"file": name, "file_path": fp, "rows": nrows, "columns": cols, "ingested_at": ingested_at}
