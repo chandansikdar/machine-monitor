@@ -1854,89 +1854,177 @@ with tab_data:
                                 f'<span style="font-size:0.85em;color:#333">{_tdq_sugg}</span></div>',
                                 unsafe_allow_html=True)
 
-                    # ── Auto-correction ───────────────────────────────────────
-                    _tdq_fixable = [
-                        i for i in _tdq_crits
-                        if CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
-                        and i["col"] != "[timestamp]"
-                    ]
-                    if _tdq_fixable:
+                    # Only show options panel when there are critical issues
+                    if _tdq_crits:
                         st.markdown("---")
-                        st.markdown("**Auto-correct and save to database**")
-                        st.caption(
-                            f"{len(_tdq_fixable)} issue(s) can be corrected automatically. "
-                            "Select corrections to apply, then save. "
-                            "The corrected file will be stored alongside the original."
-                        )
-                        _tfc1, _tfc2 = st.columns(2)
-                        _tdq_fix_keys = {}
-                        for _tfi_idx, _tfi in enumerate(_tdq_fixable):
-                            _tfkey = f"tab_apply_{_tfi['col']}_{_tfi['check'].replace(' ','_')}"
-                            _tsugg = CORRECTION_SUGGESTIONS.get(_tfi["check"],{}).get("suggestion","")
-                            _tcol_sel = _tfc1 if _tfi_idx % 2 == 0 else _tfc2
-                            with _tcol_sel:
-                                _tdq_fix_keys[_tfkey] = st.checkbox(
-                                    f"{_tfi['check']} · `{_tfi['col']}`",
-                                    key=_tfkey, value=True, help=_tsugg)
+                        _toption_cols = st.columns(3)
 
-                        if st.button("🔧 Apply corrections and save to database",
-                                     key="tab_apply_fixes_btn", type="primary",
-                                     use_container_width=True):
-                            import io as _tio
-                            _tcorr = data.copy()
-                            _tlog  = []
-                            for _tfi in _tdq_fixable:
-                                _tfkey   = f"tab_apply_{_tfi['col']}_{_tfi['check'].replace(' ','_')}"
-                                if not _tdq_fix_keys.get(_tfkey, False):
-                                    continue
-                                _tfn = CORRECTION_SUGGESTIONS.get(_tfi["check"],{}).get("fn","")
-                                _tc  = _tfi["col"]
-                                try:
-                                    if _tfn in ("fix_flatline","fix_frozen_value_run"):
-                                        _tr = fix_flatline(_tcorr, _tc)
-                                    elif _tfn == "fix_isolated_spikes":
-                                        _tr = fix_isolated_spikes(_tcorr, _tc)
-                                    elif _tfn == "fix_physical_impossibles":
-                                        _tr = fix_physical_impossibles(_tcorr, _tc)
-                                    elif _tfn == "fix_missing_gaps":
-                                        _tr = fix_missing_gaps(_tcorr)
-                                    elif _tfn == "fix_duplicate_timestamps":
-                                        _tr = fix_duplicate_timestamps(_tcorr)
-                                    else:
-                                        continue
-                                    _tcorr = _tr["corrected_df"]
-                                    _tlog.append(f"✅ {_tfi['check']} ({_tc}): {_tr['description']}")
-                                except Exception as _tfe:
-                                    _tlog.append(f"❌ {_tfi['check']} ({_tc}): Failed — {_tfe}")
-                            _tcorr_buf  = _tio.BytesIO(_tcorr.to_csv().encode("utf-8"))
-                            _tcorr_name = f"{selected_id}_corrected.csv"
-                            _tcorr_buf.name = _tcorr_name
-                            _tsave = db.ingest_file(_tcorr_buf, selected_id)
-                            if _tsave.get("success"):
-                                for _te in _tlog:
-                                    st.caption(_te)
-                                st.success(
-                                    f"✓ Corrected file saved as **{_tcorr_name}**. "
-                                    "Data quality check will re-run automatically."
+                        # ── Option 1 — Manual correction ─────────────────────
+                        with _toption_cols[0]:
+                            st.markdown(
+                                '<div style="background:#EAF4FF;border:1.5px solid #185FA5;'
+                                'border-radius:6px;padding:12px 14px;min-height:72px;">'
+                                '<span style="font-weight:700;color:#185FA5">'
+                                '⭐ Option 1 — Recommended</span><br>'
+                                '<span style="font-size:0.88em;color:#1A1A2E;">'
+                                'Correct the data manually and re-upload.</span>'
+                                '</div>',
+                                unsafe_allow_html=True)
+                            st.markdown("")
+                            with st.expander("📋 How to correct manually", expanded=False):
+                                st.markdown(
+                                    "1. Download your original file below  \n"
+                                    "2. Correct or remove the affected rows  \n"
+                                    "3. Delete the existing file (Manage stored files)  \n"
+                                    "4. Re-upload the corrected file  \n"
+                                    "5. Press **Analyze**"
                                 )
-                                st.session_state["last_dq_report"]     = None
-                                st.session_state["last_multi_results"] = None
-                                st.session_state["_pending_analysis"]  = False
-                                st.rerun()
-                            else:
-                                st.error(f"Save failed: {_tsave.get('error')}")
+                            import io as _tdl_io
+                            _tdl_buf = _tdl_io.BytesIO(data.to_csv().encode("utf-8"))
+                            st.download_button(
+                                "⬇️ Download original data",
+                                data=_tdl_buf,
+                                file_name=f"{selected_id}_original.csv",
+                                mime="text/csv",
+                                key="tab_dl_original_dq",
+                                use_container_width=True,
+                            )
 
-                    # Download original
-                    import io as _tdl_io
-                    _tdl_buf = _tdl_io.BytesIO(data.to_csv().encode("utf-8"))
-                    st.download_button(
-                        "⬇️ Download original data",
-                        data=_tdl_buf,
-                        file_name=f"{selected_id}_original.csv",
-                        mime="text/csv",
-                        key="tab_dl_original_dq",
-                        use_container_width=False,
-                    )
+                        # ── Option 2 — Ignore and proceed ────────────────────
+                        with _toption_cols[1]:
+                            st.markdown(
+                                '<div style="background:#FFF8F0;border:1.5px solid #BA7517;'
+                                'border-radius:6px;padding:12px 14px;min-height:72px;">'
+                                '<span style="font-weight:700;color:#BA7517">'
+                                '⚠️ Option 2 — Ignore and continue</span><br>'
+                                '<span style="font-size:0.88em;color:#1A1A2E;">'
+                                'Acknowledge each issue and analyse anyway.</span>'
+                                '</div>',
+                                unsafe_allow_html=True)
+                            st.markdown("")
+                            _tdq_ignored = {}
+                            for _tdq_ai in _tdq_crits:
+                                _tdq_akey = f"tab_ack_{_tdq_ai['col']}_{_tdq_ai['check'].replace(' ','_')}"
+                                _ta1, _ta2 = st.columns([0.12, 0.88])
+                                with _ta1:
+                                    _tdq_ignored[_tdq_akey] = st.checkbox(
+                                        " ", key=_tdq_akey, value=False,
+                                        label_visibility="collapsed")
+                                with _ta2:
+                                    _ta_clr  = "#2E7D32" if _tdq_ignored[_tdq_akey] else "#A32D2D"
+                                    _ta_icon = "✅" if _tdq_ignored[_tdq_akey] else "❌"
+                                    _ta_lbl  = "Acknowledged" if _tdq_ignored[_tdq_akey] else "Pending"
+                                    st.markdown(
+                                        f'<span style="color:{_ta_clr};font-size:0.85em;font-weight:600">'
+                                        f'{_ta_icon} {_tdq_ai["check"]} · <code>{_tdq_ai["col"]}</code>'
+                                        f' · <i>{_ta_lbl}</i></span>',
+                                        unsafe_allow_html=True)
+                            _tdq_all_acked = all(_tdq_ignored.values()) if _tdq_ignored else False
+                            if not _tdq_all_acked:
+                                st.caption(f"{sum(1 for v in _tdq_ignored.values() if not v)} issue(s) unacknowledged.")
+                            else:
+                                st.success("All acknowledged.")
+                                if st.button("Continue to Analysis →", type="primary",
+                                             key="tab_dq_continue_btn", use_container_width=True):
+                                    st.session_state["_pending_analysis"] = False
+                                    st.session_state["_dq_acknowledged"] = True
+
+                        # ── Option 3 — Auto-correct ───────────────────────────
+                        with _toption_cols[2]:
+                            st.markdown(
+                                '<div style="background:#F0FFF4;border:1.5px solid #2E7D32;'
+                                'border-radius:6px;padding:12px 14px;min-height:72px;">'
+                                '<span style="font-weight:700;color:#2E7D32">'
+                                '🔧 Option 3 — Auto-correct</span><br>'
+                                '<span style="font-size:0.88em;color:#1A1A2E;">'
+                                'Apply suggested fixes and save corrected file.</span>'
+                                '</div>',
+                                unsafe_allow_html=True)
+                            st.markdown("")
+                            _tdq_fixable = [
+                                i for i in _tdq_crits
+                                if CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
+                                and i["col"] != "[timestamp]"
+                            ]
+                            _tdq_manual_only = [
+                                i for i in _tdq_crits
+                                if not CORRECTION_SUGGESTIONS.get(i["check"], {}).get("auto", False)
+                                or i["col"] == "[timestamp]"
+                            ]
+                            if not _tdq_fixable:
+                                st.info("No auto-corrections available. Use Option 1.")
+                            else:
+                                _tdq_fix_keys = {}
+                                for _tfi_idx, _tfi in enumerate(_tdq_fixable):
+                                    _tfkey = f"tab_apply_{_tfi['col']}_{_tfi['check'].replace(' ','_')}"
+                                    _tsugg = CORRECTION_SUGGESTIONS.get(_tfi["check"],{}).get("suggestion","")
+                                    _tdq_fix_keys[_tfkey] = st.checkbox(
+                                        f"{_tfi['check']} · `{_tfi['col']}`",
+                                        key=_tfkey, value=True, help=_tsugg)
+                                if _tdq_manual_only:
+                                    st.caption(
+                                        f"ℹ️ {len(_tdq_manual_only)} issue(s) need manual review: "
+                                        + ", ".join(f"`{i['col']}`" for i in _tdq_manual_only))
+                                if st.button("🔧 Apply and save to database",
+                                             key="tab_apply_fixes_btn", type="primary",
+                                             use_container_width=True):
+                                    import io as _tio
+                                    _tcorr = data.copy()
+                                    _tlog  = []
+                                    for _tfi in _tdq_fixable:
+                                        _tfkey = f"tab_apply_{_tfi['col']}_{_tfi['check'].replace(' ','_')}"
+                                        if not _tdq_fix_keys.get(_tfkey, False):
+                                            continue
+                                        _tfn = CORRECTION_SUGGESTIONS.get(_tfi["check"],{}).get("fn","")
+                                        _tc  = _tfi["col"]
+                                        try:
+                                            if _tfn in ("fix_flatline","fix_frozen_value_run"):
+                                                _tr = fix_flatline(_tcorr, _tc)
+                                            elif _tfn == "fix_isolated_spikes":
+                                                _tr = fix_isolated_spikes(_tcorr, _tc)
+                                            elif _tfn == "fix_physical_impossibles":
+                                                _tr = fix_physical_impossibles(_tcorr, _tc)
+                                            elif _tfn == "fix_missing_gaps":
+                                                _tr = fix_missing_gaps(_tcorr)
+                                            elif _tfn == "fix_duplicate_timestamps":
+                                                _tr = fix_duplicate_timestamps(_tcorr)
+                                            else:
+                                                continue
+                                            _tcorr = _tr["corrected_df"]
+                                            _tlog.append(
+                                                f"✅ {_tfi['check']} ({_tc}): {_tr['description']}")
+                                        except Exception as _tfe:
+                                            _tlog.append(
+                                                f"❌ {_tfi['check']} ({_tc}): Failed — {_tfe}")
+                                    _tcorr_buf  = _tio.BytesIO(_tcorr.to_csv().encode("utf-8"))
+                                    _tcorr_name = f"{selected_id}_corrected.csv"
+                                    _tcorr_buf.name = _tcorr_name
+                                    _tsave = db.ingest_file(_tcorr_buf, selected_id)
+                                    if _tsave.get("success"):
+                                        for _te in _tlog:
+                                            st.caption(_te)
+                                        st.success(
+                                            f"✓ Saved as **{_tcorr_name}**. "
+                                            "DQ check will re-run automatically.")
+                                        st.session_state["last_dq_report"]     = None
+                                        st.session_state["last_multi_results"] = None
+                                        st.session_state["_pending_analysis"]  = False
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Save failed: {_tsave.get('error')}")
+
+                    # Warnings-only: still show download button
+                    elif _tdq_warns:
+                        import io as _tdl_io2
+                        _tdl_buf2 = _tdl_io2.BytesIO(data.to_csv().encode("utf-8"))
+                        st.download_button(
+                            "⬇️ Download data",
+                            data=_tdl_buf2,
+                            file_name=f"{selected_id}_original.csv",
+                            mime="text/csv",
+                            key="tab_dl_original_dq",
+                            use_container_width=False,
+                        )
 
         st.subheader("Recent readings")
         st.dataframe(data.tail(200), use_container_width=True, height=280)
@@ -2651,7 +2739,12 @@ with tab_analysis:
                 _dq_ctx  = st.session_state.get("_dq_ctx", "")
                 _crits   = [x for x in _dq_gate.get("issues", []) if x["severity"] == "critical"]
 
-                if _crits:
+                # Option 2 acknowledged in Data tab — bypass gate and run
+                if st.session_state.get("_dq_acknowledged"):
+                    st.session_state["_dq_acknowledged"] = False
+                    st.session_state["_pending_analysis"] = False
+                    _run_analysis(_meta, _dq_ctx, db, selected_id)
+                elif _crits:
                     st.error(
                         f"**{len(_crits)} critical data quality issue(s) detected in the sensor data.**  \n"
                         "Review the **Data quality** panel in the **Data** tab for details and "
