@@ -1647,10 +1647,31 @@ with st.expander("✏️ Machine specifications", expanded=False):
         _tab_desc.split("=== PARAMETER THRESHOLDS ===")[1].strip()
         if "=== PARAMETER THRESHOLDS ===" in _tab_desc else ""
     )
-    _tab_is_pump = (_tab_mtype == "Centrifugal Pump" or "pump" in _tab_mtype.lower())
+    _tab_is_pump    = (_tab_mtype == "Centrifugal Pump" or "pump" in _tab_mtype.lower())
+    _tab_is_chiller = "chiller" in _tab_mtype.lower() or "vapour compression" in _tab_mtype.lower()
 
     # Pre-parse existing description to pre-populate fields
     _tab_np = parse_nameplate(_tab_base) if PUMP_PHYSICS_AVAILABLE and _tab_is_pump else {}
+
+    # For chillers, do a lightweight parse of saved description
+    def _chill_fv(key, default=0.0):
+        """Extract float value from saved chiller description text."""
+        import re as _re
+        patterns = {
+            "rated_cooling_kw": [r"rated cooling[:\s=]+([0-9.]+)\s*kw", r"cooling capacity[:\s=]+([0-9.]+)\s*kw"],
+            "rated_power_kw":   [r"rated power input[:\s=]+([0-9.]+)\s*kw", r"power input[:\s=]+([0-9.]+)\s*kw", r"rated power[:\s=]+([0-9.]+)\s*kw"],
+            "rated_cop":        [r"cop[:\s=]+([0-9.]+)", r"rated cop[:\s=]+([0-9.]+)"],
+            "rated_voltage_v":  [r"voltage[:\s=]+([0-9]+)\s*v", r"([0-9]+)\s*v"],
+            "fla_a":            [r"fla[:\s=]+([0-9.]+)\s*a", r"full load amps?[:\s=]+([0-9.]+)"],
+            "power_factor_fl":  [r"power factor[:\s=]+([0-9.]+)", r"pf[:\s=]+([0-9.]+)"],
+            "commissioning_power": [r"commissioning power[:\s=]+([0-9.]+)\s*kw"],
+        }
+        for pat in patterns.get(key, []):
+            m = _re.search(pat, _tab_base.lower())
+            if m:
+                try: return float(m.group(1))
+                except: pass
+        return default
 
     def _tab_fv(key, default=0.0):
         """Get float value from parsed nameplate or default."""
@@ -1758,8 +1779,138 @@ with st.expander("✏️ Machine specifications", expanded=False):
             if _tnp_notes.strip():  _tab_desc_parts.append(_tnp_notes.strip())
             _tab_new_desc = "\n".join(_tab_desc_parts)
 
+        elif _tab_is_chiller:
+            # ── Structured chiller nameplate form ─────────────────────────
+            # Tier 1: Recommended
+            st.caption("⭐ Recommended — enables Load Factor, SPI, and imbalance analysis")
+            _cc1, _cc2 = st.columns(2)
+            _cnp_cooling_kw = _cc1.number_input(
+                "Rated cooling capacity (kW)", min_value=0.0,
+                value=_chill_fv("rated_cooling_kw"), step=1.0, format="%.1f",
+                key="cnp_cooling_kw",
+                help="Chiller nameplate cooling output in kW. Enables SPI calculation."
+            )
+            _cnp_tons = _cc2.number_input(
+                "Rated cooling (tons)", min_value=0.0,
+                value=round(_chill_fv("rated_cooling_kw") / 3.517, 1) if _chill_fv("rated_cooling_kw") else 0.0,
+                step=1.0, format="%.1f",
+                key="cnp_tons",
+                help="Cooling capacity in refrigeration tons. If both kW and tons are entered, kW takes priority."
+            )
+            _cc3, _cc4 = st.columns(2)
+            _cnp_power_kw = _cc3.number_input(
+                "Rated power input (kW)", min_value=0.0,
+                value=_chill_fv("rated_power_kw"), step=0.5, format="%.1f",
+                key="cnp_power_kw",
+                help="Electrical input power at rated conditions. Enables Load Factor calculation."
+            )
+            _cnp_cop = _cc4.number_input(
+                "Rated COP", min_value=0.0, max_value=15.0,
+                value=_chill_fv("rated_cop"), step=0.1, format="%.2f",
+                key="cnp_cop",
+                help="Coefficient of Performance at rated conditions. Leave 0 to auto-derive from kW and cooling capacity."
+            )
+
+            # Tier 2: Optional
+            with st.expander("Optional — improves precision", expanded=False):
+                st.caption("Motor and electrical nameplate data. Defaults are used where not entered.")
+                _co1, _co2, _co3 = st.columns(3)
+                _cnp_voltage = _co1.number_input(
+                    "Rated voltage (V)", min_value=0.0,
+                    value=_chill_fv("rated_voltage_v", 415.0), step=1.0, format="%.0f",
+                    key="cnp_voltage",
+                    help="Line-to-line supply voltage. Used for power factor and imbalance limit calculations."
+                )
+                _cnp_fla = _co2.number_input(
+                    "Full load amps (A)", min_value=0.0,
+                    value=_chill_fv("fla_a"), step=0.5, format="%.1f",
+                    key="cnp_fla",
+                    help="Motor full load current from nameplate. Used to assess current loading."
+                )
+                _cnp_pf = _co3.number_input(
+                    "Power factor at full load", min_value=0.0, max_value=1.0,
+                    value=_chill_fv("power_factor_fl", 0.85), step=0.01, format="%.2f",
+                    key="cnp_pf",
+                    help="Full load power factor (0–1). Used when deriving power from current."
+                )
+                _co4, _co5, _co6 = st.columns(3)
+                _cnp_ie = _co4.selectbox(
+                    "IE class", ["--", "IE1", "IE2", "IE3", "IE4"],
+                    index=3,  # default IE3
+                    key="cnp_ie",
+                    help="Motor efficiency class. Sets voltage imbalance limit per IEC 60034-26."
+                )
+                _cnp_n_circuits = _co5.selectbox(
+                    "No. of refrigerant circuits", [1, 2, 3, 4],
+                    index=0, key="cnp_n_circuits",
+                    help="Number of independent compressor circuits. Affects load-step interpretation."
+                )
+                _cnp_refrigerant = _co6.selectbox(
+                    "Refrigerant", ["--", "R-134a", "R-410A", "R-1234ze", "R-1234yf", "R-32", "R-407C", "R-22", "Other"],
+                    index=0, key="cnp_refrigerant",
+                    help="Refrigerant type. Required for Phase 4 saturation temperature calculations."
+                )
+
+            # Tier 3: Advanced
+            with st.expander("Advanced — enables trending and benchmarking", expanded=False):
+                st.caption("Enables SPI trend benchmarking and seasonal efficiency analysis.")
+                _ca1, _ca2, _ca3 = st.columns(3)
+                _cnp_eer = _ca1.number_input(
+                    "Rated EER (BTU/hr per W)", min_value=0.0,
+                    value=0.0, step=0.1, format="%.2f",
+                    key="cnp_eer",
+                    help="Energy Efficiency Ratio at ARI conditions. From test certificate."
+                )
+                _cnp_iplv = _ca2.number_input(
+                    "IPLV / ESEER", min_value=0.0,
+                    value=0.0, step=0.1, format="%.2f",
+                    key="cnp_iplv",
+                    help="Integrated Part Load Value (AHRI) or ESEER (Eurovent). From test certificate."
+                )
+                _cnp_comm_kw = _ca3.number_input(
+                    "Commissioning power (kW)", min_value=0.0,
+                    value=_chill_fv("commissioning_power"), step=0.5, format="%.1f",
+                    key="cnp_comm_kw",
+                    help="Measured mean power during first 30 days of stable operation. Enables SPI trend baseline."
+                )
+
+            _cnp_notes = st.text_area(
+                "Additional notes",
+                value="",
+                placeholder="e.g. Installed 2021-03, last service 2024-01, R-134a charge 45 kg, Trane CGAM150",
+                height=55, key="cnp_extra_notes", label_visibility="collapsed",
+            )
+
+            # Serialise chiller nameplate to description text
+            _chiller_desc_parts = []
+            # Resolve cooling kW — kW field takes priority over tons
+            _eff_cooling_kw = _cnp_cooling_kw if _cnp_cooling_kw > 0 else (_cnp_tons * 3.517 if _cnp_tons > 0 else 0)
+            if _eff_cooling_kw > 0:   _chiller_desc_parts.append(f"Rated cooling capacity: {_eff_cooling_kw:.1f} kW")
+            if _cnp_power_kw > 0:     _chiller_desc_parts.append(f"Rated power input: {_cnp_power_kw:.1f} kW")
+            # Auto-derive COP if not entered
+            _eff_cop = _cnp_cop if _cnp_cop > 0 else (
+                round(_eff_cooling_kw / _cnp_power_kw, 3) if _cnp_power_kw > 0 and _eff_cooling_kw > 0 else 0
+            )
+            if _eff_cop > 0:          _chiller_desc_parts.append(f"Rated COP: {_eff_cop}")
+            if _cnp_voltage > 0:      _chiller_desc_parts.append(f"Rated voltage: {_cnp_voltage:.0f} V")
+            if _cnp_fla > 0:          _chiller_desc_parts.append(f"FLA: {_cnp_fla:.1f} A")
+            if _cnp_pf != 0.85:       _chiller_desc_parts.append(f"Power factor: {_cnp_pf:.2f}")
+            if _cnp_ie != "--":       _chiller_desc_parts.append(f"{_cnp_ie}")
+            if _cnp_n_circuits > 1:   _chiller_desc_parts.append(f"Refrigerant circuits: {_cnp_n_circuits}")
+            if _cnp_refrigerant != "--": _chiller_desc_parts.append(f"Refrigerant: {_cnp_refrigerant}")
+            if _cnp_eer > 0:          _chiller_desc_parts.append(f"EER: {_cnp_eer:.2f} BTU/hr/W")
+            if _cnp_iplv > 0:         _chiller_desc_parts.append(f"IPLV/ESEER: {_cnp_iplv:.2f}")
+            if _cnp_comm_kw > 0:      _chiller_desc_parts.append(f"Commissioning power: {_cnp_comm_kw:.1f} kW")
+            # Preserve drive type line from existing description
+            for _ln in _tab_base.splitlines():
+                if _ln.strip().lower().startswith("drive type:"):
+                    _chiller_desc_parts.append(_ln.strip())
+                    break
+            if _cnp_notes.strip():    _chiller_desc_parts.append(_cnp_notes.strip())
+            _tab_new_desc = "\n".join(_chiller_desc_parts) if _chiller_desc_parts else _tab_base
+
         else:
-            # Non-pump: free text
+            # Non-pump, non-chiller: free text
             _tab_new_desc = st.text_area(
                 "Specifications",
                 value=_tab_base,
