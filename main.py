@@ -1754,29 +1754,61 @@ with st.expander("✏️ Machine specifications", expanded=False):
 
 # ── Maintenance logs ─────────────────────────────────────────────────────────
 with st.expander("📋 Maintenance logs", expanded=False):
-    st.caption("Upload service records, inspection reports, or handwritten logs. Stored logs are included automatically in every analysis.")
-    _ml_file = st.file_uploader(
-        "Upload log (CSV, PDF, image)",
-        type=["csv", "xlsx", "pdf", "png", "jpg", "jpeg", "webp", "txt"],
-        key="log_uploader",
-        help="Handwritten or printed maintenance logs, service records, inspection reports.",
-    )
-    if st.button("Read & store log", use_container_width=True, disabled=not _ml_file):
-        if _ml_file:
-            with st.spinner("Reading log file…"):
-                result = read_log(_ml_file, api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-            if result["success"]:
-                db.save_log(selected_id, _ml_file.name, result["method"], result["text"])
-                st.success(f"✓ Log stored ({result['method']}, {len(result['text'])} chars)")
-                st.rerun()
-            else:
-                st.error(result["error"])
+    st.caption("Upload service records or type notes directly. All stored logs are included automatically in every analysis.")
+
+    _ml_tab_file, _ml_tab_text = st.tabs(["📎 Upload file", "✏️ Enter text"])
+
+    with _ml_tab_file:
+        _ml_file = st.file_uploader(
+            "Upload log (CSV, PDF, image)",
+            type=["csv", "xlsx", "pdf", "png", "jpg", "jpeg", "webp", "txt"],
+            key="log_uploader",
+            help="Handwritten or printed maintenance logs, service records, inspection reports.",
+        )
+        if st.button("Read & store log", use_container_width=True, disabled=not _ml_file,
+                     key="store_log_file_btn"):
+            if _ml_file:
+                with st.spinner("Reading log file…"):
+                    result = read_log(_ml_file, api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+                if result["success"]:
+                    db.save_log(selected_id, _ml_file.name, result["method"], result["text"])
+                    st.success(f"✓ Log stored ({result['method']}, {len(result['text'])} chars)")
+                    st.rerun()
+                else:
+                    st.error(result["error"])
+
+    with _ml_tab_text:
+        _ml_title = st.text_input(
+            "Entry title",
+            placeholder="e.g. Bearing replacement 2024-03-01",
+            key="ml_text_title",
+        )
+        _ml_text = st.text_area(
+            "Log entry",
+            placeholder=(
+                "e.g. Replaced drive-end bearing (SKF 6308). Vibration was 4.2 mm/s before, "
+                "dropped to 1.1 mm/s after replacement. Seal inspected — no leaks found."
+            ),
+            height=130,
+            key="ml_text_body",
+            label_visibility="collapsed",
+        )
+        if st.button("Save log entry", use_container_width=True,
+                     disabled=not _ml_text.strip(), key="store_log_text_btn"):
+            _ml_fname = (_ml_title.strip() or "Manual entry") + ".txt"
+            db.save_log(selected_id, _ml_fname, "text", _ml_text.strip())
+            st.success(f"✓ Log entry saved as **{_ml_fname}**")
+            st.rerun()
+
+    # Stored logs list
     stored_logs = db.get_logs(selected_id)
     if stored_logs:
-        st.caption(f"{len(stored_logs)} log file(s) stored — included in every analysis")
+        st.markdown("---")
+        st.caption(f"{len(stored_logs)} log entry/entries stored — included in every analysis")
         for _sl in stored_logs:
             _slc1, _slc2 = st.columns([0.85, 0.15])
-            _slc1.caption(f"📄 {_sl['filename']}  ·  {str(_sl['uploaded_at'])[:10]}")
+            _icon = "✏️" if _sl["file_type"] == "text" else "📄"
+            _slc1.caption(f"{_icon} {_sl['filename']}  ·  {str(_sl['uploaded_at'])[:10]}")
             with _slc2:
                 if st.button("Delete", key=f"del_log_{_sl['filename']}", type="secondary"):
                     db.delete_log(selected_id, _sl["filename"])
