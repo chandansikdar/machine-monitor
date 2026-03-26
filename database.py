@@ -20,7 +20,7 @@ import pandas as pd
 
 
 class Database:
-    def __init__(self, db_path: str = "machine_analytics.duckdb", data_dir: str = "data"):
+    def __init__(self, db_path: str = "machine_analytics_v2.duckdb", data_dir: str = "data_v2"):
         self.db_path = db_path
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
