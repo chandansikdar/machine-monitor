@@ -1925,12 +1925,12 @@ with tab_data:
                             if not _tdq_all_acked:
                                 st.caption(f"{sum(1 for v in _tdq_ignored.values() if not v)} issue(s) unacknowledged.")
                             else:
-                                st.success("All acknowledged.")
-                                if st.button("Acknowledge and proceed", type="primary",
-                                             key="tab_dq_continue_btn", use_container_width=True):
-                                    st.session_state["_pending_analysis"] = False
-                                    st.session_state["_dq_acknowledged"]  = True
-                                    st.rerun()
+                                st.session_state["_pending_analysis"] = False
+                                st.session_state["_dq_acknowledged"]  = True
+                                st.info(
+                                    "ℹ️ **All issues acknowledged.** "
+                                    "Go to the **Analysis** tab to continue."
+                                )
 
                         # ── Option 3 — Auto-correct ───────────────────────────
                         with _toption_cols[2]:
@@ -2028,12 +2028,6 @@ with tab_data:
                             key="tab_dl_original_dq",
                             use_container_width=False,
                         )
-
-        if st.session_state.get("_dq_acknowledged"):
-            st.info(
-                "ℹ️ **All issues acknowledged.** "
-                "Go to the **Analysis** tab to continue with the analysis."
-            )
 
         st.subheader("Recent readings")
         st.dataframe(data.tail(200), use_container_width=True, height=280)
