@@ -1257,6 +1257,14 @@ with st.sidebar:
     st.divider()
 
     st.subheader("Upload data")
+    # Hide the filename/remove pill that Streamlit shows after file selection
+    st.markdown(
+        """<style>
+        [data-testid="stFileUploaderDeleteBtn"],
+        [data-testid="stFileUploaderFile"] { display: none !important; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
     uploaded_file = st.file_uploader(
         "CSV or Excel",
         type=["csv", "xlsx", "xls"],
