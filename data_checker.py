@@ -272,16 +272,6 @@ def run_data_quality_checks(
                     end_ts=worst_start + worst_gap,
                 ))
 
-    # ── Pre-compute frozen runs for coincidence check (Check 6) ────────────
-    # If multiple columns freeze over the same period, it's a real operating
-    # condition (e.g. planned stop, constant load) — not a sensor fault.
-    # A genuine stuck sensor freezes alone while others keep varying.
-    _all_frozen = {}  # col -> list of run dicts
-    for _c in numeric_cols:
-        _sc = df[_c].dropna()
-        if len(_sc) >= FROZEN_RUN_MIN:
-            _all_frozen[_c] = _all_runs_of_identical(_sc, FROZEN_RUN_MIN)
-
     # ── Pre-compute shutdown mask for Check 5/7 ──────────────────────────────
     # Detect confirmed shutdowns: rows where 2+ numeric columns are
     # simultaneously near-zero (below 5% of column running median).
@@ -325,6 +315,21 @@ def run_data_quality_checks(
     _startup_edge  = ~_shutdown_mask & _shutdown_mask.shift(1, fill_value=False)
     _transition_mask = _shutdown_mask | _startup_edge
 
+
+    # ── Pre-compute frozen runs for coincidence check (Check 6) ────────────
+    # If multiple columns freeze over the same period, it's a real operating
+    # condition (e.g. planned stop, constant load) — not a sensor fault.
+    # A genuine stuck sensor freezes alone while others keep varying.
+    _all_frozen = {}  # col -> list of run dicts (computed on running intervals only)
+    for _c in numeric_cols:
+        _sc = df[_c].dropna()
+        # Exclude shutdown periods from frozen run pre-computation so that
+        # sustained zero-power during standby doesn't appear as a frozen run
+        _sc_mask = _shutdown_mask.reindex(_sc.index, fill_value=False)
+        _sc = _sc[~_sc_mask]
+        if len(_sc) >= FROZEN_RUN_MIN:
+            _all_frozen[_c] = _all_runs_of_identical(_sc, FROZEN_RUN_MIN)
+
     # ── Per-column checks ─────────────────────────────────────────────────────
     for col in numeric_cols:
         s = df[col]
@@ -346,42 +351,56 @@ def run_data_quality_checks(
         if len(s_clean) < MIN_ROWS_FOR_CHECKS:
             continue
 
+        # ── s_clean_running: exclude confirmed shutdown periods ─────────────
+        # Shutdown periods (compressor off, voltage present) are valid operating
+        # states.  Checks 4, 5, and 6 run only on non-shutdown intervals so that
+        # sustained zeros during standby are never flagged as data quality issues.
+        _col_shutdown = _shutdown_mask.reindex(s_clean.index, fill_value=False)
+        s_clean_running = s_clean[~_col_shutdown]
+        if len(s_clean_running) < MIN_ROWS_FOR_CHECKS:
+            # All data is shutdown periods — skip all value-based checks
+            continue
+
         # ── 4. Physical impossibilities ───────────────────────────────────────
         if col in phys_min:
             min_val     = phys_min[col]
-            impossible  = s_clean[s_clean < min_val]
+            # Only check running intervals — zero during shutdown is expected
+            impossible  = s_clean_running[s_clean_running < min_val]
             if len(impossible) > 0:
                 issues.append(_issue(col, "Physically impossible values", CRITICAL,
                     f"{len(impossible)} readings below physical minimum of {min_val} "
                     f"(min observed: {impossible.min():.4f}). "
                     f"Sensor fault, wiring issue or unit mismatch suspected.",
-                    len(impossible), len(s_clean)))
+                    len(impossible), len(s_clean_running)))
 
         # ── 5. Flatline detection (rolling std dev) ───────────────────────────
-        if len(s_clean) >= FLATLINE_WINDOW:
-            roll_std    = s_clean.rolling(FLATLINE_WINDOW).std()
+        # Run on running intervals only — sustained zeros during shutdown are
+        # intentional and must not be classified as flatline / stuck sensor.
+        if len(s_clean_running) >= FLATLINE_WINDOW:
+            roll_std    = s_clean_running.rolling(FLATLINE_WINDOW).std()
             flat_mask   = roll_std < FLATLINE_STD_THRESH
             flat_count  = int(flat_mask.sum())
-            flat_pct    = flat_count / len(s_clean) * 100
+            flat_pct    = flat_count / len(s_clean_running) * 100
             if flat_pct > 5:
-                # Find the first flatline start
                 flat_starts = flat_mask[flat_mask].index
                 first_flat  = flat_starts[0]
                 sev = CRITICAL if flat_pct > 20 else WARNING
                 flat_end = flat_starts[-1] if len(flat_starts) > 0 else None
                 issues.append(_issue(col, "Flatline / stuck sensor", sev,
-                    f"{flat_pct:.1f}% of readings show near-zero variation "
+                    f"{flat_pct:.1f}% of running-interval readings show near-zero variation "
                     f"(rolling std < {FLATLINE_STD_THRESH:.0e} over {FLATLINE_WINDOW} readings). "
                     f"First detected at {_fmt_ts(first_flat)}. "
+                    f"Shutdown periods excluded from this check. "
                     f"Sensor may be stuck, frozen, or disconnected.",
-                    flat_count, len(s_clean),
+                    flat_count, len(s_clean_running),
                     start_ts=first_flat, end_ts=flat_end))
 
         # ── 6. Frozen value runs (consecutive identical readings) ──────────────
         # Only flag if this column freezes ALONE.  If other columns also have
         # a frozen run overlapping the same period, this is a real operating
         # condition (shutdown, constant load, idle) — not a stuck sensor.
-        runs = _longest_run_of_identical(s_clean)
+        # Run on s_clean_running to avoid flagging zero-power shutdown blocks.
+        runs = _longest_run_of_identical(s_clean_running)
         if runs["length"] >= FROZEN_RUN_MIN:
             run_start = runs["start"]
             run_end   = runs["end"]
