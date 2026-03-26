@@ -1948,7 +1948,8 @@ with tab_data:
                         st.session_state["_corrections_applied"] = False
                         st.success("✅ **Auto-corrections applied successfully.** Data quality checks passed.")
                         st.info(
-                            "ℹ️ Go to the **Analysis** tab to continue with the analysis."
+                            "ℹ️ **All corrections applied.** "
+                            "Go to the **Analysis** tab to continue with the analysis."
                         )
                     else:
                         st.success("All sensor data quality checks passed. Data is suitable for analysis.")
