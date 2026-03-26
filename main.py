@@ -1446,33 +1446,101 @@ with st.expander("🔧 Machine type & Drive type", expanded=False):
         st.rerun()
 
 # Inline threshold editor
-with st.expander("Edit parameter thresholds", expanded=False):
-    st.caption("Define warning/critical limits. Leave blank for fully automatic (unsupervised) detection.")
-    desc = machine_info.get("description", "")
-    # Extract existing thresholds if present
-    existing_thresh = ""
-    if "=== PARAMETER THRESHOLDS ===" in desc:
-        existing_thresh = desc.split("=== PARAMETER THRESHOLDS ===")[-1].strip()
-    new_thresh = st.text_area(
-        "Thresholds",
-        value=existing_thresh,
-        placeholder=(
-            "vibration_mm_s: warning=2.8, critical=4.5\n"
-            "discharge_temp_C: warning=170, critical=185\n"
-            "motor_current_A: warning=46, critical=50"
-        ),
-        height=120,
-        label_visibility="collapsed",
+with st.expander("Parameter thresholds", expanded=False):
+    st.caption(
+        "Set warning and critical limits for each sensor parameter. "
+        "Leave both fields blank to let Claude decide automatically."
     )
-    if st.button("Save thresholds", use_container_width=True):
-        base_desc = desc.split("=== PARAMETER THRESHOLDS ===")[0].strip()
-        if new_thresh.strip():
-            updated_desc = base_desc + "\n\n=== PARAMETER THRESHOLDS ===\n" + new_thresh.strip()
-        else:
-            updated_desc = base_desc
-        db.register_machine(selected_id, machine_info["machine_type"], updated_desc)
-        st.success("Thresholds saved.")
-        st.rerun()
+    _thr_desc = machine_info.get("description", "")
+    _thr_base = _thr_desc.split("=== PARAMETER THRESHOLDS ===")[0].strip()
+
+    # Parse existing thresholds into a dict for pre-population
+    _thr_existing = {}
+    if "=== PARAMETER THRESHOLDS ===" in _thr_desc:
+        for _tl in _thr_desc.split("=== PARAMETER THRESHOLDS ===")[-1].strip().splitlines():
+            _tl = _tl.strip()
+            if not _tl or ":" not in _tl:
+                continue
+            try:
+                _tp, _tr = _tl.split(":", 1)
+                _tlims = {}
+                for _part in _tr.split(","):
+                    _part = _part.strip()
+                    if "=" in _part:
+                        _k, _v = _part.split("=", 1)
+                        _tlims[_k.strip()] = float(_v.strip())
+                if _tlims:
+                    _thr_existing[_tp.strip()] = _tlims
+            except Exception:
+                pass
+
+    # Get numeric columns from loaded data (may be None before upload)
+    _thr_data = db.get_data(selected_id)
+    _thr_cols  = (
+        _thr_data.select_dtypes(include="number").columns.tolist()
+        if _thr_data is not None and not _thr_data.empty
+        else list(_thr_existing.keys())
+    )
+
+    if not _thr_cols:
+        st.info("Upload data first — parameter columns will appear here.")
+    else:
+        st.markdown(
+            '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:4px 8px;'
+            'font-size:0.82em;font-weight:600;color:#555;padding:0 4px 4px 4px;">'
+            '<span>Parameter</span><span style="color:#BA7517">⚠️ Warning</span>'
+            '<span style="color:#A32D2D">❌ Critical</span></div>',
+            unsafe_allow_html=True,
+        )
+        _thr_new = {}
+        for _col in _thr_cols:
+            _ex = _thr_existing.get(_col, {})
+            _warn_cur = _ex.get("warning", None)
+            _crit_cur = _ex.get("critical", None)
+            _c1, _c2, _c3 = st.columns([2, 1, 1])
+            _c1.markdown(
+                f'<div style="font-size:0.85em;padding-top:10px;color:#222;">'
+                f'<code>{_col}</code></div>',
+                unsafe_allow_html=True,
+            )
+            _warn_val = _c2.text_input(
+                f"W_{_col}", value=str(_warn_cur) if _warn_cur is not None else "",
+                placeholder="e.g. 2.8", label_visibility="collapsed",
+                key=f"thr_warn_{_col}",
+            )
+            _crit_val = _c3.text_input(
+                f"C_{_col}", value=str(_crit_cur) if _crit_cur is not None else "",
+                placeholder="e.g. 4.5", label_visibility="collapsed",
+                key=f"thr_crit_{_col}",
+            )
+            # Only keep if at least one value is set
+            _lims = {}
+            try:
+                if _warn_val.strip():
+                    _lims["warning"] = float(_warn_val.strip())
+            except ValueError:
+                pass
+            try:
+                if _crit_val.strip():
+                    _lims["critical"] = float(_crit_val.strip())
+            except ValueError:
+                pass
+            if _lims:
+                _thr_new[_col] = _lims
+
+        if st.button("Save thresholds", key="save_thresh_btn", use_container_width=True):
+            _thresh_lines = [
+                f"{_p}: " + ", ".join(f"{k}={v}" for k, v in _lims.items())
+                for _p, _lims in _thr_new.items()
+            ]
+            _thresh_text = "\n".join(_thresh_lines)
+            if _thresh_text:
+                _updated_desc = _thr_base + "\n\n=== PARAMETER THRESHOLDS ===\n" + _thresh_text
+            else:
+                _updated_desc = _thr_base
+            db.register_machine(selected_id, machine_info["machine_type"], _updated_desc.strip())
+            st.success("\u2713 Thresholds saved.")
+            st.rerun()
 
 # ── Machine specifications ────────────────────────────────────────
 with st.expander("✏️ Machine specifications", expanded=False):
