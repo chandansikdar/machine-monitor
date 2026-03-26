@@ -293,6 +293,33 @@ def run_data_quality_checks(
         _median = float(_s[_s > 0].median()) if (_s > 0).any() else 1.0
         _near_zero[_c] = _s < 0.05 * _median
     _shutdown_mask = _near_zero.sum(axis=1) >= min(2, len(numeric_cols))
+
+    # ── Extended shutdown detection for chiller/HVAC pattern ─────────────────
+    # A chiller shutdown shows kW = 0 while phase voltages remain at rated level.
+    # Only the power column is near-zero; voltage columns are NOT near-zero.
+    # This does NOT trigger the 2-column rule above, so we add a supplementary
+    # check: if a power/kW column is near-zero AND at least one voltage column
+    # is clearly non-zero (above 50% of its median), mark those rows as shutdown.
+    _pwr_cols  = [c for c in numeric_cols if any(k in c.lower() for k in
+                  ["kw", "power", "watt", "kwh", "energy"])]
+    _volt_cols = [c for c in numeric_cols if any(k in c.lower() for k in
+                  ["volt", "voltage", "_v", "ua", "ub", "uc", "va", "vb", "vc",
+                   "u_a", "u_b", "u_c", "v_a", "v_b", "v_c", "l1", "l2", "l3"])]
+    if _pwr_cols and _volt_cols:
+        _pwr_zero = pd.Series(False, index=df.index)
+        for _pc in _pwr_cols:
+            _ps = df[_pc].fillna(0).abs()
+            _pm = float(_ps[_ps > 0].median()) if (_ps > 0).any() else 1.0
+            _pwr_zero |= (_ps < 0.05 * _pm)
+        _volt_live = pd.Series(False, index=df.index)
+        for _vc in _volt_cols:
+            _vs = df[_vc].fillna(0).abs()
+            _vm = float(_vs[_vs > 0].median()) if (_vs > 0).any() else 1.0
+            _volt_live |= (_vs > 0.50 * _vm)
+        # Power zero + voltage live = chiller standby / scheduled shutdown
+        _chiller_standby = _pwr_zero & _volt_live
+        _shutdown_mask   = _shutdown_mask | _chiller_standby
+
     # Also mark the first running row after each shutdown block (transition edge)
     _shutdown_edge = _shutdown_mask & ~_shutdown_mask.shift(1, fill_value=False)
     _startup_edge  = ~_shutdown_mask & _shutdown_mask.shift(1, fill_value=False)
