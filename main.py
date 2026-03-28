@@ -3072,65 +3072,51 @@ with tab_analysis:
                     with st.container(border=True):
                         st.markdown("**Running Schedule**")
                         st.caption(
-                            "Select the days that share the same schedule, then click "
-                            "“Set windows” to define the operating hours for those days. "
-                            "Repeat for any group of days that have a different schedule."
+                            "Select the days that share the same schedule, enter their "
+                            "operating hours, then click Apply. Repeat for each group of days "
+                            "with a different schedule."
                         )
 
                         _spd = st.session_state["sched_per_day"]
 
-                        # ── Show current schedule summary ─────────────────
-                        # Group days by their window configuration for compact display
-                        def _wins_key(dcfg):
-                            if not dcfg.get("enabled"):
-                                return "— Off"
-                            return "  |  ".join(
-                                f"{w['start']:02d}:00–{w['end']:02d}:00"
-                                for w in dcfg.get("windows", [])
-                            )
-
-                        _groups = {}
-                        for _d in _DAYS:
-                            _k = _wins_key(_spd.get(_d, {"enabled": False}))
-                            _groups.setdefault(_k, []).append(_d)
-
-                        for _k, _ds in _groups.items():
-                            st.markdown(
-                                f"**{', '.join(_ds)}** — {_k}"
-                            )
+                        # Version counter: incremented on Apply to force multiselect reset
+                        if "sched_version" not in st.session_state:
+                            st.session_state["sched_version"] = 0
 
                         st.divider()
 
                         # ── Step 1: select days ───────────────────────────
-                        st.markdown("**Step 1 — Select days to configure**")
+                        st.markdown("**Step 1 — Select days**")
+                        _ms_key   = f"sched_ms_{st.session_state['sched_version']}"
                         _sel_days = st.multiselect(
                             "Days",
                             options=_DAYS,
-                            default=st.session_state.get("sched_edit_days", []),
+                            default=[],
                             label_visibility="collapsed",
-                            key="sched_edit_days_widget",
+                            key=_ms_key,
                             placeholder="Choose one or more days…",
                         )
-                        st.session_state["sched_edit_days"] = _sel_days
 
                         # ── Step 2: time windows for selected days ────────
                         if _sel_days:
-                            st.markdown(f"**Step 2 — Set operating hours for {', '.join(_sel_days)}**")
+                            st.markdown(
+                                f"**Step 2 — Operating hours for "
+                                f"{', '.join(_sel_days)}**"
+                            )
 
-                            # Use the first selected day's existing windows as the edit buffer
-                            # (so re-editing a group pre-fills with current values)
-                            if "sched_edit_windows" not in st.session_state or                                st.session_state.get("sched_edit_days_prev") != _sel_days:
+                            # Init edit buffer from first selected day (pre-fill if already configured)
+                            _buf_key = f"sched_buf_{st.session_state['sched_version']}"
+                            if _buf_key not in st.session_state:
                                 _ref = _spd.get(_sel_days[0], {})
-                                if _ref.get("enabled") and _ref.get("windows"):
-                                    st.session_state["sched_edit_windows"] = [dict(w) for w in _ref["windows"]]
-                                else:
-                                    st.session_state["sched_edit_windows"] = [{"start": 8, "end": 18}]
-                                st.session_state["sched_edit_days_prev"] = _sel_days[:]
+                                st.session_state[_buf_key] = (
+                                    [dict(w) for w in _ref["windows"]]
+                                    if _ref.get("enabled") and _ref.get("windows")
+                                    else [{"start": 8, "end": 18}]
+                                )
 
-                            _ewins   = st.session_state["sched_edit_windows"]
-                            _ew_del  = None
+                            _ewins  = st.session_state[_buf_key]
+                            _ew_del = None
 
-                            # Column headers
                             _eh1, _eh2, _eh3, _eh4 = st.columns([3, 3, 1, 1])
                             _eh1.markdown("Start (h)")
                             _eh2.markdown("End (h)")
@@ -3140,65 +3126,64 @@ with tab_analysis:
                                 _ewins[_wi]["start"] = _wc1.number_input(
                                     "Start", min_value=0, max_value=23,
                                     value=_win["start"],
-                                    key=f"ew_s_{_wi}",
+                                    key=f"ew_s_{_ms_key}_{_wi}",
                                     label_visibility="collapsed"
                                 )
                                 _ewins[_wi]["end"] = _wc2.number_input(
                                     "End", min_value=0, max_value=23,
                                     value=_win["end"],
-                                    key=f"ew_e_{_wi}",
+                                    key=f"ew_e_{_ms_key}_{_wi}",
                                     label_visibility="collapsed"
                                 )
-                                # + only on last row
                                 if _wi == len(_ewins) - 1:
                                     _last_ok = _ewins[_wi]["end"] > _ewins[_wi]["start"]
                                     if _wc3.button(
-                                        "+", key=f"ew_add_{_wi}",
+                                        "+",
+                                        key=f"ew_add_{_ms_key}_{_wi}",
                                         disabled=not _last_ok,
                                         help="Add another time window"
                                     ):
-                                        _ewins.append({"start": _ewins[_wi]["end"],
-                                                        "end": min(_ewins[_wi]["end"] + 4, 23)})
+                                        _ewins.append({
+                                            "start": _ewins[_wi]["end"],
+                                            "end":   min(_ewins[_wi]["end"] + 4, 23)
+                                        })
                                         st.rerun()
                                 else:
                                     _wc3.write("")
                                 if len(_ewins) > 1:
-                                    if _wc4.button("×", key=f"ew_rm_{_wi}", help="Remove"):
+                                    if _wc4.button(
+                                        "×",
+                                        key=f"ew_rm_{_ms_key}_{_wi}",
+                                        help="Remove"
+                                    ):
                                         _ew_del = _wi
                                 else:
                                     _wc4.write("")
 
                             if _ew_del is not None:
-                                st.session_state["sched_edit_windows"].pop(_ew_del)
+                                st.session_state[_buf_key].pop(_ew_del)
                                 st.rerun()
 
-                            # Off toggle
                             _set_off = st.checkbox(
                                 "Mark these days as off (not operating)",
                                 value=not _spd.get(_sel_days[0], {}).get("enabled", True),
-                                key="sched_set_off"
+                                key=f"sched_off_{_ms_key}"
                             )
 
-                            # Apply button
-                            _app_col, _done_col = st.columns([2, 1])
-                            if _app_col.button(
-                                "✓ Apply to selected days",
+                            if st.button(
+                                f"✓ Apply to {', '.join(_sel_days)}",
                                 type="primary",
-                                help=f"Save this schedule to: {', '.join(_sel_days)}"
+                                key=f"sched_apply_{_ms_key}"
                             ):
                                 for _d in _sel_days:
                                     _spd[_d]["enabled"] = not _set_off
                                     _spd[_d]["windows"]  = [dict(w) for w in _ewins]
-                                # Clear edit state
-                                st.session_state.pop("sched_edit_windows", None)
-                                st.session_state.pop("sched_edit_days_prev", None)
-                                st.session_state["sched_edit_days"] = []
+                                # Bump version — forces fresh multiselect and fresh buffer key
+                                st.session_state["sched_version"] += 1
                                 st.rerun()
 
                         if st.button("✓ Close", type="secondary", key="sched_close"):
                             st.session_state["show_sched_config"] = False
-                            st.session_state.pop("sched_edit_windows", None)
-                            st.session_state.pop("sched_edit_days_prev", None)
                             st.rerun()
 
                 # ── Persistent schedule summary (always visible) ─────────
