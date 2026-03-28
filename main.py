@@ -3054,301 +3054,244 @@ with tab_analysis:
                     }
                 if "rate_windows" not in st.session_state:
                     st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
-                if "show_sched_config" not in st.session_state:
-                    st.session_state["show_sched_config"] = False
+                # ── Running Schedule expander ─────────────────────────
+                with st.expander("🕑 Running Schedule", expanded=False):
+                    if "sched_per_day" not in st.session_state:
+                        st.session_state["sched_per_day"] = {
+                            d: ({"enabled": True,  "windows": [{"start": 8, "end": 18}]}
+                                if d not in ("Sat","Sun")
+                                else {"enabled": False, "windows": [{"start": 8, "end": 18}]})
+                            for d in _DAYS
+                        }
+                    if "sched_version" not in st.session_state:
+                        st.session_state["sched_version"] = 0
 
-                # ── Schedule & Rate buttons (both rendered before panels) ──
-                _sched_col, _rate_col = st.columns([1, 1])
+                    _spd = st.session_state["sched_per_day"]
 
-                if _sched_col.button(
-                    "⚙️ Running Schedule",
-                    type="secondary",
-                    help="Configure permitted operating days and hours"
-                ):
-                    st.session_state["show_sched_config"] = not st.session_state.get("show_sched_config", False)
+                    # ── Current schedule summary ──────────────────────────
+                    def _fmt_win(dcfg):
+                        if not dcfg.get("enabled"):
+                            return "— Off"
+                        wins = dcfg.get("windows", [])
+                        return ",  ".join(
+                            f"{w['start']:02d}:00–{w['end']:02d}:00" for w in wins
+                        ) if wins else "—"
 
-                if _rate_col.button(
-                    "⚡ Electricity Rates",
-                    type="secondary",
-                    help="Configure electricity tariff — flat or time-of-use"
-                ):
-                    st.session_state["show_rate_config"] = not st.session_state.get("show_rate_config", False)
+                    _any_set = any(_spd.get(_d, {}).get("enabled") for _d in _DAYS)
+                    _in_groups = {}
+                    for _d in _DAYS:
+                        _dcfg = _spd.get(_d, {"enabled": False})
+                        _k = _fmt_win(_dcfg)
+                        _in_groups.setdefault(_k, []).append(_d)
 
-                # ── Persistent schedule summary (always visible) ─────────
-                _spd_disp = st.session_state.get("sched_per_day", {})
-
-                def _fmt_win(dcfg):
-                    if not dcfg.get("enabled"):
-                        return "— Off"
-                    wins = dcfg.get("windows", [])
-                    return ",  ".join(
-                        f"{w['start']:02d}:00–{w['end']:02d}:00" for w in wins
-                    ) if wins else "—"
-
-                _sum_groups = {}
-                for _d in _DAYS:
-                    _k = _fmt_win(_spd_disp.get(_d, {"enabled": False}))
-                    _sum_groups.setdefault(_k, []).append(_d)
-
-                _sum_rows = ["| Days | Operating hours |", "|---|---|"]
-                for _sk, _sds in _sum_groups.items():
-                    _sum_rows.append(f"| {' / '.join(_sds)} | {_sk} |")
-                st.markdown("**Current schedule:**")
-                _sum_md = "\n".join(_sum_rows)
-                st.markdown(_sum_md)
-
-                # ── Running Schedule panel ────────────────────────────────
-                if st.session_state.get("show_sched_config", False):
-                    with st.container(border=True):
-                        st.markdown("**Running Schedule**")
-                        st.caption(
-                            "Select the days that share the same schedule, enter their "
-                            "operating hours, then click Apply. Repeat for each group of days "
-                            "with a different schedule."
-                        )
-
-                        _spd = st.session_state["sched_per_day"]
-
-                        if "sched_version" not in st.session_state:
-                            st.session_state["sched_version"] = 0
-
-                        # ── Already-configured schedule (inside panel, editable) ──
-                        _any_set = any(
-                            _spd.get(_d, {}).get("enabled") for _d in _DAYS
-                        )
-                        if _any_set:
-                            _in_groups = {}
-                            for _d in _DAYS:
-                                _dcfg = _spd.get(_d, {"enabled": False})
-                                _k = _fmt_win(_dcfg) if _dcfg.get("enabled") else "— Off"
-                                _in_groups.setdefault(_k, []).append(_d)
-
-                            for _ik, _ids in _in_groups.items():
-                                _rc1, _rc2 = st.columns([6, 1])
-                                _rc1.markdown(
-                                    f"**{', '.join(_ids)}** — {_ik}"
-                                )
-                                if _rc2.button(
-                                    "✏️",
-                                    key=f"sched_edit_{'_'.join(_ids)}",
-                                    help=f"Edit schedule for {', '.join(_ids)}"
-                                ):
-                                    # Pre-fill the form with this group's data
-                                    st.session_state["sched_version"] += 1
-                                    _v = st.session_state["sched_version"]
-                                    st.session_state[f"sched_prefill_days_{_v}"]    = list(_ids)
-                                    _ref_day = _ids[0]
-                                    _ref_cfg = _spd.get(_ref_day, {})
-                                    st.session_state[f"sched_prefill_windows_{_v}"] = (
-                                        [dict(w) for w in _ref_cfg.get("windows", [])]
-                                        if _ref_cfg.get("enabled") and _ref_cfg.get("windows")
-                                        else [{"start": 8, "end": 18}]
-                                    )
-                                    st.session_state[f"sched_prefill_off_{_v}"]     = not _ref_cfg.get("enabled", True)
-                                    st.rerun()
-
-                        st.divider()
-
-                        # ── Step 1: select days ───────────────────────────
-                        st.markdown("**Step 1 — Select days**")
-                        _v        = st.session_state["sched_version"]
-                        _ms_key   = f"sched_ms_{_v}"
-                        _pre_days = st.session_state.pop(f"sched_prefill_days_{_v}", None)
-                        _sel_days = st.multiselect(
-                            "Days",
-                            options=_DAYS,
-                            default=_pre_days if _pre_days is not None else [],
-                            label_visibility="collapsed",
-                            key=_ms_key,
-                            placeholder="Choose one or more days…",
-                        )
-
-                        # ── Step 2: time windows for selected days ────────
-                        if _sel_days:
-                            st.markdown(
-                                f"**Step 2 — Operating hours for {', '.join(_sel_days)}**"
-                            )
-                            _buf_key  = f"sched_buf_{_v}"
-                            _pre_wins = st.session_state.pop(f"sched_prefill_windows_{_v}", None)
-                            _pre_off  = st.session_state.pop(f"sched_prefill_off_{_v}", None)
-                            if _buf_key not in st.session_state:
-                                if _pre_wins is not None:
-                                    st.session_state[_buf_key] = _pre_wins
-                                else:
-                                    _ref = _spd.get(_sel_days[0], {})
-                                    st.session_state[_buf_key] = (
-                                        [dict(w) for w in _ref["windows"]]
-                                        if _ref.get("enabled") and _ref.get("windows")
-                                        else [{"start": 8, "end": 18}]
-                                    )
-
-                            _ewins  = st.session_state[_buf_key]
-                            _ew_del = None
-
-                            _eh1, _eh2, _eh3, _eh4 = st.columns([3, 3, 1, 1])
-                            _eh1.markdown("Start (h)")
-                            _eh2.markdown("End (h)")
-
-                            for _wi, _win in enumerate(_ewins):
-                                _wc1, _wc2, _wc3, _wc4 = st.columns([3, 3, 1, 1])
-                                _ewins[_wi]["start"] = _wc1.number_input(
-                                    "Start", min_value=0, max_value=23,
-                                    value=_win["start"],
-                                    key=f"ew_s_{_ms_key}_{_wi}",
-                                    label_visibility="collapsed"
-                                )
-                                _ewins[_wi]["end"] = _wc2.number_input(
-                                    "End", min_value=0, max_value=23,
-                                    value=_win["end"],
-                                    key=f"ew_e_{_ms_key}_{_wi}",
-                                    label_visibility="collapsed"
-                                )
-                                if _wi == len(_ewins) - 1:
-                                    _last_ok = _ewins[_wi]["end"] > _ewins[_wi]["start"]
-                                    if _wc3.button(
-                                        "+",
-                                        key=f"ew_add_{_ms_key}_{_wi}",
-                                        disabled=not _last_ok,
-                                        help="Add another time window"
-                                    ):
-                                        _ewins.append({
-                                            "start": _ewins[_wi]["end"],
-                                            "end":   min(_ewins[_wi]["end"] + 4, 23)
-                                        })
-                                        st.rerun()
-                                else:
-                                    _wc3.write("")
-                                if len(_ewins) > 1:
-                                    if _wc4.button(
-                                        "×",
-                                        key=f"ew_rm_{_ms_key}_{_wi}",
-                                        help="Remove"
-                                    ):
-                                        _ew_del = _wi
-                                else:
-                                    _wc4.write("")
-
-                            if _ew_del is not None:
-                                st.session_state[_buf_key].pop(_ew_del)
-                                st.rerun()
-
-                            _set_off = st.checkbox(
-                                "Mark these days as off (not operating)",
-                                value=_pre_off if _pre_off is not None else False,
-                                key=f"sched_off_{_ms_key}"
-                            )
-
-                            if st.button(
-                                f"✓ Apply to {', '.join(_sel_days)}",
-                                type="primary",
-                                key=f"sched_apply_{_ms_key}"
-                            ):
-                                for _d in _sel_days:
-                                    _spd[_d]["enabled"] = not _set_off
-                                    _spd[_d]["windows"]  = [dict(w) for w in _ewins]
-                                st.session_state["sched_version"] += 1
-                                st.rerun()
-
-                        _cl_col, _del_col = st.columns([1, 1])
-                        if _cl_col.button("✓ Close", type="secondary", key="sched_close"):
-                            st.session_state["show_sched_config"] = False
-                            st.rerun()
-                        if _del_col.button(
-                            "🗑️ Clear all",
-                            type="secondary",
-                            key="sched_clear",
-                            help="Reset entire schedule — all days set to off"
+                    for _ik, _ids in _in_groups.items():
+                        _rc1, _rc2 = st.columns([6, 1])
+                        _rc1.markdown(f"**{', '.join(_ids)}** — {_ik}")
+                        if _rc2.button(
+                            "✏️",
+                            key=f"sched_edit_{'_'.join(_ids)}",
+                            help=f"Edit {', '.join(_ids)}"
                         ):
-                            st.session_state["sched_per_day"] = {
-                                d: {"enabled": False, "windows": [{"start": 8, "end": 18}]}
-                                for d in _DAYS
-                            }
-                            st.session_state["sched_version"] = st.session_state.get("sched_version", 0) + 1
+                            st.session_state["sched_version"] += 1
+                            _v = st.session_state["sched_version"]
+                            st.session_state[f"sched_prefill_days_{_v}"]    = list(_ids)
+                            _ref_cfg = _spd.get(_ids[0], {})
+                            st.session_state[f"sched_prefill_windows_{_v}"] = (
+                                [dict(w) for w in _ref_cfg.get("windows", [])]
+                                if _ref_cfg.get("enabled") and _ref_cfg.get("windows")
+                                else [{"start": 8, "end": 18}]
+                            )
+                            st.session_state[f"sched_prefill_off_{_v}"] = not _ref_cfg.get("enabled", True)
                             st.rerun()
 
-                # ── Electricity Rates panel ───────────────────────────────
-                if st.session_state.get("show_rate_config", False):
-                    with st.container(border=True):
-                        st.markdown("**Electricity Tariff Rates**")
-                        st.caption("One row = flat rate. Add rows for time-of-use pricing (e.g. peak / off-peak).")
+                    st.divider()
 
-                        CURRENCIES = [
-                            "$ — USD","€ — EUR","£ — GBP","¥ — JPY",
-                            "¥ — CNY","₹ — INR","CHF — CHF","A$ — AUD",
-                            "C$ — CAD","S$ — SGD","R — ZAR","R$ — BRL",
-                            "₩ — KRW","kr — SEK","kr — NOK","kr — DKK",
-                            "HK$ — HKD","NT$ — TWD","₺ — TRY","₽ — RUB",
-                            "RM — MYR","NZ$ — NZD","Rp — IDR","₱ — PHP",
-                            "฿ — THB","﷼ — SAR","د.إ — AED",
-                            "₪ — ILS","Mex$ — MXN","zł — PLN",
-                            "Kč — CZK","Ft — HUF","CLP — CLP","Col$ — COP",
-                            "S/. — PEN","Ksh — KES","₦ — NGN","EGP — EGP",
-                            "PKR — PKR","৳ — BDT","Other",
-                        ]
-                        _cur_sel = st.selectbox("Currency", CURRENCIES, index=0, key="rate_currency")
-                        if _cur_sel == "Other":
-                            currency_symbol = st.text_input("Currency symbol", value="$", key="rate_cur_sym")
-                        else:
-                            currency_symbol = _cur_sel.split(" — ")[0].strip()
+                    # ── Step 1: select days ───────────────────────────────
+                    st.markdown("**Step 1 — Select days**")
+                    _v        = st.session_state["sched_version"]
+                    _ms_key   = f"sched_ms_{_v}"
+                    _pre_days = st.session_state.pop(f"sched_prefill_days_{_v}", None)
+                    _sel_days = st.multiselect(
+                        "Days",
+                        options=_DAYS,
+                        default=_pre_days if _pre_days is not None else [],
+                        label_visibility="collapsed",
+                        key=_ms_key,
+                        placeholder="Choose one or more days…",
+                    )
 
-                        _rwins    = st.session_state["rate_windows"]
-                        _rdel_idx = None
-                        _rh1, _rh2, _rh3, _rh4, _rh5 = st.columns([3, 2, 2, 3, 1])
-                        _rh1.markdown("**Label**")
-                        _rh2.markdown("**From (h)**")
-                        _rh3.markdown("**To (h)**")
-                        _rh4.markdown(f"**{currency_symbol}/kWh**")
-                        _rh5.write("")
+                    # ── Step 2: time windows ──────────────────────────────
+                    if _sel_days:
+                        st.markdown(f"**Step 2 — Operating hours for {', '.join(_sel_days)}**")
+                        _buf_key  = f"sched_buf_{_v}"
+                        _pre_wins = st.session_state.pop(f"sched_prefill_windows_{_v}", None)
+                        _pre_off  = st.session_state.pop(f"sched_prefill_off_{_v}", None)
+                        if _buf_key not in st.session_state:
+                            if _pre_wins is not None:
+                                st.session_state[_buf_key] = _pre_wins
+                            else:
+                                _ref = _spd.get(_sel_days[0], {})
+                                st.session_state[_buf_key] = (
+                                    [dict(w) for w in _ref["windows"]]
+                                    if _ref.get("enabled") and _ref.get("windows")
+                                    else [{"start": 8, "end": 18}]
+                                )
 
-                        for _ri, _rw in enumerate(_rwins):
-                            _rc1, _rc2, _rc3, _rc4, _rc5 = st.columns([3, 2, 2, 3, 1])
-                            _rwins[_ri]["label"] = _rc1.text_input(
-                                "lbl", value=_rw.get("label","Rate"),
-                                key=f"rl_{_ri}", label_visibility="collapsed"
-                            )
-                            _rwins[_ri]["start"] = _rc2.number_input(
-                                "from", min_value=0, max_value=23,
-                                value=_rw.get("start",0),
-                                key=f"rs_{_ri}", label_visibility="collapsed"
-                            )
-                            _rwins[_ri]["end"] = _rc3.number_input(
-                                "to", min_value=0, max_value=23,
-                                value=_rw.get("end",23),
-                                key=f"re_{_ri}", label_visibility="collapsed"
-                            )
-                            _rwins[_ri]["rate"] = _rc4.number_input(
-                                "rate", min_value=0.0,
-                                value=float(_rw.get("rate",0.15)),
-                                step=0.01, format="%.4f",
-                                key=f"rr_{_ri}", label_visibility="collapsed"
-                            )
-                            if len(_rwins) > 1:
-                                if _rc5.button("×", key=f"rrm_{_ri}"):
-                                    _rdel_idx = _ri
+                        _ewins  = st.session_state[_buf_key]
+                        _ew_del = None
 
-                        if _rdel_idx is not None:
-                            st.session_state["rate_windows"].pop(_rdel_idx)
+                        _eh1, _eh2, _eh3, _eh4 = st.columns([3, 3, 1, 1])
+                        _eh1.markdown("Start (h)")
+                        _eh2.markdown("End (h)")
+
+                        for _wi, _win in enumerate(_ewins):
+                            _wc1, _wc2, _wc3, _wc4 = st.columns([3, 3, 1, 1])
+                            _ewins[_wi]["start"] = _wc1.number_input(
+                                "Start", min_value=0, max_value=23,
+                                value=_win["start"],
+                                key=f"ew_s_{_ms_key}_{_wi}",
+                                label_visibility="collapsed"
+                            )
+                            _ewins[_wi]["end"] = _wc2.number_input(
+                                "End", min_value=0, max_value=23,
+                                value=_win["end"],
+                                key=f"ew_e_{_ms_key}_{_wi}",
+                                label_visibility="collapsed"
+                            )
+                            if _wi == len(_ewins) - 1:
+                                _last_ok = _ewins[_wi]["end"] > _ewins[_wi]["start"]
+                                if _wc3.button(
+                                    "+",
+                                    key=f"ew_add_{_ms_key}_{_wi}",
+                                    disabled=not _last_ok,
+                                    help="Add another time window"
+                                ):
+                                    _ewins.append({
+                                        "start": _ewins[_wi]["end"],
+                                        "end":   min(_ewins[_wi]["end"] + 4, 23)
+                                    })
+                                    st.rerun()
+                            else:
+                                _wc3.write("")
+                            if len(_ewins) > 1:
+                                if _wc4.button("×", key=f"ew_rm_{_ms_key}_{_wi}", help="Remove"):
+                                    _ew_del = _wi
+                            else:
+                                _wc4.write("")
+
+                        if _ew_del is not None:
+                            st.session_state[_buf_key].pop(_ew_del)
                             st.rerun()
 
-                        _radd, _rdone = st.columns([2, 1])
-                        if _radd.button("+ Add rate window"):
-                            _prev = _rwins[-1]
-                            st.session_state["rate_windows"].append({
-                                "label": "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}",
-                                "start": _prev.get("end", 23), "end": 23,
-                                "rate":  _prev.get("rate", 0.15)
-                            })
+                        _set_off = st.checkbox(
+                            "Mark these days as off (not operating)",
+                            value=_pre_off if _pre_off is not None else False,
+                            key=f"sched_off_{_ms_key}"
+                        )
+
+                        if st.button(
+                            f"✓ Apply to {', '.join(_sel_days)}",
+                            type="primary",
+                            key=f"sched_apply_{_ms_key}"
+                        ):
+                            for _d in _sel_days:
+                                _spd[_d]["enabled"] = not _set_off
+                                _spd[_d]["windows"]  = [dict(w) for w in _ewins]
+                            st.session_state["sched_version"] += 1
                             st.rerun()
-                        if _rdone.button("✓ Close ", type="primary", key="rate_done"):
-                            st.session_state["show_rate_config"] = False
-                            st.rerun()
+
+                    if st.button(
+                        "🗑️ Clear all",
+                        type="secondary",
+                        key="sched_clear",
+                        help="Reset entire schedule — all days set to off"
+                    ):
+                        st.session_state["sched_per_day"] = {
+                            d: {"enabled": False, "windows": [{"start": 8, "end": 18}]}
+                            for d in _DAYS
+                        }
+                        st.session_state["sched_version"] = st.session_state.get("sched_version", 0) + 1
+                        st.rerun()
+
+                # ── Electricity Rates expander ────────────────────────────
+                with st.expander("⚡ Electricity Rates", expanded=False):
+                    if "rate_windows" not in st.session_state:
+                        st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
+
+                    CURRENCIES = [
+                        "$ — USD","€ — EUR","£ — GBP","¥ — JPY",
+                        "¥ — CNY","₹ — INR","CHF — CHF","A$ — AUD",
+                        "C$ — CAD","S$ — SGD","R — ZAR","R$ — BRL",
+                        "₩ — KRW","kr — SEK","kr — NOK","kr — DKK",
+                        "HK$ — HKD","NT$ — TWD","₺ — TRY","₽ — RUB",
+                        "RM — MYR","NZ$ — NZD","Rp — IDR","₱ — PHP",
+                        "฿ — THB","﷼ — SAR","د.إ — AED",
+                        "₪ — ILS","Mex$ — MXN","zł — PLN",
+                        "Kč — CZK","Ft — HUF","CLP — CLP","Col$ — COP",
+                        "S/. — PEN","Ksh — KES","₦ — NGN","EGP — EGP",
+                        "PKR — PKR","৳ — BDT","Other",
+                    ]
+                    _cur_sel = st.selectbox("Currency", CURRENCIES, index=0, key="rate_currency")
+                    if _cur_sel == "Other":
+                        currency_symbol = st.text_input("Currency symbol", value="$", key="rate_cur_sym")
+                    else:
+                        currency_symbol = _cur_sel.split(" — ")[0].strip()
+
+                    _rwins    = st.session_state["rate_windows"]
+                    _rdel_idx = None
+                    _rh1, _rh2, _rh3, _rh4, _rh5 = st.columns([3, 2, 2, 3, 1])
+                    _rh1.markdown("**Label**")
+                    _rh2.markdown("**From (h)**")
+                    _rh3.markdown("**To (h)**")
+                    _rh4.markdown(f"**{currency_symbol}/kWh**")
+                    _rh5.write("")
+
+                    for _ri, _rw in enumerate(_rwins):
+                        _rc1, _rc2, _rc3, _rc4, _rc5 = st.columns([3, 2, 2, 3, 1])
+                        _rwins[_ri]["label"] = _rc1.text_input(
+                            "lbl", value=_rw.get("label","Rate"),
+                            key=f"rl_{_ri}", label_visibility="collapsed"
+                        )
+                        _rwins[_ri]["start"] = _rc2.number_input(
+                            "from", min_value=0, max_value=23,
+                            value=_rw.get("start",0),
+                            key=f"rs_{_ri}", label_visibility="collapsed"
+                        )
+                        _rwins[_ri]["end"] = _rc3.number_input(
+                            "to", min_value=0, max_value=23,
+                            value=_rw.get("end",23),
+                            key=f"re_{_ri}", label_visibility="collapsed"
+                        )
+                        _rwins[_ri]["rate"] = _rc4.number_input(
+                            "rate", min_value=0.0,
+                            value=float(_rw.get("rate",0.15)),
+                            step=0.01, format="%.4f",
+                            key=f"rr_{_ri}", label_visibility="collapsed"
+                        )
+                        if len(_rwins) > 1:
+                            if _rc5.button("×", key=f"rrm_{_ri}"):
+                                _rdel_idx = _ri
+
+                    if _rdel_idx is not None:
+                        st.session_state["rate_windows"].pop(_rdel_idx)
+                        st.rerun()
+
+                    if st.button("+ Add rate window", key="rate_add"):
+                        _prev = _rwins[-1]
+                        st.session_state["rate_windows"].append({
+                            "label": "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}",
+                            "start": _prev.get("end", 23), "end": 23,
+                            "rate":  _prev.get("rate", 0.15)
+                        })
+                        st.rerun()
 
                 # ── Derive schedule dict for analysis ─────────────────────
-                _spd = st.session_state.get("sched_per_day", {})
+                _spd   = st.session_state.get("sched_per_day", {})
                 _rwins = st.session_state.get("rate_windows", [{"label":"Standard","start":0,"end":23,"rate":0.15}])
-                currency_symbol = (st.session_state.get("rate_currency","$ — USD") or "$ — USD").split(" — ")[0].strip()
-                if currency_symbol == "Other":
-                    currency_symbol = st.session_state.get("rate_cur_sym", "$")
+                _cur   = (st.session_state.get("rate_currency","$ — USD") or "$ — USD")
+                currency_symbol = (_cur.split(" — ")[0].strip()
+                                   if _cur != "Other"
+                                   else st.session_state.get("rate_cur_sym", "$"))
 
                 # Flatten per-day schedule into work_days + sched_windows for chart/analysis
                 _work_days_flat = [_day_map[d] for d in _DAYS if _spd.get(d, {}).get("enabled", False)]
