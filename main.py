@@ -733,23 +733,6 @@ MACHINE_TYPES = {
         "Vapour Compression Chiller — Scroll",
         "Vapour Compression Chiller — Reciprocating",
     ],
-    "Static Equipment": [
-        "Shell & Tube Heat Exchanger",
-        "Plate Heat Exchanger",
-        "Boiler / Steam Generator",
-        "Cooling Tower",
-        "Pressure Vessel",
-    ],
-    "Process Equipment": [
-        "Extruder",
-        "Conveyor",
-        "Mixer / Agitator",
-        "Centrifuge",
-        "Hydraulic Power Unit",
-    ],
-    "Other": [
-        "Other (specify in description)",
-    ],
 }
 
 PHYSICS_MODULE_STATUS = {
@@ -764,9 +747,6 @@ PHYSICS_MODULE_STATUS = {
     "Vapour Compression Chiller — Screw":          ("available",    "Phase 1 active",    "🔧"),
     "Vapour Compression Chiller — Scroll":         ("available",    "Phase 1 active",    "🔧"),
     "Vapour Compression Chiller — Reciprocating":  ("available",    "Phase 1 active",    "🔧"),
-    "Shell & Tube Heat Exchanger":          ("future",       "Planned",           "📋"),
-    "Plate Heat Exchanger":                 ("future",       "Planned",           "📋"),
-    "Boiler / Steam Generator":             ("future",       "Planned",           "📋"),
 }
 
 DRIVE_TYPES = [
@@ -785,7 +765,6 @@ DRIVE_TYPES = [
     # ── Non-motor drives ──────────────────────────────────────────────
     "Steam turbine drive  (no physics module yet)",
     "Hydraulic coupling",
-    "Not applicable — static equipment",
     "Unknown",
 ]
 
@@ -805,11 +784,6 @@ MACHINE_TYPES_NO_DRIVE = [
     "Vapour Compression Chiller — Screw",
     "Vapour Compression Chiller — Scroll",
     "Vapour Compression Chiller — Reciprocating",
-    "Shell & Tube Heat Exchanger",
-    "Plate Heat Exchanger",
-    "Boiler / Steam Generator",
-    "Cooling Tower",
-    "Pressure Vessel",
 ]
 
 
@@ -1016,8 +990,6 @@ with st.sidebar:
                         "✅ **Induction motor drive — full physics supported.**  \n"
                         "All applicable physics phases will run for this drive type."
                     )
-                elif drive_type in ["Not applicable — static equipment"]:
-                    st.info("ℹ️ Static equipment — no drive physics applicable.")
                 elif drive_type in ["Unknown", "Hydraulic coupling"]:
                     st.info("ℹ️ AI statistical analytics will run. Drive physics not applicable.")
                 else:
