@@ -3208,7 +3208,7 @@ with tab_analysis:
 
                             _set_off = st.checkbox(
                                 "Mark these days as off (not operating)",
-                                value=not _spd.get(_sel_days[0], {}).get("enabled", True),
+                                value=False,
                                 key=f"sched_off_{_ms_key}"
                             )
 
