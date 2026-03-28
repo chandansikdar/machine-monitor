@@ -3083,6 +3083,28 @@ with tab_analysis:
                         if "sched_version" not in st.session_state:
                             st.session_state["sched_version"] = 0
 
+                        # ── Already-configured schedule (inside panel) ────
+                        _any_set = any(
+                            _spd.get(_d, {}).get("enabled") or _spd.get(_d, {}).get("windows")
+                            for _d in _DAYS
+                        )
+                        if _any_set:
+                            _in_groups = {}
+                            for _d in _DAYS:
+                                _dcfg = _spd.get(_d, {"enabled": False})
+                                if _dcfg.get("enabled"):
+                                    _k = "  |  ".join(
+                                        f"{w['start']:02d}:00–{w['end']:02d}:00"
+                                        for w in _dcfg.get("windows", [])
+                                    ) or "—"
+                                else:
+                                    _k = "— Off"
+                                _in_groups.setdefault(_k, []).append(_d)
+                            _tbl_lines = ["| Days | Hours |", "|---|---|"]
+                            for _sch_k, _sch_ds in _in_groups.items():
+                                _tbl_lines.append(f"| {' / '.join(_sch_ds)} | {_sch_k} |")
+                            st.markdown("\n".join(_tbl_lines))
+
                         st.divider()
 
                         # ── Step 1: select days ───────────────────────────
