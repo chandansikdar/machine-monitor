@@ -3112,7 +3112,7 @@ with tab_analysis:
                         if "sched_version" not in st.session_state:
                             st.session_state["sched_version"] = 0
 
-                        # ── Already-configured schedule (inside panel) ────
+                        # ── Already-configured schedule (inside panel, editable) ──
                         _any_set = any(
                             _spd.get(_d, {}).get("enabled") for _d in _DAYS
                         )
@@ -3122,21 +3122,42 @@ with tab_analysis:
                                 _dcfg = _spd.get(_d, {"enabled": False})
                                 _k = _fmt_win(_dcfg) if _dcfg.get("enabled") else "— Off"
                                 _in_groups.setdefault(_k, []).append(_d)
-                            _in_rows = ["| Days | Hours |", "|---|---|"]
+
                             for _ik, _ids in _in_groups.items():
-                                _in_rows.append(f"| {' / '.join(_ids)} | {_ik} |")
-                            _in_md = "\n".join(_in_rows)
-                            st.markdown(_in_md)
+                                _rc1, _rc2 = st.columns([6, 1])
+                                _rc1.markdown(
+                                    f"**{', '.join(_ids)}** — {_ik}"
+                                )
+                                if _rc2.button(
+                                    "✏️",
+                                    key=f"sched_edit_{'_'.join(_ids)}",
+                                    help=f"Edit schedule for {', '.join(_ids)}"
+                                ):
+                                    # Pre-fill the form with this group's data
+                                    st.session_state["sched_version"] += 1
+                                    _v = st.session_state["sched_version"]
+                                    st.session_state[f"sched_prefill_days_{_v}"]    = list(_ids)
+                                    _ref_day = _ids[0]
+                                    _ref_cfg = _spd.get(_ref_day, {})
+                                    st.session_state[f"sched_prefill_windows_{_v}"] = (
+                                        [dict(w) for w in _ref_cfg.get("windows", [])]
+                                        if _ref_cfg.get("enabled") and _ref_cfg.get("windows")
+                                        else [{"start": 8, "end": 18}]
+                                    )
+                                    st.session_state[f"sched_prefill_off_{_v}"]     = not _ref_cfg.get("enabled", True)
+                                    st.rerun()
 
                         st.divider()
 
                         # ── Step 1: select days ───────────────────────────
                         st.markdown("**Step 1 — Select days**")
-                        _ms_key   = f"sched_ms_{st.session_state['sched_version']}"
+                        _v        = st.session_state["sched_version"]
+                        _ms_key   = f"sched_ms_{_v}"
+                        _pre_days = st.session_state.pop(f"sched_prefill_days_{_v}", None)
                         _sel_days = st.multiselect(
                             "Days",
                             options=_DAYS,
-                            default=[],
+                            default=_pre_days if _pre_days is not None else [],
                             label_visibility="collapsed",
                             key=_ms_key,
                             placeholder="Choose one or more days…",
@@ -3147,14 +3168,19 @@ with tab_analysis:
                             st.markdown(
                                 f"**Step 2 — Operating hours for {', '.join(_sel_days)}**"
                             )
-                            _buf_key = f"sched_buf_{st.session_state['sched_version']}"
+                            _buf_key  = f"sched_buf_{_v}"
+                            _pre_wins = st.session_state.pop(f"sched_prefill_windows_{_v}", None)
+                            _pre_off  = st.session_state.pop(f"sched_prefill_off_{_v}", None)
                             if _buf_key not in st.session_state:
-                                _ref = _spd.get(_sel_days[0], {})
-                                st.session_state[_buf_key] = (
-                                    [dict(w) for w in _ref["windows"]]
-                                    if _ref.get("enabled") and _ref.get("windows")
-                                    else [{"start": 8, "end": 18}]
-                                )
+                                if _pre_wins is not None:
+                                    st.session_state[_buf_key] = _pre_wins
+                                else:
+                                    _ref = _spd.get(_sel_days[0], {})
+                                    st.session_state[_buf_key] = (
+                                        [dict(w) for w in _ref["windows"]]
+                                        if _ref.get("enabled") and _ref.get("windows")
+                                        else [{"start": 8, "end": 18}]
+                                    )
 
                             _ewins  = st.session_state[_buf_key]
                             _ew_del = None
@@ -3208,7 +3234,7 @@ with tab_analysis:
 
                             _set_off = st.checkbox(
                                 "Mark these days as off (not operating)",
-                                value=False,
+                                value=_pre_off if _pre_off is not None else False,
                                 key=f"sched_off_{_ms_key}"
                             )
 
