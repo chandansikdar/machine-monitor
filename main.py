@@ -3201,6 +3201,37 @@ with tab_analysis:
                             st.session_state.pop("sched_edit_days_prev", None)
                             st.rerun()
 
+                # ── Persistent schedule summary (always visible) ─────────
+                _spd_disp  = st.session_state.get("sched_per_day", {})
+                _DAYS_ORD  = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+
+                def _fmt_day_schedule(dcfg):
+                    if not dcfg.get("enabled"):
+                        return "—"
+                    wins = dcfg.get("windows", [])
+                    return "  |  ".join(
+                        f"{w['start']:02d}:00–{w['end']:02d}:00" for w in wins
+                    ) if wins else "—"
+
+                # Group days with identical schedules for compact display
+                _summary_groups = {}
+                for _d in _DAYS_ORD:
+                    _k = _fmt_day_schedule(_spd_disp.get(_d, {"enabled": False}))
+                    _summary_groups.setdefault(_k, []).append(_d)
+
+                # Build compact summary table
+                _summary_rows = []
+                for _sched_str, _sched_days in _summary_groups.items():
+                    _day_str = " / ".join(_sched_days)
+                    _summary_rows.append(
+                        f"| {_day_str} | {_sched_str} |"
+                    )
+
+                if _summary_rows:
+                    _tbl_md = "| Days | Operating hours |\n|---|---|\n" + "\n".join(_summary_rows)
+                    st.markdown("**Current schedule:**")
+                    st.markdown(_tbl_md)
+
                 # ── Electricity tariff rates ──────────────────────────────
                 if _rate_col.button(
                     "⚡ Electricity Rates",
