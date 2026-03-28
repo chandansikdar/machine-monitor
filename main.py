@@ -113,19 +113,22 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
     if not plot_col:
         return []
 
-    work_days  = schedule.get("work_days", list(range(5)))
-    hour_start = schedule.get("work_hour_start", 8)
-    hour_end   = schedule.get("work_hour_end", 18)
+    work_days    = schedule.get("work_days", list(range(5)))
+    sched_windows = schedule.get("sched_windows",
+                       [{"start": schedule.get("work_hour_start", 8),
+                         "end":   schedule.get("work_hour_end", 18)}])
 
     df = data.copy()
     df.index = pd.to_datetime(df.index)
 
-    # Determine permitted mask
-    in_schedule = (
-        df.index.dayofweek.isin(work_days) &
-        (df.index.hour >= hour_start) &
-        (df.index.hour < hour_end)
-    )
+    # Determine permitted mask — union of all time windows across permitted days
+    day_mask = df.index.dayofweek.isin(work_days)
+    hour_mask = pd.Series(False, index=df.index)
+    for _w in sched_windows:
+        _ws = _w.get("start", 0)
+        _we = _w.get("end", 23)
+        hour_mask |= (df.index.hour >= _ws) & (df.index.hour < _we)
+    in_schedule = day_mask & hour_mask
 
     # Build shading shapes — find contiguous blocks
     def _blocks(mask):
@@ -188,7 +191,8 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
 
     # Legend entries matching actual shading colors
     day_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-    sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {hour_start:02d}:00-{hour_end:02d}:00)"
+    _win_strs   = " / ".join(f"{_w['start']:02d}:00–{_w['end']:02d}:00" for _w in sched_windows)
+    sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {_win_strs})"
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode="markers",
@@ -484,18 +488,22 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 )
                 # Build off-schedule + running mask
                 _sched      = st.session_state.get("_last_schedule", {})
-                _wdays      = _sched.get("work_days", list(range(5)))
-                _hstart     = _sched.get("work_hour_start", 8)
-                _hend       = _sched.get("work_hour_end", 18)
-                _run_thresh = _sched.get("running_threshold", 0)
-                voltage     = _sched.get("voltage", 415.0)
+                _wdays        = _sched.get("work_days", list(range(5)))
+                _sched_wins   = _sched.get("sched_windows",
+                                    [{"start": _sched.get("work_hour_start", 8),
+                                      "end":   _sched.get("work_hour_end", 18)}])
+                _run_thresh   = _sched.get("running_threshold", 0)
+                voltage       = _sched.get("voltage", 415.0)
                 pf          = _sched.get("power_factor", 0.85)
                 _df         = data.copy()
                 _df.index   = pd.to_datetime(_df.index)
                 in_sched     = (
                     _df.index.dayofweek.isin(_wdays) &
-                    (_df.index.hour >= _hstart) &
-                    (_df.index.hour < _hend)
+                    pd.Series(
+                        [any(w["start"] <= h < w["end"] for w in _sched_wins)
+                         for h in _df.index.hour],
+                        index=_df.index
+                    )
                 )
                 off_sched_mask = ~in_sched
                 running_mask   = _df[current_col] > _run_thresh
@@ -2994,9 +3002,48 @@ with tab_analysis:
                         options=day_options,
                         default=["Mon","Tue","Wed","Thu","Fri"],
                     )
-                    col_a, col_b = st.columns(2)
-                    hour_start = col_a.number_input("Start hour (24h)", 0, 23, 8)
-                    hour_end   = col_b.number_input("End hour (24h)",   0, 23, 18)
+
+                    # ── Multiple time windows ────────────────────────────────
+                    st.markdown("**Permitted operating hours**")
+                    if "sched_windows" not in st.session_state:
+                        st.session_state["sched_windows"] = [{"start": 8, "end": 18}]
+
+                    _wins = st.session_state["sched_windows"]
+                    _remove_idx = None
+                    for _wi, _win in enumerate(_wins):
+                        _wc1, _wc2, _wc3 = st.columns([3, 3, 1])
+                        _new_start = _wc1.number_input(
+                            f"Start hour (24h)" if _wi == 0 else f"Start hour (24h) #{_wi+1}",
+                            min_value=0, max_value=23,
+                            value=_win["start"],
+                            key=f"sched_start_{_wi}"
+                        )
+                        _new_end = _wc2.number_input(
+                            f"End hour (24h)" if _wi == 0 else f"End hour (24h) #{_wi+1}",
+                            min_value=0, max_value=23,
+                            value=_win["end"],
+                            key=f"sched_end_{_wi}"
+                        )
+                        _wins[_wi]["start"] = _new_start
+                        _wins[_wi]["end"]   = _new_end
+                        if len(_wins) > 1:
+                            if _wc3.button("×", key=f"sched_rm_{_wi}", help="Remove this window"):
+                                _remove_idx = _wi
+                    if _remove_idx is not None:
+                        st.session_state["sched_windows"].pop(_remove_idx)
+                        st.rerun()
+                    # Validate: last window must be complete before allowing add
+                    _last = _wins[-1]
+                    _last_ok = _last["end"] > _last["start"]
+                    _add_col, _ = st.columns([2, 5])
+                    if _add_col.button("+ Add another time window",
+                                       disabled=not _last_ok,
+                                       help="Fill in the current window first"):
+                        st.session_state["sched_windows"].append({"start": _last["end"], "end": min(_last["end"] + 4, 23)})
+                        st.rerun()
+                    if not _last_ok and len(_wins) > 0:
+                        st.caption("⚠️ End hour must be after start hour to add another window.")
+
                     numeric_cols_list = data.select_dtypes(include="number").columns.tolist()
                     indicator_col = st.selectbox(
                         "Running indicator column",
@@ -3006,6 +3053,8 @@ with tab_analysis:
                     run_threshold = st.number_input(
                         "Running threshold (value above = running)", value=0.0
                     )
+
+                    # ── Energy cost settings with multiple rate windows ───────
                     st.markdown("**Energy cost settings**")
                     CURRENCIES = [
                         "$ — USD (US Dollar)",
@@ -3018,27 +3067,29 @@ with tab_analysis:
                         "A$ — AUD (Australian Dollar)",
                         "C$ — CAD (Canadian Dollar)",
                         "S$ — SGD (Singapore Dollar)",
-                        "HK$ — HKD (Hong Kong Dollar)",
+                        "R — ZAR (South African Rand)",
+                        "R$ — BRL (Brazilian Real)",
+                        "₩ — KRW (South Korean Won)",
                         "kr — SEK (Swedish Krona)",
                         "kr — NOK (Norwegian Krone)",
                         "kr — DKK (Danish Krone)",
-                        "₩ — KRW (South Korean Won)",
-                        "R — ZAR (South African Rand)",
-                        "R$ — BRL (Brazilian Real)",
+                        "HK$ — HKD (Hong Kong Dollar)",
+                        "NT$ — TWD (Taiwan Dollar)",
                         "₺ — TRY (Turkish Lira)",
                         "₽ — RUB (Russian Ruble)",
-                        "﷼ — SAR (Saudi Riyal)",
-                        "د.إ — AED (UAE Dirham)",
-                        "₪ — ILS (Israeli Shekel)",
-                        "Mex$ — MXN (Mexican Peso)",
-                        "Rp — IDR (Indonesian Rupiah)",
-                        "₱ — PHP (Philippine Peso)",
-                        "฿ — THB (Thai Baht)",
+                        "PLN — PLN (Polish Zloty)",
                         "zł — PLN (Polish Zloty)",
                         "Kč — CZK (Czech Koruna)",
                         "Ft — HUF (Hungarian Forint)",
                         "RM — MYR (Malaysian Ringgit)",
                         "NZ$ — NZD (New Zealand Dollar)",
+                        "Rp — IDR (Indonesian Rupiah)",
+                        "₱ — PHP (Philippine Peso)",
+                        "฿ — THB (Thai Baht)",
+                        "﷼ — SAR (Saudi Riyal)",
+                        "د.إ — AED (UAE Dirham)",
+                        "₪ — ILS (Israeli Shekel)",
+                        "Mex$ — MXN (Mexican Peso)",
                         "CLP — CLP (Chilean Peso)",
                         "Col$ — COP (Colombian Peso)",
                         "S/. — PEN (Peruvian Sol)",
@@ -3064,17 +3115,66 @@ with tab_analysis:
                     else:
                         currency_symbol = selected_currency.split(" — ")[0].strip()
 
-                    rate_per_kwh = st.number_input(
-                        "Rate per kWh",
-                        min_value=0.0,
-                        value=0.15,
-                        step=0.01,
-                        format="%.4f",
-                        help="Your electricity tariff per kWh"
-                    )
+                    # Multiple electricity rate windows
+                    st.markdown("**Electricity tariff rates**")
+                    st.caption("Define one rate for a flat tariff, or multiple windows for time-of-use pricing (e.g. peak / off-peak).")
+                    if "rate_windows" not in st.session_state:
+                        st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
+
+                    _rwins = st.session_state["rate_windows"]
+                    _rremove_idx = None
+                    for _ri, _rw in enumerate(_rwins):
+                        _rc0, _rc1, _rc2, _rc3, _rc4 = st.columns([3, 2, 2, 2, 1])
+                        _rwins[_ri]["label"] = _rc0.text_input(
+                            "Rate label" if _ri == 0 else f"Label #{_ri+1}",
+                            value=_rw.get("label", "Rate"),
+                            key=f"rate_label_{_ri}",
+                            help="e.g. Peak, Off-peak, Standard"
+                        )
+                        _rwins[_ri]["start"] = _rc1.number_input(
+                            "From (h)" if _ri == 0 else f"From #{_ri+1}",
+                            min_value=0, max_value=23,
+                            value=_rw.get("start", 0),
+                            key=f"rate_start_{_ri}"
+                        )
+                        _rwins[_ri]["end"] = _rc2.number_input(
+                            "To (h)" if _ri == 0 else f"To #{_ri+1}",
+                            min_value=0, max_value=23,
+                            value=_rw.get("end", 23),
+                            key=f"rate_end_{_ri}"
+                        )
+                        _rwins[_ri]["rate"] = _rc3.number_input(
+                            f"{currency_symbol}/kWh" if _ri == 0 else f"{currency_symbol}/kWh #{_ri+1}",
+                            min_value=0.0,
+                            value=float(_rw.get("rate", 0.15)),
+                            step=0.01,
+                            format="%.4f",
+                            key=f"rate_val_{_ri}"
+                        )
+                        if len(_rwins) > 1:
+                            if _rc4.button("×", key=f"rate_rm_{_ri}", help="Remove this rate"):
+                                _rremove_idx = _ri
+                    if _rremove_idx is not None:
+                        st.session_state["rate_windows"].pop(_rremove_idx)
+                        st.rerun()
+                    _radd_col, _ = st.columns([2, 5])
+                    if _radd_col.button("+ Add rate window",
+                                        help="Add another tariff period (e.g. peak rate)"):
+                        _prev_end = _rwins[-1].get("end", 23)
+                        st.session_state["rate_windows"].append({
+                            "label": "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}",
+                            "start": min(_prev_end, 22),
+                            "end":   23,
+                            "rate":  _rwins[-1].get("rate", 0.15)
+                        })
+                        st.rerun()
+
+                    # Derive a single blended/default rate for backward-compatible cost calcs
+                    # Use first window as primary; weighted blend used in analysis
+                    rate_per_kwh = _rwins[0]["rate"] if _rwins else 0.15
 
                     # Detect what energy-related columns exist in the loaded data
-                    _data_now = data  # use already-loaded active file data
+                    _data_now = data
                     _cols     = list(_data_now.columns) if _data_now is not None else []
 
                     _has_kwh     = any(any(k in c.lower() for k in ["kwh","kw_h","energy","consumption"]) for c in _cols)
@@ -3126,12 +3226,14 @@ with tab_analysis:
                     day_map = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
                     schedule = {
                         "work_days":         [day_map[d] for d in selected_days],
-                        "work_hour_start":   int(hour_start),
-                        "work_hour_end":     int(hour_end),
+                        "work_hour_start":   int(st.session_state["sched_windows"][0]["start"]),
+                        "work_hour_end":     int(st.session_state["sched_windows"][0]["end"]),
+                        "sched_windows":     list(st.session_state["sched_windows"]),
                         "indicator_col":     indicator_col,
                         "running_threshold": float(run_threshold),
                         "currency_symbol":   currency_symbol,
                         "rate_per_kwh":      float(rate_per_kwh),
+                        "rate_windows":      list(st.session_state["rate_windows"]),
                         "voltage":           float(user_voltage),
                         "power_factor":      float(user_pf),
                     }
