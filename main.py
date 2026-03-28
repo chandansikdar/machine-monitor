@@ -3079,9 +3079,9 @@ with tab_analysis:
 
                 def _fmt_win(dcfg):
                     if not dcfg.get("enabled"):
-                        return "—"
+                        return "— Off"
                     wins = dcfg.get("windows", [])
-                    return "  |  ".join(
+                    return ",  ".join(
                         f"{w['start']:02d}:00–{w['end']:02d}:00" for w in wins
                     ) if wins else "—"
 
