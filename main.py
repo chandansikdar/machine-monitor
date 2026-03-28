@@ -113,7 +113,7 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
     if not plot_col:
         return []
 
-    work_days    = schedule.get("work_days", list(range(5)))
+    _spd          = schedule.get("sched_per_day", {})
     sched_windows = schedule.get("sched_windows",
                        [{"start": schedule.get("work_hour_start", 8),
                          "end":   schedule.get("work_hour_end", 18)}])
@@ -121,14 +121,30 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
     df = data.copy()
     df.index = pd.to_datetime(df.index)
 
-    # Determine permitted mask — union of all time windows across permitted days
-    day_mask = df.index.dayofweek.isin(work_days)
-    hour_mask = pd.Series(False, index=df.index)
-    for _w in sched_windows:
-        _ws = _w.get("start", 0)
-        _we = _w.get("end", 23)
-        hour_mask |= (df.index.hour >= _ws) & (df.index.hour < _we)
-    in_schedule = day_mask & hour_mask
+    # Determine permitted mask — per-day windows when available, else flat windows
+    _DAYS_IDX = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
+    if _spd:
+        # Per-day schedule: check each row against that day's own windows
+        in_schedule = pd.Series(False, index=df.index)
+        for _dn, _didx in _DAYS_IDX.items():
+            _dcfg = _spd.get(_dn, {})
+            if not _dcfg.get("enabled", False):
+                continue
+            _day_rows = df.index.dayofweek == _didx
+            _wins     = _dcfg.get("windows", [{"start": 8, "end": 18}])
+            _hw = pd.Series(
+                [any(w["start"] <= h < w["end"] for w in _wins) for h in df.index.hour],
+                index=df.index
+            )
+            in_schedule |= (_day_rows & _hw)
+    else:
+        work_days = schedule.get("work_days", list(range(5)))
+        day_mask  = df.index.dayofweek.isin(work_days)
+        hour_mask = pd.Series(
+            [any(w["start"] <= h < w["end"] for w in sched_windows) for h in df.index.hour],
+            index=df.index
+        )
+        in_schedule = day_mask & hour_mask
 
     # Build shading shapes — find contiguous blocks
     def _blocks(mask):
@@ -191,8 +207,13 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
 
     # Legend entries matching actual shading colors
     day_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-    _win_strs   = " / ".join(f"{_w['start']:02d}:00–{_w['end']:02d}:00" for _w in sched_windows)
-    sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {_win_strs})"
+    if _spd:
+        _en_days    = [dn for dn in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] if _spd.get(dn,{}).get("enabled")]
+        sched_label = "Scheduled (" + ", ".join(_en_days) + ")"
+    else:
+        work_days   = schedule.get("work_days", list(range(5)))
+        _win_strs   = " / ".join(f"{_w['start']:02d}:00–{_w['end']:02d}:00" for _w in sched_windows)
+        sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {_win_strs})"
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode="markers",
@@ -492,18 +513,43 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 _sched_wins   = _sched.get("sched_windows",
                                     [{"start": _sched.get("work_hour_start", 8),
                                       "end":   _sched.get("work_hour_end", 18)}])
+                _spd_inner    = _sched.get("sched_per_day", {})
                 _run_thresh   = _sched.get("running_threshold", 0)
                 voltage       = _sched.get("voltage", 415.0)
                 pf          = _sched.get("power_factor", 0.85)
                 _df         = data.copy()
                 _df.index   = pd.to_datetime(_df.index)
                 in_sched     = (
-                    _df.index.dayofweek.isin(_wdays) &
+                    (pd.Series(False, index=_df.index).pipe(lambda _base: _base.__class__({
+                        i: any(
+                            (_df.index.dayofweek[i] == {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}.get(_dn, -1)
+                             and _spd_inner.get(_dn, {}).get("enabled", False)
+                             and any(w["start"] <= _df.index.hour[i] < w["end"]
+                                     for w in _spd_inner.get(_dn, {}).get("windows", _sched_wins)))
+                            for _dn in (["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+                                        if _spd_inner else [])
+                        ) if _spd_inner else (
+                            _df.index.dayofweek[i] in _wdays
+                            and any(w["start"] <= _df.index.hour[i] < w["end"] for w in _sched_wins)
+                        )
+                        for i in range(len(_df))
+                    })) if False else
                     pd.Series(
-                        [any(w["start"] <= h < w["end"] for w in _sched_wins)
-                         for h in _df.index.hour],
+                        [
+                            any(
+                                _spd_inner.get(_dn, {}).get("enabled", False) and
+                                _df.index.dayofweek[_ii] == {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}[_dn] and
+                                any(w["start"] <= _df.index.hour[_ii] < w["end"]
+                                    for w in _spd_inner.get(_dn, {}).get("windows", _sched_wins))
+                                for _dn in (["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] if _spd_inner else [])
+                            ) if _spd_inner else (
+                                _df.index.dayofweek[_ii] in _wdays and
+                                any(w["start"] <= _df.index.hour[_ii] < w["end"] for w in _sched_wins)
+                            )
+                            for _ii in range(len(_df))
+                        ],
                         index=_df.index
-                    )
+                    ))
                 )
                 off_sched_mask = ~in_sched
                 running_mask   = _df[current_col] > _run_thresh
@@ -2995,56 +3041,211 @@ with tab_analysis:
             # Schedule config — only shown when compliance is selected
             schedule = None
             if "Operational Schedule Compliance" in selected_analyses:
-                with st.expander("Schedule configuration", expanded=True):
-                    day_options = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-                    selected_days = st.multiselect(
-                        "Permitted working days",
-                        options=day_options,
-                        default=["Mon","Tue","Wed","Thu","Fri"],
-                    )
+                # ── Initialise per-day schedule state ─────────────────────
+                _DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+                _day_map = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
+                if "sched_per_day" not in st.session_state:
+                    # Default: Mon-Fri 08:00-18:00, Sat-Sun off
+                    st.session_state["sched_per_day"] = {
+                        d: ({"enabled": True,  "windows": [{"start": 8, "end": 18}]}
+                            if d not in ("Sat","Sun")
+                            else {"enabled": False, "windows": [{"start": 8, "end": 18}]})
+                        for d in _DAYS
+                    }
+                if "rate_windows" not in st.session_state:
+                    st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
+                if "show_sched_config" not in st.session_state:
+                    st.session_state["show_sched_config"] = False
 
-                    # ── Multiple time windows ────────────────────────────────
-                    st.markdown("**Permitted operating hours**")
-                    if "sched_windows" not in st.session_state:
-                        st.session_state["sched_windows"] = [{"start": 8, "end": 18}]
+                # ── Running Schedule button ───────────────────────────────
+                _sched_col, _rate_col = st.columns([1, 1])
+                if _sched_col.button(
+                    "⚙️ Running Schedule",
+                    type="secondary",
+                    help="Configure permitted operating days and hours"
+                ):
+                    st.session_state["show_sched_config"] = not st.session_state["show_sched_config"]
 
-                    _wins = st.session_state["sched_windows"]
-                    _remove_idx = None
-                    for _wi, _win in enumerate(_wins):
-                        _wc1, _wc2, _wc3 = st.columns([3, 3, 1])
-                        _new_start = _wc1.number_input(
-                            f"Start hour (24h)" if _wi == 0 else f"Start hour (24h) #{_wi+1}",
-                            min_value=0, max_value=23,
-                            value=_win["start"],
-                            key=f"sched_start_{_wi}"
-                        )
-                        _new_end = _wc2.number_input(
-                            f"End hour (24h)" if _wi == 0 else f"End hour (24h) #{_wi+1}",
-                            min_value=0, max_value=23,
-                            value=_win["end"],
-                            key=f"sched_end_{_wi}"
-                        )
-                        _wins[_wi]["start"] = _new_start
-                        _wins[_wi]["end"]   = _new_end
-                        if len(_wins) > 1:
-                            if _wc3.button("×", key=f"sched_rm_{_wi}", help="Remove this window"):
-                                _remove_idx = _wi
-                    if _remove_idx is not None:
-                        st.session_state["sched_windows"].pop(_remove_idx)
-                        st.rerun()
-                    # Validate: last window must be complete before allowing add
-                    _last = _wins[-1]
-                    _last_ok = _last["end"] > _last["start"]
-                    _add_col, _ = st.columns([2, 5])
-                    if _add_col.button("+ Add another time window",
-                                       disabled=not _last_ok,
-                                       help="Fill in the current window first"):
-                        st.session_state["sched_windows"].append({"start": _last["end"], "end": min(_last["end"] + 4, 23)})
-                        st.rerun()
-                    if not _last_ok and len(_wins) > 0:
-                        st.caption("⚠️ End hour must be after start hour to add another window.")
+                # ── Schedule config panel ─────────────────────────────────
+                if st.session_state["show_sched_config"]:
+                    with st.container(border=True):
+                        st.markdown("**Running Schedule — permitted days and hours**")
+                        st.caption("Enable each day and define one or more operating windows. Each row is one continuous window on that day.")
 
-                    numeric_cols_list = data.select_dtypes(include="number").columns.tolist()
+                        _spd     = st.session_state["sched_per_day"]
+                        _del_key = None   # (day, win_idx) to delete
+
+                        for _d in _DAYS:
+                            _dcfg = _spd[_d]
+                            # Day header row: checkbox + label
+                            _hc1, _hc2 = st.columns([1, 8])
+                            _enabled = _hc1.checkbox(
+                                _d, value=_dcfg["enabled"],
+                                key=f"sched_en_{_d}",
+                                label_visibility="collapsed"
+                            )
+                            _hc2.markdown(f"**{_d}**" + (" — *off*" if not _enabled else ""))
+                            _dcfg["enabled"] = _enabled
+
+                            if _enabled:
+                                _wins = _dcfg["windows"]
+                                for _wi, _win in enumerate(_wins):
+                                    _wc1, _wc2, _wc3, _wc4 = st.columns([3, 3, 1, 1])
+                                    _wins[_wi]["start"] = _wc1.number_input(
+                                        "Start",
+                                        min_value=0, max_value=23,
+                                        value=_win["start"],
+                                        key=f"sched_{_d}_{_wi}_s",
+                                        label_visibility="collapsed" if _wi > 0 else "visible"
+                                    )
+                                    _wins[_wi]["end"] = _wc2.number_input(
+                                        "End",
+                                        min_value=0, max_value=23,
+                                        value=_win["end"],
+                                        key=f"sched_{_d}_{_wi}_e",
+                                        label_visibility="collapsed" if _wi > 0 else "visible"
+                                    )
+                                    # + button on last window only
+                                    if _wi == len(_wins) - 1:
+                                        _last_ok = _wins[_wi]["end"] > _wins[_wi]["start"]
+                                        if _wc3.button(
+                                            "+",
+                                            key=f"sched_{_d}_{_wi}_add",
+                                            disabled=not _last_ok,
+                                            help="Add another time window for this day"
+                                        ):
+                                            _wins.append({"start": _wins[_wi]["end"], "end": min(_wins[_wi]["end"] + 4, 23)})
+                                            st.rerun()
+                                    else:
+                                        _wc3.write("")
+                                    # × button when more than one window
+                                    if len(_wins) > 1:
+                                        if _wc4.button(
+                                            "×",
+                                            key=f"sched_{_d}_{_wi}_rm",
+                                            help="Remove this window"
+                                        ):
+                                            _del_key = (_d, _wi)
+                                    else:
+                                        _wc4.write("")
+                            st.divider()
+
+                        if _del_key:
+                            st.session_state["sched_per_day"][_del_key[0]]["windows"].pop(_del_key[1])
+                            st.rerun()
+
+                        if st.button("✓ Done", type="primary"):
+                            st.session_state["show_sched_config"] = False
+                            st.rerun()
+
+                # ── Electricity tariff rates ──────────────────────────────
+                if _rate_col.button(
+                    "⚡ Electricity Rates",
+                    type="secondary",
+                    help="Configure electricity tariff — flat or time-of-use"
+                ):
+                    st.session_state.setdefault("show_rate_config", False)
+                    st.session_state["show_rate_config"] = not st.session_state.get("show_rate_config", False)
+
+                if st.session_state.get("show_rate_config", False):
+                    with st.container(border=True):
+                        st.markdown("**Electricity Tariff Rates**")
+                        st.caption("One row = flat rate. Add rows for time-of-use pricing (e.g. peak / off-peak).")
+
+                        CURRENCIES = [
+                            "$ — USD","€ — EUR","£ — GBP","¥ — JPY",
+                            "¥ — CNY","₹ — INR","CHF — CHF","A$ — AUD",
+                            "C$ — CAD","S$ — SGD","R — ZAR","R$ — BRL",
+                            "₩ — KRW","kr — SEK","kr — NOK","kr — DKK",
+                            "HK$ — HKD","NT$ — TWD","₺ — TRY","₽ — RUB",
+                            "RM — MYR","NZ$ — NZD","Rp — IDR","₱ — PHP",
+                            "฿ — THB","﷼ — SAR","د.إ — AED","₪ — ILS",
+                            "Mex$ — MXN","zł — PLN","Kč — CZK","Ft — HUF",
+                            "CLP — CLP","Col$ — COP","S/. — PEN",
+                            "Ksh — KES","₦ — NGN","EGP — EGP",
+                            "PKR — PKR","৳ — BDT","Other",
+                        ]
+                        _cur_sel = st.selectbox("Currency", CURRENCIES, index=0, key="rate_currency")
+                        if _cur_sel == "Other":
+                            currency_symbol = st.text_input("Currency symbol", value="$", key="rate_cur_sym")
+                        else:
+                            currency_symbol = _cur_sel.split(" — ")[0].strip()
+
+                        _rwins    = st.session_state["rate_windows"]
+                        _rdel_idx = None
+                        _rh1, _rh2, _rh3, _rh4, _rh5 = st.columns([3, 2, 2, 3, 1])
+                        _rh1.markdown("**Label**")
+                        _rh2.markdown("**From (h)**")
+                        _rh3.markdown("**To (h)**")
+                        _rh4.markdown(f"**{currency_symbol}/kWh**")
+                        _rh5.write("")
+
+                        for _ri, _rw in enumerate(_rwins):
+                            _rc1, _rc2, _rc3, _rc4, _rc5 = st.columns([3, 2, 2, 3, 1])
+                            _rwins[_ri]["label"] = _rc1.text_input(
+                                "lbl", value=_rw.get("label","Rate"),
+                                key=f"rl_{_ri}", label_visibility="collapsed"
+                            )
+                            _rwins[_ri]["start"] = _rc2.number_input(
+                                "from", min_value=0, max_value=23,
+                                value=_rw.get("start",0),
+                                key=f"rs_{_ri}", label_visibility="collapsed"
+                            )
+                            _rwins[_ri]["end"] = _rc3.number_input(
+                                "to", min_value=0, max_value=23,
+                                value=_rw.get("end",23),
+                                key=f"re_{_ri}", label_visibility="collapsed"
+                            )
+                            _rwins[_ri]["rate"] = _rc4.number_input(
+                                "rate", min_value=0.0,
+                                value=float(_rw.get("rate",0.15)),
+                                step=0.01, format="%.4f",
+                                key=f"rr_{_ri}", label_visibility="collapsed"
+                            )
+                            if len(_rwins) > 1:
+                                if _rc5.button("×", key=f"rrm_{_ri}"):
+                                    _rdel_idx = _ri
+
+                        if _rdel_idx is not None:
+                            st.session_state["rate_windows"].pop(_rdel_idx)
+                            st.rerun()
+
+                        _radd, _rdone = st.columns([2, 1])
+                        if _radd.button("+ Add rate window"):
+                            _prev = _rwins[-1]
+                            st.session_state["rate_windows"].append({
+                                "label": "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}",
+                                "start": _prev.get("end", 23), "end": 23,
+                                "rate":  _prev.get("rate", 0.15)
+                            })
+                            st.rerun()
+                        if _rdone.button("✓ Done ", type="primary", key="rate_done"):
+                            st.session_state["show_rate_config"] = False
+                            st.rerun()
+
+                # ── Derive schedule dict for analysis ─────────────────────
+                _spd = st.session_state.get("sched_per_day", {})
+                _rwins = st.session_state.get("rate_windows", [{"label":"Standard","start":0,"end":23,"rate":0.15}])
+                currency_symbol = (st.session_state.get("rate_currency","$ — USD") or "$ — USD").split(" — ")[0].strip()
+                if currency_symbol == "Other":
+                    currency_symbol = st.session_state.get("rate_cur_sym", "$")
+
+                # Flatten per-day schedule into work_days + sched_windows for chart/analysis
+                _work_days_flat = [_day_map[d] for d in _DAYS if _spd.get(d, {}).get("enabled", False)]
+                _all_windows_flat = []
+                for _d in _DAYS:
+                    if _spd.get(_d, {}).get("enabled", False):
+                        for _w in _spd[_d].get("windows", []):
+                            if {"start": _w["start"], "end": _w["end"]} not in _all_windows_flat:
+                                _all_windows_flat.append({"start": _w["start"], "end": _w["end"]})
+                if not _all_windows_flat:
+                    _all_windows_flat = [{"start": 8, "end": 18}]
+
+                rate_per_kwh = _rwins[0]["rate"] if _rwins else 0.15
+
+                # Running indicator
+                numeric_cols_list = data.select_dtypes(include="number").columns.tolist()
+                with st.expander("Running indicator & electrical parameters", expanded=False):
                     indicator_col = st.selectbox(
                         "Running indicator column",
                         options=[""] + numeric_cols_list,
@@ -3054,189 +3255,46 @@ with tab_analysis:
                         "Running threshold (value above = running)", value=0.0
                     )
 
-                    # ── Energy cost settings with multiple rate windows ───────
-                    st.markdown("**Energy cost settings**")
-                    CURRENCIES = [
-                        "$ — USD (US Dollar)",
-                        "€ — EUR (Euro)",
-                        "£ — GBP (British Pound)",
-                        "¥ — JPY (Japanese Yen)",
-                        "¥ — CNY (Chinese Yuan)",
-                        "₹ — INR (Indian Rupee)",
-                        "CHF — CHF (Swiss Franc)",
-                        "A$ — AUD (Australian Dollar)",
-                        "C$ — CAD (Canadian Dollar)",
-                        "S$ — SGD (Singapore Dollar)",
-                        "R — ZAR (South African Rand)",
-                        "R$ — BRL (Brazilian Real)",
-                        "₩ — KRW (South Korean Won)",
-                        "kr — SEK (Swedish Krona)",
-                        "kr — NOK (Norwegian Krone)",
-                        "kr — DKK (Danish Krone)",
-                        "HK$ — HKD (Hong Kong Dollar)",
-                        "NT$ — TWD (Taiwan Dollar)",
-                        "₺ — TRY (Turkish Lira)",
-                        "₽ — RUB (Russian Ruble)",
-                        "PLN — PLN (Polish Zloty)",
-                        "zł — PLN (Polish Zloty)",
-                        "Kč — CZK (Czech Koruna)",
-                        "Ft — HUF (Hungarian Forint)",
-                        "RM — MYR (Malaysian Ringgit)",
-                        "NZ$ — NZD (New Zealand Dollar)",
-                        "Rp — IDR (Indonesian Rupiah)",
-                        "₱ — PHP (Philippine Peso)",
-                        "฿ — THB (Thai Baht)",
-                        "﷼ — SAR (Saudi Riyal)",
-                        "د.إ — AED (UAE Dirham)",
-                        "₪ — ILS (Israeli Shekel)",
-                        "Mex$ — MXN (Mexican Peso)",
-                        "CLP — CLP (Chilean Peso)",
-                        "Col$ — COP (Colombian Peso)",
-                        "S/. — PEN (Peruvian Sol)",
-                        "Ksh — KES (Kenyan Shilling)",
-                        "₦ — NGN (Nigerian Naira)",
-                        "EGP — EGP (Egyptian Pound)",
-                        "PKR — PKR (Pakistani Rupee)",
-                        "৳ — BDT (Bangladeshi Taka)",
-                        "Other — (type below)",
-                    ]
-                    selected_currency = st.selectbox(
-                        "Currency",
-                        options=CURRENCIES,
-                        index=0,
-                        help="Select your local currency"
-                    )
-                    if selected_currency.startswith("Other"):
-                        currency_symbol = st.text_input(
-                            "Enter currency symbol",
-                            value="$",
-                            help="Type your currency symbol"
-                        )
-                    else:
-                        currency_symbol = selected_currency.split(" — ")[0].strip()
-
-                    # Multiple electricity rate windows
-                    st.markdown("**Electricity tariff rates**")
-                    st.caption("Define one rate for a flat tariff, or multiple windows for time-of-use pricing (e.g. peak / off-peak).")
-                    if "rate_windows" not in st.session_state:
-                        st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
-
-                    _rwins = st.session_state["rate_windows"]
-                    _rremove_idx = None
-                    for _ri, _rw in enumerate(_rwins):
-                        _rc0, _rc1, _rc2, _rc3, _rc4 = st.columns([3, 2, 2, 2, 1])
-                        _rwins[_ri]["label"] = _rc0.text_input(
-                            "Rate label" if _ri == 0 else f"Label #{_ri+1}",
-                            value=_rw.get("label", "Rate"),
-                            key=f"rate_label_{_ri}",
-                            help="e.g. Peak, Off-peak, Standard"
-                        )
-                        _rwins[_ri]["start"] = _rc1.number_input(
-                            "From (h)" if _ri == 0 else f"From #{_ri+1}",
-                            min_value=0, max_value=23,
-                            value=_rw.get("start", 0),
-                            key=f"rate_start_{_ri}"
-                        )
-                        _rwins[_ri]["end"] = _rc2.number_input(
-                            "To (h)" if _ri == 0 else f"To #{_ri+1}",
-                            min_value=0, max_value=23,
-                            value=_rw.get("end", 23),
-                            key=f"rate_end_{_ri}"
-                        )
-                        _rwins[_ri]["rate"] = _rc3.number_input(
-                            f"{currency_symbol}/kWh" if _ri == 0 else f"{currency_symbol}/kWh #{_ri+1}",
-                            min_value=0.0,
-                            value=float(_rw.get("rate", 0.15)),
-                            step=0.01,
-                            format="%.4f",
-                            key=f"rate_val_{_ri}"
-                        )
-                        if len(_rwins) > 1:
-                            if _rc4.button("×", key=f"rate_rm_{_ri}", help="Remove this rate"):
-                                _rremove_idx = _ri
-                    if _rremove_idx is not None:
-                        st.session_state["rate_windows"].pop(_rremove_idx)
-                        st.rerun()
-                    _radd_col, _ = st.columns([2, 5])
-                    if _radd_col.button("+ Add rate window",
-                                        help="Add another tariff period (e.g. peak rate)"):
-                        _prev_end = _rwins[-1].get("end", 23)
-                        st.session_state["rate_windows"].append({
-                            "label": "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}",
-                            "start": min(_prev_end, 22),
-                            "end":   23,
-                            "rate":  _rwins[-1].get("rate", 0.15)
-                        })
-                        st.rerun()
-
-                    # Derive a single blended/default rate for backward-compatible cost calcs
-                    # Use first window as primary; weighted blend used in analysis
-                    rate_per_kwh = _rwins[0]["rate"] if _rwins else 0.15
-
-                    # Detect what energy-related columns exist in the loaded data
                     _data_now = data
                     _cols     = list(_data_now.columns) if _data_now is not None else []
-
                     _has_kwh     = any(any(k in c.lower() for k in ["kwh","kw_h","energy","consumption"]) for c in _cols)
                     _has_power   = any(any(k in c.lower() for k in ["kw","power"]) for c in _cols) and not _has_kwh
                     _has_current = any(any(k in c.lower() for k in ["current","amp"]) for c in _cols)
                     _has_voltage = any(any(k in c.lower() for k in ["voltage","volt","_v","volts"]) for c in _cols)
                     _has_pf      = any(any(k in c.lower() for k in ["power_factor","pf","cos_phi","cosphi"]) for c in _cols)
-
                     user_voltage = 415.0
                     user_pf      = 0.85
-
                     if _has_kwh:
                         st.success("Energy column detected — no electrical parameters needed.")
                     elif _has_power:
                         st.success("Power (kW) column detected — no electrical parameters needed.")
                     elif _has_current:
-                        st.markdown("**Electrical parameters**")
                         if _has_voltage and _has_pf:
-                            st.success("Voltage and power factor columns detected — no manual input needed.")
+                            st.success("Voltage and power factor columns detected.")
                         elif _has_voltage:
-                            st.info("Voltage column detected. Power factor not found in data — please enter below.")
-                            user_pf = st.number_input(
-                                "Power factor",
-                                min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f",
-                                help="Motor power factor (0–1). Typical induction motor: 0.80–0.90."
-                            )
+                            user_pf = st.number_input("Power factor", min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f")
                         elif _has_pf:
-                            st.info("Power factor column detected. Voltage not found in data — please enter below.")
-                            user_voltage = st.number_input(
-                                "Supply voltage (V)",
-                                min_value=1.0, value=415.0, step=1.0, format="%.0f",
-                                help="Line-to-line voltage e.g. 415V (India/EU), 400V (EU), 480V (US)."
-                            )
+                            user_voltage = st.number_input("Supply voltage (V)", min_value=1.0, value=415.0, step=1.0, format="%.0f")
                         else:
-                            st.warning("Neither voltage nor power factor found in data. Please enter both below.")
-                            user_voltage = st.number_input(
-                                "Supply voltage (V)",
-                                min_value=1.0, value=415.0, step=1.0, format="%.0f",
-                                help="Line-to-line voltage e.g. 415V (India/EU), 400V (EU), 480V (US)."
-                            )
-                            user_pf = st.number_input(
-                                "Power factor",
-                                min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f",
-                                help="Motor power factor (0–1). Typical induction motor: 0.80–0.90."
-                            )
+                            user_voltage = st.number_input("Supply voltage (V)", min_value=1.0, value=415.0, step=1.0, format="%.0f")
+                            user_pf      = st.number_input("Power factor", min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f")
                     else:
-                        st.warning("No energy, power, or current column detected in data. Energy calculation will not be available.")
+                        st.warning("No energy, power, or current column detected.")
 
-                    day_map = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
-                    schedule = {
-                        "work_days":         [day_map[d] for d in selected_days],
-                        "work_hour_start":   int(st.session_state["sched_windows"][0]["start"]),
-                        "work_hour_end":     int(st.session_state["sched_windows"][0]["end"]),
-                        "sched_windows":     list(st.session_state["sched_windows"]),
-                        "indicator_col":     indicator_col,
-                        "running_threshold": float(run_threshold),
-                        "currency_symbol":   currency_symbol,
-                        "rate_per_kwh":      float(rate_per_kwh),
-                        "rate_windows":      list(st.session_state["rate_windows"]),
-                        "voltage":           float(user_voltage),
-                        "power_factor":      float(user_pf),
-                    }
+                schedule = {
+                    "work_days":         _work_days_flat,
+                    "work_hour_start":   _all_windows_flat[0]["start"],
+                    "work_hour_end":     _all_windows_flat[0]["end"],
+                    "sched_windows":     _all_windows_flat,
+                    "sched_per_day":     {d: dict(_spd[d]) for d in _DAYS if d in _spd},
+                    "indicator_col":     indicator_col,
+                    "running_threshold": float(run_threshold),
+                    "currency_symbol":   currency_symbol,
+                    "rate_per_kwh":      float(rate_per_kwh),
+                    "rate_windows":      list(_rwins),
+                    "voltage":           float(user_voltage),
+                    "power_factor":      float(user_pf),
+                }
 
             extra_context = st.text_area(
                 "Engineer notes (optional)",
