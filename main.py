@@ -3057,18 +3057,48 @@ with tab_analysis:
                 if "show_sched_config" not in st.session_state:
                     st.session_state["show_sched_config"] = False
 
-                # ── Running Schedule button ───────────────────────────────
+                # ── Schedule & Rate buttons (both rendered before panels) ──
                 _sched_col, _rate_col = st.columns([1, 1])
+
                 if _sched_col.button(
                     "⚙️ Running Schedule",
                     type="secondary",
                     help="Configure permitted operating days and hours"
                 ):
-                    st.session_state["show_sched_config"] = not st.session_state["show_sched_config"]
-                    st.session_state.pop("sched_edit_days", None)   # reset day selection on open
+                    st.session_state["show_sched_config"] = not st.session_state.get("show_sched_config", False)
 
-                # ── Schedule config panel ─────────────────────────────────
-                if st.session_state["show_sched_config"]:
+                if _rate_col.button(
+                    "⚡ Electricity Rates",
+                    type="secondary",
+                    help="Configure electricity tariff — flat or time-of-use"
+                ):
+                    st.session_state["show_rate_config"] = not st.session_state.get("show_rate_config", False)
+
+                # ── Persistent schedule summary (always visible) ─────────
+                _spd_disp = st.session_state.get("sched_per_day", {})
+
+                def _fmt_win(dcfg):
+                    if not dcfg.get("enabled"):
+                        return "—"
+                    wins = dcfg.get("windows", [])
+                    return "  |  ".join(
+                        f"{w['start']:02d}:00–{w['end']:02d}:00" for w in wins
+                    ) if wins else "—"
+
+                _sum_groups = {}
+                for _d in _DAYS:
+                    _k = _fmt_win(_spd_disp.get(_d, {"enabled": False}))
+                    _sum_groups.setdefault(_k, []).append(_d)
+
+                _sum_rows = ["| Days | Operating hours |", "|---|---|"]
+                for _sk, _sds in _sum_groups.items():
+                    _sum_rows.append(f"| {' / '.join(_sds)} | {_sk} |")
+                st.markdown("**Current schedule:**")
+                _sum_md = "\n".join(_sum_rows)
+                st.markdown(_sum_md)
+
+                # ── Running Schedule panel ────────────────────────────────
+                if st.session_state.get("show_sched_config", False):
                     with st.container(border=True):
                         st.markdown("**Running Schedule**")
                         st.caption(
@@ -3079,31 +3109,24 @@ with tab_analysis:
 
                         _spd = st.session_state["sched_per_day"]
 
-                        # Version counter: incremented on Apply to force multiselect reset
                         if "sched_version" not in st.session_state:
                             st.session_state["sched_version"] = 0
 
                         # ── Already-configured schedule (inside panel) ────
                         _any_set = any(
-                            _spd.get(_d, {}).get("enabled") or _spd.get(_d, {}).get("windows")
-                            for _d in _DAYS
+                            _spd.get(_d, {}).get("enabled") for _d in _DAYS
                         )
                         if _any_set:
                             _in_groups = {}
                             for _d in _DAYS:
                                 _dcfg = _spd.get(_d, {"enabled": False})
-                                if _dcfg.get("enabled"):
-                                    _k = "  |  ".join(
-                                        f"{w['start']:02d}:00–{w['end']:02d}:00"
-                                        for w in _dcfg.get("windows", [])
-                                    ) or "—"
-                                else:
-                                    _k = "— Off"
+                                _k = _fmt_win(_dcfg) if _dcfg.get("enabled") else "— Off"
                                 _in_groups.setdefault(_k, []).append(_d)
-                            _tbl_lines = ["| Days | Hours |", "|---|---|"]
-                            for _sch_k, _sch_ds in _in_groups.items():
-                                _tbl_lines.append(f"| {' / '.join(_sch_ds)} | {_sch_k} |")
-                            st.markdown("\n".join(_tbl_lines))
+                            _in_rows = ["| Days | Hours |", "|---|---|"]
+                            for _ik, _ids in _in_groups.items():
+                                _in_rows.append(f"| {' / '.join(_ids)} | {_ik} |")
+                            _in_md = "\n".join(_in_rows)
+                            st.markdown(_in_md)
 
                         st.divider()
 
@@ -3122,11 +3145,8 @@ with tab_analysis:
                         # ── Step 2: time windows for selected days ────────
                         if _sel_days:
                             st.markdown(
-                                f"**Step 2 — Operating hours for "
-                                f"{', '.join(_sel_days)}**"
+                                f"**Step 2 — Operating hours for {', '.join(_sel_days)}**"
                             )
-
-                            # Init edit buffer from first selected day (pre-fill if already configured)
                             _buf_key = f"sched_buf_{st.session_state['sched_version']}"
                             if _buf_key not in st.session_state:
                                 _ref = _spd.get(_sel_days[0], {})
@@ -3200,7 +3220,6 @@ with tab_analysis:
                                 for _d in _sel_days:
                                     _spd[_d]["enabled"] = not _set_off
                                     _spd[_d]["windows"]  = [dict(w) for w in _ewins]
-                                # Bump version — forces fresh multiselect and fresh buffer key
                                 st.session_state["sched_version"] += 1
                                 st.rerun()
 
@@ -3221,46 +3240,7 @@ with tab_analysis:
                             st.session_state["sched_version"] = st.session_state.get("sched_version", 0) + 1
                             st.rerun()
 
-                # ── Persistent schedule summary (always visible) ─────────
-                _spd_disp  = st.session_state.get("sched_per_day", {})
-                _DAYS_ORD  = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-
-                def _fmt_day_schedule(dcfg):
-                    if not dcfg.get("enabled"):
-                        return "—"
-                    wins = dcfg.get("windows", [])
-                    return "  |  ".join(
-                        f"{w['start']:02d}:00–{w['end']:02d}:00" for w in wins
-                    ) if wins else "—"
-
-                # Group days with identical schedules for compact display
-                _summary_groups = {}
-                for _d in _DAYS_ORD:
-                    _k = _fmt_day_schedule(_spd_disp.get(_d, {"enabled": False}))
-                    _summary_groups.setdefault(_k, []).append(_d)
-
-                # Build compact summary table
-                _summary_rows = []
-                for _sched_str, _sched_days in _summary_groups.items():
-                    _day_str = " / ".join(_sched_days)
-                    _summary_rows.append(
-                        f"| {_day_str} | {_sched_str} |"
-                    )
-
-                if _summary_rows:
-                    _tbl_md = "| Days | Operating hours |\n|---|---|\n" + "\n".join(_summary_rows)
-                    st.markdown("**Current schedule:**")
-                    st.markdown(_tbl_md)
-
-                # ── Electricity tariff rates ──────────────────────────────
-                if _rate_col.button(
-                    "⚡ Electricity Rates",
-                    type="secondary",
-                    help="Configure electricity tariff — flat or time-of-use"
-                ):
-                    st.session_state.setdefault("show_rate_config", False)
-                    st.session_state["show_rate_config"] = not st.session_state.get("show_rate_config", False)
-
+                # ── Electricity Rates panel ───────────────────────────────
                 if st.session_state.get("show_rate_config", False):
                     with st.container(border=True):
                         st.markdown("**Electricity Tariff Rates**")
@@ -3273,10 +3253,10 @@ with tab_analysis:
                             "₩ — KRW","kr — SEK","kr — NOK","kr — DKK",
                             "HK$ — HKD","NT$ — TWD","₺ — TRY","₽ — RUB",
                             "RM — MYR","NZ$ — NZD","Rp — IDR","₱ — PHP",
-                            "฿ — THB","﷼ — SAR","د.إ — AED","₪ — ILS",
-                            "Mex$ — MXN","zł — PLN","Kč — CZK","Ft — HUF",
-                            "CLP — CLP","Col$ — COP","S/. — PEN",
-                            "Ksh — KES","₦ — NGN","EGP — EGP",
+                            "฿ — THB","﷼ — SAR","د.إ — AED",
+                            "₪ — ILS","Mex$ — MXN","zł — PLN",
+                            "Kč — CZK","Ft — HUF","CLP — CLP","Col$ — COP",
+                            "S/. — PEN","Ksh — KES","₦ — NGN","EGP — EGP",
                             "PKR — PKR","৳ — BDT","Other",
                         ]
                         _cur_sel = st.selectbox("Currency", CURRENCIES, index=0, key="rate_currency")
@@ -3333,7 +3313,7 @@ with tab_analysis:
                                 "rate":  _prev.get("rate", 0.15)
                             })
                             st.rerun()
-                        if _rdone.button("✓ Done ", type="primary", key="rate_done"):
+                        if _rdone.button("✓ Close ", type="primary", key="rate_done"):
                             st.session_state["show_rate_config"] = False
                             st.rerun()
 
