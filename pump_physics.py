@@ -23,6 +23,15 @@ HIGH      = "HIGH"
 MEDIUM    = "MEDIUM"
 LOW       = "LOW"
 
+# Confidence synthesis layer
+try:
+    from analytics_confidence import enrich_all_findings, assign_overall_health
+    _CONFIDENCE_AVAILABLE = True
+except ImportError:
+    _CONFIDENCE_AVAILABLE = False
+    def enrich_all_findings(findings, layer1_signals, dq_score): return findings
+    def assign_overall_health(colours): return "\U0001F7E2"
+
 KW_POWER   = ["power_kw","power","kw","active_power","shaft_power"]
 KW_CURRENT = ["motor_current","current_a","current","_a","amp","amps"]
 KW_FLOW    = ["flow_m3h","flowrate","flow","m3h","m3_h","gpm","flow_rate"]
@@ -303,26 +312,30 @@ def run_phase1(df, cols, np_d):
     if lf > 100:
         res["findings"].append({"finding": "Motor overloaded",
             "detail": f"Load factor {lf}% exceeds rated. Risk of winding damage.",
-            "severity": "critical", "confidence": HIGH})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "critical", "confidence": HIGH})
     elif lf > 90:
         res["findings"].append({"finding": "High load factor",
             "detail": f"Load factor {lf}% near rated limit. Monitor winding temperature.",
-            "severity": "warning", "confidence": HIGH})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
     elif lf < 40:
         res["findings"].append({"finding": "Low load factor — possible oversizing",
             "detail": f"Load factor only {lf}%. Consider impeller trim or speed reduction.",
-            "severity": "info", "confidence": MEDIUM})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "info", "confidence": MEDIUM})
 
     # SPI
     if spi is not None:
         if spi > 1.20:
             res["findings"].append({"finding": "High specific power index",
                 "detail": f"SPI {spi:.3f} — {(spi-1)*100:.0f}% more power than at commissioning.",
-                "severity": "critical", "confidence": MEDIUM})
+                "consistency": "recurring", "severity": "critical", "confidence": MEDIUM})
         elif spi > 1.10:
             res["findings"].append({"finding": "Elevated specific power index",
                 "detail": f"SPI {spi:.3f} — 10%+ above commissioning baseline. Investigate impeller.",
-                "severity": "warning", "confidence": MEDIUM})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": MEDIUM})
 
     # Trend
     if trend is not None and abs(trend) > 1.0:
@@ -361,19 +374,19 @@ def run_phase1(df, cols, np_d):
                     "detail": f"V\u2082/V\u2081 = {vi}% exceeds IE{ie} limit {lim}% by {vi/lim:.1f}\u00d7. "
                               f"Phase {_worst_phase} is {abs(_worst_dev):.1f} V {_low_high} (A={va_m:.1f}, B={vb_m:.1f}, C={vc_m:.1f} V). "
                               f"Risk of motor damage. Investigate supply.",
-                    "severity": "critical", "confidence": HIGH})
+                    "consistency": "recurring", "severity": "critical", "confidence": HIGH})
             elif vi > lim:
                 res["findings"].append({"finding": "Voltage imbalance above IE class limit",
                     "detail": f"V\u2082/V\u2081 = {vi}% exceeds IE{ie} limit {lim}% per IEC 60034-26. "
                               f"Phase {_worst_phase} is {abs(_worst_dev):.1f} V {_low_high} (A={va_m:.1f}, B={vb_m:.1f}, C={vc_m:.1f} V).",
-                    "severity": "warning", "confidence": HIGH})
+                    "consistency": "recurring", "severity": "warning", "confidence": HIGH})
             elif vi > 0.2:
                 # Below limit but still notable \u2014 report as info
                 res["findings"].append({"finding": "Voltage imbalance within limits but measurable",
                     "detail": f"V\u2082/V\u2081 = {vi}% (IE{ie} limit {lim}%). "
                               f"Phase {_worst_phase} is {abs(_worst_dev):.1f} V {_low_high} (A={va_m:.1f}, B={vb_m:.1f}, C={vc_m:.1f} V). "
                               f"No action required but monitor for increase.",
-                    "severity": "info", "confidence": HIGH})
+                    "consistency": "recurring", "severity": "info", "confidence": HIGH})
 
     # Current imbalance
     if cols.get("i_a") and cols.get("i_b") and cols.get("i_c"):
@@ -390,7 +403,8 @@ def run_phase1(df, cols, np_d):
             if ii > 10:
                 res["findings"].append({"finding": "High current imbalance",
                     "detail": f"Current imbalance {ii:.1f}%. Check supply voltage balance and motor winding.",
-                    "severity": "warning", "confidence": MEDIUM})
+                    "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": MEDIUM})
 
     return res
 
@@ -472,33 +486,38 @@ def run_phase2(df, cols, np_d):
         if spe_rise > 15:
             res["findings"].append({"finding": "Specific energy significantly elevated",
                 "detail": f"Specific energy {spe_rise:.1f}% above commissioning. Significant hydraulic deterioration.",
-                "severity": "critical", "confidence": HIGH})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "critical", "confidence": HIGH})
         elif spe_rise > 8:
             res["findings"].append({"finding": "Specific energy rising",
                 "detail": f"Specific energy {spe_rise:.1f}% above commissioning. Investigate impeller.",
-                "severity": "warning", "confidence": HIGH})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
 
     if spe_trend > 2.0:
         res["findings"].append({"finding": "Specific energy trend rising",
             "detail": f"Rising at {spe_trend:.1f}%/month. Progressive efficiency loss.",
-            "severity": "warning", "confidence": MEDIUM})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": MEDIUM})
 
     if mean_eta_act is not None:
         drop = (eta_pump - mean_eta_act) / eta_pump * 100
         if drop > 10:
             res["findings"].append({"finding": "Pump efficiency significantly below rated",
                 "detail": f"Estimated {mean_eta_act*100:.1f}% vs rated {eta_pump*100:.0f}%. Drop {drop:.1f}%.",
-                "severity": "warning", "confidence": MEDIUM})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": MEDIUM})
 
     if bep_dev is not None and abs(bep_dev) > 25:
         res["findings"].append({"finding": "Operating far from BEP",
             "detail": f"Flow {bep_dev:+.1f}% from BEP ({bep_q} m\u00b3/h). Risk of recirculation and accelerated wear.",
-            "severity": "warning", "confidence": HIGH})
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
 
     if corr < 0.70:
         res["findings"].append({"finding": "Low flow-power correlation",
             "detail": f"r = {corr:.2f}. Possible internal bypass, worn wear ring, or valve cycling.",
-            "severity": "warning", "confidence": LOW})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": LOW})
 
     return res
 
@@ -589,21 +608,24 @@ def run_phase3(df, cols, np_d, hq_curve=None):
         if drop > 12:
             res["findings"].append({"finding": "True hydraulic efficiency significantly below rated",
                 "detail": f"Actual {mean_eta_hyd*100:.1f}% vs rated {eta_pump*100:.0f}%. Drop {drop:.1f}%. Impeller wear or increased clearances likely.",
-                "severity": "critical", "confidence": HIGH})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "critical", "confidence": HIGH})
         elif drop > 6:
             res["findings"].append({"finding": "Hydraulic efficiency below rated",
                 "detail": f"Efficiency {mean_eta_hyd*100:.1f}% ({drop:.1f}% below rated).",
-                "severity": "warning", "confidence": HIGH})
+                "consistency": "recurring", "severity": "warning", "confidence": HIGH})
 
     if wear_idx is not None:
         if wear_idx > 10:
             res["findings"].append({"finding": "Significant impeller wear",
                 "detail": f"Wear index {wear_idx:.1f}%. Actual head {wear_idx:.1f}% below H-Q curve. Plan impeller replacement.",
-                "severity": "critical", "confidence": HIGH})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "critical", "confidence": HIGH})
         elif wear_idx > 5:
             res["findings"].append({"finding": "Impeller wear developing",
                 "detail": f"Wear index {wear_idx:.1f}%. Duty point shifting below manufacturer curve.",
-                "severity": "warning", "confidence": HIGH})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
     elif hq_curve is None or len(hq_curve) < 3:
         res["warnings"].append("No H-Q curve provided — impeller wear index cannot be calculated. H-Q curve is mandatory for Phase 3.")
 
@@ -612,11 +634,13 @@ def run_phase3(df, cols, np_d, hq_curve=None):
         if margin < 1.0:
             res["findings"].append({"finding": "Cavitation risk — NPSH margin critical",
                 "detail": f"NPSH available {npsh_a:.1f} m, required {npsh_r:.1f} m. Margin {margin:.2f} m below 1 m safe minimum.",
-                "severity": "critical", "confidence": HIGH})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "critical", "confidence": HIGH})
         elif margin < 3.0:
             res["findings"].append({"finding": "Reduced NPSH margin",
                 "detail": f"NPSH margin {margin:.2f} m. Below recommended 3 m. Monitor suction conditions.",
-                "severity": "warning", "confidence": HIGH})
+                "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
 
     return res
 
@@ -666,15 +690,17 @@ def run_phase4(df, cols, np_d):
     if drop > 10:
         res["findings"].append({"finding": "Thermodynamic efficiency significantly below rated",
             "detail": f"Measured {mean_eta*100:.1f}% vs rated {eta_pump*100:.0f}%. Drop {drop:.1f}% confirmed independently of flow meter.",
-            "severity": "critical", "confidence": HIGH})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "critical", "confidence": HIGH})
     elif drop > 5:
         res["findings"].append({"finding": "Thermodynamic efficiency below rated",
             "detail": f"Efficiency {mean_eta*100:.1f}% ({drop:.1f}% below rated).",
-            "severity": "warning", "confidence": HIGH})
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
     if recirc is not None and recirc > 25:
         res["findings"].append({"finding": "Internal recirculation detected",
             "detail": f"Recirculation index {recirc:.0f}%. Operating far from BEP causing excess fluid heating.",
-            "severity": "warning", "confidence": HIGH})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
     return res
 
 
@@ -727,23 +753,28 @@ def run_phase5(df, cols, np_d, bearing_freqs=None):
     if mean_v > iso_alarm:
         res["findings"].append({"finding": "Vibration above ISO alarm level",
             "detail": f"Mean {mean_v:.2f} mm/s exceeds ISO 10816 Class II alarm {iso_alarm} mm/s. Immediate action.",
-            "severity": "critical", "confidence": HIGH})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "critical", "confidence": HIGH})
     elif mean_v > iso_warn:
         res["findings"].append({"finding": "Vibration above ISO warning level",
             "detail": f"Mean {mean_v:.2f} mm/s exceeds ISO 10816 warning {iso_warn} mm/s. Schedule inspection.",
-            "severity": "warning", "confidence": HIGH})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": HIGH})
     if vtrend > 5.0:
         res["findings"].append({"finding": "Vibration rising rapidly",
             "detail": f"+{vtrend:.1f}%/month. Investigate imbalance, misalignment, or bearing deterioration.",
-            "severity": "warning", "confidence": MEDIUM})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": MEDIUM})
     elif vtrend > 2.0:
         res["findings"].append({"finding": "Vibration rising",
             "detail": f"+{vtrend:.1f}%/month. Monitor closely.",
-            "severity": "info", "confidence": MEDIUM})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "info", "confidence": MEDIUM})
     if affl_dev is not None and affl_dev > 10:
         res["findings"].append({"finding": "Affinity law deviation",
             "detail": f"Power deviates {affl_dev:.1f}% from N\u00b3 prediction. Internal hydraulic deterioration possible.",
-            "severity": "warning", "confidence": MEDIUM})
+            "consistency": "recurring",
+            "consistency": "recurring", "severity": "warning", "confidence": MEDIUM})
     return res
 
 
@@ -1030,6 +1061,7 @@ def run_time_segmented(df, cols, np_d, baseline_period=None):
                 f"fouling.{recovery} by {_fmt_date(suct_evt['end'])}."
             )
             interp["severity"]   = "warning"
+            interp["consistency"] = "transient"
             interp["confidence"] = HIGH
 
         # Suction blockage causing cavitation (suction drop + vibration rise)
@@ -1039,6 +1071,8 @@ def run_time_segmented(df, cols, np_d, baseline_period=None):
                 "Reduced suction pressure lowers NPSH available. Inspect suction strainer and piping."
             )
             interp["severity"]   = "critical"
+            interp["consistency"] = "recurring"
+            interp["consistency"] = "recurring"
             interp["confidence"] = HIGH
 
         # Impeller wear (head drop + vibration rise, flow stable or dropping)
@@ -1049,6 +1083,8 @@ def run_time_segmented(df, cols, np_d, baseline_period=None):
                 "causing both reduced hydraulic conversion and mechanical vibration."
             )
             interp["severity"]   = "critical"
+            interp["consistency"] = "recurring"
+            interp["consistency"] = "recurring"
             interp["confidence"] = HIGH
 
         # Head declining alone (early wear or system change)
@@ -1168,6 +1204,20 @@ def run_all_phases(df, machine_description, hq_curve=None, bearing_freqs=None, b
     sev = {"critical": 0, "warning": 1, "info": 2}
     all_findings.sort(key=lambda x: sev.get(x.get("severity","info"), 2))
 
+    # Enrich findings with confidence, message colour and prefix.
+    # layer1_signals populated by main.py after AI analysis; dq_score
+    # default 100 overridden by main.py with actual DQ score.
+    all_findings = enrich_all_findings(
+        findings=all_findings,
+        layer1_signals={},
+        dq_score=100,
+    )
+
+    # Overall health from enriched finding colours
+    _health = assign_overall_health(
+        [f.get("message_colour", "") for f in all_findings]
+    )
+
     lines = ["=== CENTRIFUGAL PUMP PHYSICS ANALYSIS ===",
              f"Phases activated: {sorted(k for k in phases_run if k != 'TS')}",
              f"Drive type: {np_d.get('drive_type','unknown')}",
@@ -1185,4 +1235,5 @@ def run_all_phases(df, machine_description, hq_curve=None, bearing_freqs=None, b
         lines.append("")
 
     return {"phase_info": phase_info, "np_data": np_d, "phases": phases_run,
-            "all_findings": all_findings, "summary": "\n".join(lines)}
+            "all_findings": all_findings, "overall_health": _health,
+            "summary": "\n".join(lines)}
