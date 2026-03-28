@@ -52,6 +52,21 @@ except Exception:
     def run_all_phases(df,desc,**kw): return {"phases":{},"all_findings":[],"summary":"","phase_info":{},"np_data":{}}
     def parse_nameplate(desc): return {}
 try:
+    from analytics_confidence import (
+        enrich_all_findings, assign_overall_health,
+        RED as CONF_RED, YELLOW as CONF_YELLOW,
+        GREEN as CONF_GREEN, WARN as CONF_WARN,
+        DQ_GOOD,
+    )
+    CONFIDENCE_AVAILABLE = True
+except ImportError:
+    CONFIDENCE_AVAILABLE = False
+    def enrich_all_findings(findings, layer1_signals, dq_score): return findings
+    def assign_overall_health(colours): return "\U0001F7E2"
+    CONF_RED = "\U0001F534"; CONF_YELLOW = "\U0001F7E1"
+    CONF_GREEN = "\U0001F7E2"; CONF_WARN = "\u26a0\ufe0f"; DQ_GOOD = 70
+
+try:
     from pump_curve_finder import (
         get_manufacturer_info, MANUFACTURER_URLS,
         search_and_extract_curves, validate_hq_points,
@@ -3204,6 +3219,19 @@ with tab_analysis:
                             baseline_period=st.session_state.get("baseline_period"),
                         )
                         _pump_physics_summary = _phys_result.get("summary","")
+                        # Re-enrich findings with actual DQ score
+                        _actual_dq = (st.session_state.get("last_dq_report") or {}).get("score", 100)
+                        if CONFIDENCE_AVAILABLE and _actual_dq < 100:
+                            for _ph_key in _phys_result.get("phases", {}):
+                                _ph = _phys_result["phases"][_ph_key]
+                                if _ph.get("findings"):
+                                    _ph["findings"] = enrich_all_findings(
+                                        _ph["findings"], {}, _actual_dq
+                                    )
+                            if _phys_result.get("findings"):
+                                _phys_result["findings"] = enrich_all_findings(
+                                    _phys_result["findings"], {}, _actual_dq
+                                )
                         st.session_state["_pump_physics_result"] = _phys_result
 
                 # ── Use DQ already computed in Data tab ───────────────────
@@ -3282,7 +3310,7 @@ with tab_analysis:
                 # ── Pump physics results panel ────────────────────────
                 _phys_res = st.session_state.get("_pump_physics_result")
                 if _phys_res and _phys_res.get("phases"):
-                    _all_f = _phys_res.get("all_findings", [])
+                    _all_f = _phys_res.get("findings", _phys_res.get("all_findings", []))
                     _n_crit_ph = sum(1 for f in _all_f if f.get("severity") == "critical")
                     _n_warn_ph = sum(1 for f in _all_f if f.get("severity") == "warning")
                     _ph_label  = (f"  ·  {_n_crit_ph} critical" if _n_crit_ph else "") +                                  (f"  ·  {_n_warn_ph} warning(s)" if _n_warn_ph else "") +                                  ("  ·  No issues" if not _all_f else "")
@@ -3292,8 +3320,14 @@ with tab_analysis:
                                   "TS":"Time-Segmented Events"}
                     _has_ts    = "TS" in _phys_res["phases"]
                     _ts_label  = " + Event Detection" if _has_ts else ""
+                    # Overall health: use physics result's own field if available
+                    _ph_health = _phys_res.get("overall_health", "")
+                    if not _ph_health and CONFIDENCE_AVAILABLE:
+                        _ph_health = assign_overall_health(
+                            [f.get("message_colour", "") for f in _all_f]
+                        )
                     with st.expander(
-                        f"\U0001f527 Pump physics \u2014 Phases {_ph_nums}{_ts_label}{_ph_label}",
+                        f"{_ph_health} \U0001f527 Pump physics \u2014 Phases {_ph_nums}{_ts_label}{_ph_label}",
                         expanded=(_n_crit_ph > 0)
                     ):
                         for _ph_n, _ph_r in sorted(_phys_res["phases"].items(),
@@ -3309,23 +3343,26 @@ with tab_analysis:
                                 _met_cols = st.columns(min(len(_mets), 3))
                                 for _mi, (_mk, _mv) in enumerate(_mets.items()):
                                     _met_cols[_mi % 3].metric(_mk, str(_mv))
-                            # Findings
+                            # Findings — colour-coded per integration guide framework
                             for _f in _ph_r.get("findings", []):
-                                _sev = _f.get("severity","info")
-                                _conf = _f.get("confidence","")
-                                _icon = {
-                                    "critical": "❌",
-                                    "warning":  "⚠️",
-                                    "info":     "ℹ️",
-                                }.get(_sev, "•")
-                                _bg  = {"critical":"#FFF0F0","warning":"#FFFBF0","info":"#EAF4FF"}.get(_sev,"#F8F8F8")
-                                _bc  = {"critical":"#A32D2D","warning":"#BA7517","info":"#185FA5"}.get(_sev,"#888")
+                                _sev    = _f.get("severity", "info")
+                                _colour = _f.get("message_colour", "")
+                                _prefix = _f.get("message_prefix", "")
+                                _conf   = _f.get("confidence", "")
+                                _cons   = _f.get("consistency", "")
+                                # Derive border colour from message_colour
+                                _bc = "#A32D2D" if CONF_RED in _colour else "#BA7517" if CONF_YELLOW in _colour else "#185FA5"
+                                _bg = "#FFF0F0" if CONF_RED in _colour else "#FFFBF0" if CONF_YELLOW in _colour else "#EAF4FF"
+                                _label = f"{_colour} {_sev.title()} · {_cons.title()}" if _colour else _sev.title()
+                                _prefix_html = f'<div style="font-size:0.82em;color:#BA7517;margin-bottom:4px">{_prefix}</div>' if _prefix else ""
                                 st.markdown(
                                     f'<div style="background:{_bg};border-left:4px solid {_bc};' +
                                     f'padding:8px 12px;margin-bottom:6px;border-radius:3px;">' +
-                                    f'<span style="font-weight:700;color:{_bc}">{_icon} {_f["finding"]}</span>' +
-                                    f' &nbsp;·&nbsp; <span style="color:#888;font-size:0.82em">Phase {_ph_n} · Confidence: {_conf}</span><br>' +
-                                    f'<span style="font-size:0.87em">{_f["detail"]}</span></div>',
+                                    f'<span style="font-weight:700;color:{_bc}">{_label}</span>' +
+                                    f' &nbsp;·&nbsp; <span style="color:#888;font-size:0.82em">Confidence: {_conf}</span><br>' +
+                                    f'{_prefix_html}' +
+                                    f'<span style="font-size:0.87em">{_f.get("description", _f.get("finding",""))}</span><br>' +
+                                    f'<span style="font-size:0.82em;color:#555;font-style:italic">{_f.get("recommendation", _f.get("detail",""))}</span></div>',
                                     unsafe_allow_html=True)
                             st.markdown("")
 
