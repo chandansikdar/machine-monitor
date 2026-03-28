@@ -31,6 +31,15 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+# Confidence synthesis layer
+try:
+    from analytics_confidence import enrich_all_findings, assign_overall_health
+    _CONFIDENCE_AVAILABLE = True
+except ImportError:
+    _CONFIDENCE_AVAILABLE = False
+    def enrich_all_findings(findings, layer1_signals, dq_score): return findings
+    def assign_overall_health(colours): return "\U0001F7E2"
+
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1070,15 +1079,26 @@ _THRESHOLDS = {
 
 def _make_finding(
     metric: str,
-    severity: str,   # "critical" | "warning" | "info"
+    severity: str,        # "critical" | "warning" | "info"
     value: float,
     threshold: float,
     description: str,
     recommendation: str,
+    consistency: str = "recurring",  # "recurring" | "transient"
 ) -> dict:
+    """
+    Build a structured physics finding.
+
+    consistency:
+      "recurring"  — condition observed across multiple intervals / rolling window
+                     sustained beyond a single measurement.
+      "transient"  — condition observed only at a small number of intervals
+                     and not confirmed as sustained.
+    """
     return dict(
         metric=metric,
         severity=severity,
+        consistency=consistency,
         value=round(value, 4),
         threshold=round(threshold, 4),
         description=description,
@@ -1096,6 +1116,9 @@ def _findings_voltage_imbalance(vi: dict, ie_class: str) -> list:
     dev = vi.get("phase_dev_v", {})
     dev_str = ", ".join(f"Phase {ph}: {v:+.1f} V" for ph, v in dev.items())
 
+    # Voltage imbalance is computed as a mean over all running intervals.
+    # A mean above threshold implies sustained/recurring exceedance.
+    _vi_consistency = "recurring"
     if val >= _THRESHOLDS["volt_imbal_critical"]:
         findings.append(_make_finding(
             "Voltage Imbalance", "critical", val,
@@ -1104,6 +1127,7 @@ def _findings_voltage_imbalance(vi: dict, ie_class: str) -> list:
             f"Worst phase: {worst}. Deviations: {dev_str}.",
             "Immediate investigation of supply voltage. Do not run at full load. "
             "Contact utility if persistent.",
+            consistency=_vi_consistency,
         ))
     elif val >= _THRESHOLDS["volt_imbal_warning"] or val >= limit:
         findings.append(_make_finding(
@@ -1112,6 +1136,7 @@ def _findings_voltage_imbalance(vi: dict, ie_class: str) -> list:
             f"({limit:.1f}%). Worst phase: {worst}. Deviations: {dev_str}.",
             "Investigate supply quality. Check transformer taps and load balance "
             "across phases. Voltage imbalance causes motor derating and winding stress.",
+            consistency=_vi_consistency,
         ))
     return findings
 
@@ -1121,65 +1146,80 @@ def _findings_current_imbalance(ci: dict) -> list:
         return []
     findings = []
     val = ci["mean"]
+    # Current imbalance mean over running intervals = sustained/recurring
+    _ci_consistency = "recurring"
     if val >= _THRESHOLDS["curr_imbal_critical"]:
         findings.append(_make_finding(
             "Current Imbalance", "critical", val,
             _THRESHOLDS["curr_imbal_critical"],
-            f"Mean current imbalance {val:.1f}% exceeds NEMA limit of 10%. "
-            "Motor derating required.",
-            "Urgent investigation. Check supply voltage imbalance first. "
-            "If voltage is balanced, suspect winding fault or connection issue.",
+            f"Mean current imbalance {val:.1f}% exceeds NEMA MG 1 limit of "
+            f"{_THRESHOLDS['curr_imbal_critical']:.0f}%.",
+            "Check voltage imbalance first. If voltage is balanced, inspect motor "
+            "winding resistance and terminal connections.",
+            consistency=_ci_consistency,
         ))
     elif val >= _THRESHOLDS["curr_imbal_warning"]:
         findings.append(_make_finding(
             "Current Imbalance", "warning", val,
             _THRESHOLDS["curr_imbal_warning"],
-            f"Mean current imbalance {val:.1f}% is elevated (NEMA limit: 10%).",
-            "Investigate supply phase balance. Compare with voltage imbalance. "
-            "Monitor for progression.",
+            f"Mean current imbalance {val:.1f}% is elevated. "
+            f"NEMA limit is {_THRESHOLDS['curr_imbal_critical']:.0f}%.",
+            "Compare with voltage imbalance. If voltage is balanced, check winding "
+            "resistance and cable terminations.",
+            consistency=_ci_consistency,
         ))
     return findings
 
-
 def _findings_load_factor(lf: dict) -> list:
+    """
+    Consistency classification for load factor:
+      - Mean above threshold across full dataset → recurring
+      - Only short window → transient (not currently computed; default recurring)
+    """
     if not lf.get("available"):
         return []
     findings = []
-    val = lf["mean"]
+    val   = lf["mean"]
+    p10   = lf.get("p10", val)
+    p90   = lf.get("p90", val)
+    rated = lf.get("rated_power_kw")
+
+    # All load factor findings use the dataset mean — classified as recurring
+    _lf_consistency = "recurring"
+
     if val > _THRESHOLDS["lf_high_critical"]:
         findings.append(_make_finding(
-            "Load Factor", "critical", val,
-            _THRESHOLDS["lf_high_critical"],
-            f"Mean load factor {val:.1f}% — chiller is overloaded relative to nameplate.",
-            "Investigate root cause: high ambient, condenser fouling, or load growth. "
-            "Avoid sustained operation above 105% without consulting manufacturer.",
+            "Load Factor", "critical", val, _THRESHOLDS["lf_high_critical"],
+            f"Mean load factor {val:.1f}% — chiller operating above rated capacity.",
+            "Check condenser water conditions. Raise chilled water setpoint if possible. "
+            "Consult manufacturer if conditions are at design values.",
+            consistency=_lf_consistency,
         ))
     elif val > _THRESHOLDS["lf_high_warning"]:
         findings.append(_make_finding(
-            "Load Factor", "warning", val,
-            _THRESHOLDS["lf_high_warning"],
-            f"Mean load factor {val:.1f}% — chiller is near or at rated capacity.",
-            "Monitor closely. Check condenser conditions and ambient temperature. "
-            "Consider peak load management.",
+            "Load Factor", "warning", val, _THRESHOLDS["lf_high_warning"],
+            f"Mean load factor {val:.1f}% — approaching rated capacity.",
+            "Monitor trend. Check condenser water entering temperature vs design.",
+            consistency=_lf_consistency,
         ))
+
     if val < _THRESHOLDS["lf_low_critical"]:
         findings.append(_make_finding(
-            "Load Factor", "warning", val,
-            _THRESHOLDS["lf_low_critical"],
-            f"Mean load factor {val:.1f}% — chiller is severely underloaded.",
-            "Check for short cycling (see start count finding). Consider oversizing "
-            "assessment. Evaluate staging or setpoint optimisation.",
+            "Load Factor", "critical", val, _THRESHOLDS["lf_low_critical"],
+            f"Mean load factor {val:.1f}% — severely underloaded. "
+            "Centrifugal compressors at surge risk below this level.",
+            "Check BMS — verify chiller is not locked in run state. "
+            "Evaluate load staging or unit shutdown.",
+            consistency=_lf_consistency,
         ))
     elif val < _THRESHOLDS["lf_low_warning"]:
         findings.append(_make_finding(
-            "Load Factor", "info", val,
-            _THRESHOLDS["lf_low_warning"],
-            f"Mean load factor {val:.1f}% — chiller is operating at low part load.",
-            "Compare to IPLV rating. Evaluate whether a smaller unit or staging "
-            "would improve seasonal efficiency.",
+            "Load Factor", "warning", val, _THRESHOLDS["lf_low_warning"],
+            f"Mean load factor {val:.1f}% — operating at low part load.",
+            "Review operating schedule. Consider staging against a smaller unit.",
+            consistency=_lf_consistency,
         ))
     return findings
-
 
 def _findings_spi_trend(windows: dict, rated_cop: Optional[float]) -> list:
     if not windows.get("available"):
@@ -1222,46 +1262,50 @@ def _findings_power_factor(pf: dict) -> list:
         return []
     findings = []
     val = pf["mean"]
+    _pf_consistency = "recurring"
     if val < _THRESHOLDS["pf_critical"]:
         findings.append(_make_finding(
-            "Power Factor", "critical", val,
-            _THRESHOLDS["pf_critical"],
-            f"Mean power factor {val:.3f} is very poor.",
-            "Investigate capacitor bank condition and winding insulation. "
-            "Check for severe underloading. Utility penalty likely.",
+            "Power Factor", "critical", val, _THRESHOLDS["pf_critical"],
+            f"Mean running power factor {val:.3f} — very poor. "
+            "High reactive current demand increases cable losses and KVA charges.",
+            "Check capacitor bank condition. Verify load factor is not below 30% "
+            "(low load naturally reduces power factor).",
+            consistency=_pf_consistency,
         ))
     elif val < _THRESHOLDS["pf_warning"]:
         findings.append(_make_finding(
-            "Power Factor", "warning", val,
-            _THRESHOLDS["pf_warning"],
-            f"Mean power factor {val:.3f} is below recommended level.",
-            "Inspect capacitor bank. Evaluate reactive power compensation. "
-            "Check for persistent underloading.",
+            "Power Factor", "warning", val, _THRESHOLDS["pf_warning"],
+            f"Mean running power factor {val:.3f} — below recommended level.",
+            "Test capacitor bank. Review reactive power compensation requirements.",
+            consistency=_pf_consistency,
         ))
     return findings
-
 
 def _findings_short_cycling(pattern: dict) -> list:
     if not pattern.get("available"):
         return []
     findings = []
-    val = pattern["mean_starts_day"]
-    max_val = pattern["max_starts_day"]
-    if val >= _THRESHOLDS["starts_critical"]:
+    starts_per_day = pattern.get("starts_per_day", 0)
+    # Start count uses mean over the full dataset — sustained pattern = recurring
+    _sc_consistency = "recurring"
+    if starts_per_day > _THRESHOLDS["starts_critical"]:
         findings.append(_make_finding(
-            "Start Count", "critical", val,
+            "Start Count", "critical", starts_per_day,
             _THRESHOLDS["starts_critical"],
-            f"Mean {val:.1f} starts/day (max {max_val}) — severe short cycling.",
-            "Investigate control system and BMS setpoints. Check chilled water "
-            "buffer volume. Short cycling causes motor overheating and contact wear.",
+            f"Mean {starts_per_day:.1f} compressor starts per day — severe short cycling. "
+            "Each start imposes high inrush current and thermal shock to windings.",
+            "Check chilled water buffer volume (minimum 10–15 L/kW). "
+            "Increase BMS deadband to 1.5–2°C. Set minimum off-time in chiller controller.",
+            consistency=_sc_consistency,
         ))
-    elif val >= _THRESHOLDS["starts_warning"]:
+    elif starts_per_day > _THRESHOLDS["starts_warning"]:
         findings.append(_make_finding(
-            "Start Count", "warning", val,
+            "Start Count", "warning", starts_per_day,
             _THRESHOLDS["starts_warning"],
-            f"Mean {val:.1f} starts/day (max {max_val}) — elevated cycling frequency.",
-            "Review deadband settings. Consider increasing buffer tank volume or "
-            "adjusting setpoint differential.",
+            f"Mean {starts_per_day:.1f} compressor starts per day — elevated cycling.",
+            "Review BMS deadband settings. Verify minimum off-time is configured "
+            "(typically 3–5 minutes).",
+            consistency=_sc_consistency,
         ))
     return findings
 
@@ -1472,6 +1516,21 @@ def run_phase1(
     _sev_order = {"critical": 0, "warning": 1, "info": 2}
     all_findings.sort(key=lambda f: _sev_order.get(f["severity"], 3))
 
+    # Enrich findings with confidence, message colour, and prefix.
+    # layer1_signals is populated by main.py after AI analysis completes.
+    # At physics-run time it defaults to empty dict (no AI signals yet).
+    # Pass dq_score=100 as default; main.py overrides with actual score.
+    all_findings = enrich_all_findings(
+        findings=all_findings,
+        layer1_signals={},   # populated by synthesis layer in main.py
+        dq_score=100,        # overridden by main.py with actual DQ score
+    )
+
+    # Overall health from enriched finding colours
+    _health = assign_overall_health(
+        [f.get("message_colour", "") for f in all_findings]
+    )
+
     # ── 10. Plain-text summary for Claude context ─────────────────────────────
     summary_lines = [
         f"Chiller Phase 1 analysis: "
@@ -1543,6 +1602,7 @@ def run_phase1(
         "running_mask":    running,
         "power":           power,
         "shutdown_info":   shutdown_info,
+        "overall_health":  _health,
         "metrics": {
             "load_factor":    lf,
             "spi":            spi_raw,
