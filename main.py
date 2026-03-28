@@ -3244,8 +3244,9 @@ with tab_analysis:
 
                     # ── Existing rate entries (editable) ─────────────────
                     if _rwins:
+                        _rdel_direct = None
                         for _ri, _rw in enumerate(_rwins):
-                            _ra1, _ra2 = st.columns([6, 1])
+                            _ra1, _ra2, _ra3 = st.columns([6, 1, 1])
                             _lbl   = _rw.get("label", "Rate")
                             _from  = f"{_rw.get('start',0):02d}:00"
                             _to    = f"{_rw.get('end',23):02d}:00"
@@ -3264,6 +3265,16 @@ with tab_analysis:
                                 st.session_state[f"rate_prefill_{_nv}"] = dict(_rw)
                                 st.session_state[f"rate_prefill_idx_{_nv}"] = _ri
                                 st.rerun()
+                            if _ra3.button(
+                                "×",
+                                key=f"rate_del_direct_{_rv}_{_ri}",
+                                help=f"Delete {_lbl}"
+                            ):
+                                _rdel_direct = _ri
+                        if _rdel_direct is not None:
+                            st.session_state["rate_windows"].pop(_rdel_direct)
+                            st.session_state["rate_version"] += 1
+                            st.rerun()
 
                     st.divider()
 
