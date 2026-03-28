@@ -3185,7 +3185,7 @@ with tab_analysis:
 
                         _set_off = st.checkbox(
                             "Mark these days as off (not operating)",
-                            value=_pre_off if _pre_off is not None else False,
+                            value=False,
                             key=f"sched_off_{_ms_key}"
                         )
 
