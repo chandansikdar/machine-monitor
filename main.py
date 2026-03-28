@@ -3216,7 +3216,9 @@ with tab_analysis:
                 # ── Electricity Rates expander ────────────────────────────
                 with st.expander("⚡ Electricity Rates", expanded=False):
                     if "rate_windows" not in st.session_state:
-                        st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
+                        st.session_state["rate_windows"] = []
+                    if "rate_version" not in st.session_state:
+                        st.session_state["rate_version"] = 0
 
                     CURRENCIES = [
                         "$ — USD","€ — EUR","£ — GBP","¥ — JPY",
@@ -3237,57 +3239,105 @@ with tab_analysis:
                     else:
                         currency_symbol = _cur_sel.split(" — ")[0].strip()
 
-                    _rwins    = st.session_state["rate_windows"]
-                    _rdel_idx = None
-                    _rh1, _rh2, _rh3, _rh4, _rh5 = st.columns([3, 2, 2, 3, 1])
-                    _rh1.markdown("**Label**")
-                    _rh2.markdown("**From (h)**")
-                    _rh3.markdown("**To (h)**")
-                    _rh4.markdown(f"**{currency_symbol}/kWh**")
-                    _rh5.write("")
+                    _rwins = st.session_state["rate_windows"]
+                    _rv    = st.session_state["rate_version"]
 
-                    for _ri, _rw in enumerate(_rwins):
-                        _rc1, _rc2, _rc3, _rc4, _rc5 = st.columns([3, 2, 2, 3, 1])
-                        _rwins[_ri]["label"] = _rc1.text_input(
-                            "lbl", value=_rw.get("label","Rate"),
-                            key=f"rl_{_ri}", label_visibility="collapsed"
-                        )
-                        _rwins[_ri]["start"] = _rc2.number_input(
-                            "from", min_value=0, max_value=23,
-                            value=_rw.get("start",0),
-                            key=f"rs_{_ri}", label_visibility="collapsed"
-                        )
-                        _rwins[_ri]["end"] = _rc3.number_input(
-                            "to", min_value=0, max_value=23,
-                            value=_rw.get("end",23),
-                            key=f"re_{_ri}", label_visibility="collapsed"
-                        )
-                        _rwins[_ri]["rate"] = _rc4.number_input(
-                            "rate", min_value=0.0,
-                            value=float(_rw.get("rate",0.15)),
-                            step=0.01, format="%.4f",
-                            key=f"rr_{_ri}", label_visibility="collapsed"
-                        )
-                        if len(_rwins) > 1:
-                            if _rc5.button("×", key=f"rrm_{_ri}"):
-                                _rdel_idx = _ri
+                    # ── Existing rate entries (editable) ─────────────────
+                    if _rwins:
+                        for _ri, _rw in enumerate(_rwins):
+                            _ra1, _ra2 = st.columns([6, 1])
+                            _lbl   = _rw.get("label", "Rate")
+                            _from  = f"{_rw.get('start',0):02d}:00"
+                            _to    = f"{_rw.get('end',23):02d}:00"
+                            _rate  = _rw.get("rate", 0.15)
+                            _ra1.markdown(
+                                f"**{_lbl}** — {_from}–{_to} — "
+                                f"{currency_symbol}{_rate:.4f}/kWh"
+                            )
+                            if _ra2.button(
+                                "✏️",
+                                key=f"rate_edit_{_rv}_{_ri}",
+                                help=f"Edit {_lbl}"
+                            ):
+                                st.session_state["rate_version"] += 1
+                                _nv = st.session_state["rate_version"]
+                                st.session_state[f"rate_prefill_{_nv}"] = dict(_rw)
+                                st.session_state[f"rate_prefill_idx_{_nv}"] = _ri
+                                st.rerun()
 
-                    if _rdel_idx is not None:
-                        st.session_state["rate_windows"].pop(_rdel_idx)
+                    st.divider()
+
+                    # ── Add / edit form ───────────────────────────────────
+                    _rv2      = st.session_state["rate_version"]
+                    _rbuf_key = f"rate_form_{_rv2}"
+                    _pre_rate = st.session_state.pop(f"rate_prefill_{_rv2}", None)
+                    _pre_idx  = st.session_state.pop(f"rate_prefill_idx_{_rv2}", None)
+
+                    if _rbuf_key not in st.session_state:
+                        st.session_state[_rbuf_key] = _pre_rate if _pre_rate is not None else {
+                            "label": "Standard" if not _rwins else (
+                                "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}"
+                            ),
+                            "start": 0, "end": 23, "rate": 0.15
+                        }
+
+                    _form = st.session_state[_rbuf_key]
+
+                    _edit_title = f"**Editing: {_pre_rate['label']}**" if _pre_rate else "**New rate**"
+                    st.markdown(_edit_title)
+
+                    _fc1, _fc2, _fc3, _fc4 = st.columns([3, 2, 2, 3])
+                    _fc1.markdown("Label")
+                    _fc2.markdown("From (h)")
+                    _fc3.markdown("To (h)")
+                    _fc4.markdown(f"{currency_symbol}/kWh")
+
+                    _fa1, _fa2, _fa3, _fa4 = st.columns([3, 2, 2, 3])
+                    _form["label"] = _fa1.text_input(
+                        "lbl", value=_form.get("label","Rate"),
+                        key=f"rf_lbl_{_rv2}", label_visibility="collapsed"
+                    )
+                    _form["start"] = _fa2.number_input(
+                        "from", min_value=0, max_value=23,
+                        value=_form.get("start",0),
+                        key=f"rf_s_{_rv2}", label_visibility="collapsed"
+                    )
+                    _form["end"] = _fa3.number_input(
+                        "to", min_value=0, max_value=23,
+                        value=_form.get("end",23),
+                        key=f"rf_e_{_rv2}", label_visibility="collapsed"
+                    )
+                    _form["rate"] = _fa4.number_input(
+                        "rate", min_value=0.0,
+                        value=float(_form.get("rate",0.15)),
+                        step=0.01, format="%.4f",
+                        key=f"rf_r_{_rv2}", label_visibility="collapsed"
+                    )
+
+                    _rb1, _rb2, _rb3 = st.columns([3, 3, 3])
+                    _apply_label = "✓ Update" if _pre_idx is not None else "+ Add rate"
+                    if _rb1.button(_apply_label, type="primary", key=f"rate_apply_{_rv2}"):
+                        if _pre_idx is not None:
+                            st.session_state["rate_windows"][_pre_idx] = dict(_form)
+                        else:
+                            st.session_state["rate_windows"].append(dict(_form))
+                        st.session_state["rate_version"] += 1
                         st.rerun()
 
-                    if st.button("+ Add rate window", key="rate_add"):
-                        _prev = _rwins[-1]
-                        st.session_state["rate_windows"].append({
-                            "label": "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}",
-                            "start": _prev.get("end", 23), "end": 23,
-                            "rate":  _prev.get("rate", 0.15)
-                        })
+                    if _pre_idx is not None:
+                        if _rb2.button("🗑️ Delete", type="secondary", key=f"rate_del_{_rv2}"):
+                            st.session_state["rate_windows"].pop(_pre_idx)
+                            st.session_state["rate_version"] += 1
+                            st.rerun()
+
+                    if _rb3.button("🗑️ Clear all rates", type="secondary", key="rate_clear"):
+                        st.session_state["rate_windows"] = []
+                        st.session_state["rate_version"] += 1
                         st.rerun()
 
                 # ── Derive schedule dict for analysis ─────────────────────
                 _spd   = st.session_state.get("sched_per_day", {})
-                _rwins = st.session_state.get("rate_windows", [{"label":"Standard","start":0,"end":23,"rate":0.15}])
+                _rwins = st.session_state.get("rate_windows") or [{"label":"Standard","start":0,"end":23,"rate":0.15}]
                 _cur   = (st.session_state.get("rate_currency","$ — USD") or "$ — USD")
                 currency_symbol = (_cur.split(" — ")[0].strip()
                                    if _cur != "Other"
