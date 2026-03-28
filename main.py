@@ -3182,8 +3182,21 @@ with tab_analysis:
                                 st.session_state["sched_version"] += 1
                                 st.rerun()
 
-                        if st.button("✓ Close", type="secondary", key="sched_close"):
+                        _cl_col, _del_col = st.columns([1, 1])
+                        if _cl_col.button("✓ Close", type="secondary", key="sched_close"):
                             st.session_state["show_sched_config"] = False
+                            st.rerun()
+                        if _del_col.button(
+                            "🗑️ Clear all",
+                            type="secondary",
+                            key="sched_clear",
+                            help="Reset entire schedule — all days set to off"
+                        ):
+                            st.session_state["sched_per_day"] = {
+                                d: {"enabled": False, "windows": [{"start": 8, "end": 18}]}
+                                for d in _DAYS
+                            }
+                            st.session_state["sched_version"] = st.session_state.get("sched_version", 0) + 1
                             st.rerun()
 
                 # ── Persistent schedule summary (always visible) ─────────
