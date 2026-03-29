@@ -3278,12 +3278,8 @@ with tab_analysis:
                             if len(_ewins) > 1:
                                 if _er5.button("×", key=f"ew_rm_{_ms_key}_{_wi}", help="Remove"):
                                     _ew_del = _wi
-                            st.divider() if _wi < len(_ewins) - 1 else None
-                            if len(_ewins) > 1:
-                                if _wc4.button("×", key=f"ew_rm_{_ms_key}_{_wi}", help="Remove"):
-                                    _ew_del = _wi
-                            else:
-                                _wc4.write("")
+                            if _wi < len(_ewins) - 1:
+                                st.divider()
 
                         if _ew_del is not None:
                             st.session_state[_buf_key].pop(_ew_del)
