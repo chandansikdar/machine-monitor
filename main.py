@@ -3407,31 +3407,8 @@ with tab_analysis:
                         "Running threshold (value above = running)", value=0.0
                     )
 
-                    _data_now = data
-                    _cols     = list(_data_now.columns) if _data_now is not None else []
-                    _has_kwh     = any(any(k in c.lower() for k in ["kwh","kw_h","energy","consumption"]) for c in _cols)
-                    _has_power   = any(any(k in c.lower() for k in ["kw","power"]) for c in _cols) and not _has_kwh
-                    _has_current = any(any(k in c.lower() for k in ["current","amp"]) for c in _cols)
-                    _has_voltage = any(any(k in c.lower() for k in ["voltage","volt","_v","volts"]) for c in _cols)
-                    _has_pf      = any(any(k in c.lower() for k in ["power_factor","pf","cos_phi","cosphi"]) for c in _cols)
                     user_voltage = 415.0
                     user_pf      = 0.85
-                    if _has_kwh:
-                        st.success("Energy column detected — no electrical parameters needed.")
-                    elif _has_power:
-                        st.success("Power (kW) column detected — no electrical parameters needed.")
-                    elif _has_current:
-                        if _has_voltage and _has_pf:
-                            st.success("Voltage and power factor columns detected.")
-                        elif _has_voltage:
-                            user_pf = st.number_input("Power factor", min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f")
-                        elif _has_pf:
-                            user_voltage = st.number_input("Supply voltage (V)", min_value=1.0, value=415.0, step=1.0, format="%.0f")
-                        else:
-                            user_voltage = st.number_input("Supply voltage (V)", min_value=1.0, value=415.0, step=1.0, format="%.0f")
-                            user_pf      = st.number_input("Power factor", min_value=0.1, max_value=1.0, value=0.85, step=0.01, format="%.2f")
-                    else:
-                        st.warning("No energy, power, or current column detected.")
 
                 schedule = {
                     "work_days":         _work_days_flat,
