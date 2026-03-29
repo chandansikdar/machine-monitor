@@ -114,6 +114,7 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         return []
 
     _spd          = schedule.get("sched_per_day", {})
+    _sched_entries = schedule.get("sched_entries", [])
     sched_windows = schedule.get("sched_windows",
                        [{"start": schedule.get("work_hour_start", 8),
                          "end":   schedule.get("work_hour_end", 18)}])
@@ -123,7 +124,12 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
 
     # Determine permitted mask — per-day windows when available, else flat windows
     _DAYS_IDX = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
-    if _spd:
+    _any_enabled = any(v.get("enabled") for v in _spd.values()) if _spd else False
+
+    if not _sched_entries and not _any_enabled:
+        # No schedule defined — all time treated as running (all green)
+        in_schedule = pd.Series(True, index=df.index)
+    elif _spd and _any_enabled:
         # Per-day schedule: check each row against that day's own windows
         in_schedule = pd.Series(False, index=df.index)
         for _dn, _didx in _DAYS_IDX.items():
