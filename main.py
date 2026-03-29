@@ -3182,23 +3182,20 @@ with tab_analysis:
 
                         # Pre-fill values
                         if _is_edit and _edit_idx < len(_entries):
-                            _pre_e     = _entries[_edit_idx]
-                            _pre_days  = _pre_e["days"]
-                            _pre_sh    = int(_pre_e["start"])
-                            _pre_sm    = int(round((_pre_e["start"] - _pre_sh) * 60))
-                            _pre_eh    = int(_pre_e["end"])
-                            _pre_em    = int(round((_pre_e["end"] - _pre_eh) * 60))
+                            _pre_e    = _entries[_edit_idx]
+                            _pre_days = _pre_e["days"]
+                            _pre_sh   = int(_pre_e["start"])
+                            _pre_sm   = int(round((_pre_e["start"] - _pre_sh) * 60))
+                            _pre_eh   = int(_pre_e["end"])
+                            _pre_em   = int(round((_pre_e["end"] - _pre_eh) * 60))
                         else:
                             _pre_days = []
                             _pre_sh, _pre_sm, _pre_eh, _pre_em = 8, 0, 18, 0
 
                         st.markdown("**Step 1 — Select days**")
                         _sel_days = st.multiselect(
-                            "Days",
-                            options=_DAYS,
-                            default=_pre_days,
-                            label_visibility="collapsed",
-                            key=f"sf_days_{_fv}",
+                            "Days", options=_DAYS, default=_pre_days,
+                            label_visibility="collapsed", key=f"sf_days_{_fv}",
                             placeholder="Choose one or more days…",
                         )
 
@@ -3206,18 +3203,14 @@ with tab_analysis:
                             st.markdown("**Step 2 — Start and End times**")
                             _sr1, _sr2, _sr3 = st.columns([3, 4, 4])
                             _sr1.markdown("**Start**")
-                            _sh_raw = _sr2.text_input("HH", value=f"{_pre_sh:02d}",
-                                key=f"sf_sh_{_fv}", placeholder="HH")
-                            _sm_raw = _sr3.text_input("MM", value=f"{_pre_sm:02d}",
-                                key=f"sf_sm_{_fv}", placeholder="MM")
+                            _sh_raw = _sr2.text_input("HH", value=f"{_pre_sh:02d}", key=f"sf_sh_{_fv}", placeholder="HH")
+                            _sm_raw = _sr3.text_input("MM", value=f"{_pre_sm:02d}", key=f"sf_sm_{_fv}", placeholder="MM")
                             _er1, _er2, _er3 = st.columns([3, 4, 4])
                             _er1.markdown("**End**")
-                            _eh_raw = _er2.text_input("HH", value=f"{_pre_eh:02d}",
-                                key=f"sf_eh_{_fv}", placeholder="HH")
-                            _em_raw = _er3.text_input("MM", value=f"{_pre_em:02d}",
-                                key=f"sf_em_{_fv}", placeholder="MM")
+                            _eh_raw = _er2.text_input("HH", value=f"{_pre_eh:02d}", key=f"sf_eh_{_fv}", placeholder="HH")
+                            _em_raw = _er3.text_input("MM", value=f"{_pre_em:02d}", key=f"sf_em_{_fv}", placeholder="MM")
 
-                            # Validate
+                            # Validate fields
                             _form_err = None
                             try:
                                 _sh_v = int(_sh_raw.strip()); assert 0 <= _sh_v <= 23
@@ -3238,54 +3231,63 @@ with tab_analysis:
                             if _form_err:
                                 st.caption(f":red[{_form_err}]")
                             elif _e_frac <= _s_frac:
-                                _form_err = "End must be after Start"
-                                st.caption(f":red[End must be after Start]")
+                                _form_err = "end_before_start"
+                                st.caption(":red[End must be after Start]")
 
-                            # Show stored conflict error (set by previous save attempt)
-                            _conflict_key = f"sched_conflict_msg_{_fv}"
-                            if st.session_state.get(_conflict_key):
-                                st.error(st.session_state[_conflict_key])
+                            # Store current form values in session state so handler reads them
+                            st.session_state["_sf_days"]    = list(_sel_days)
+                            st.session_state["_sf_s_frac"]  = _s_frac
+                            st.session_state["_sf_e_frac"]  = _e_frac
+                            st.session_state["_sf_err"]     = _form_err
+                            st.session_state["_sf_is_edit"] = _is_edit
+                            st.session_state["_sf_edit_idx"]= _edit_idx
 
+                            # Show conflict error from previous save attempt
+                            if st.session_state.get("_sf_conflict"):
+                                st.error(st.session_state["_sf_conflict"])
+
+                            _save_ok = not _form_err
                             _sc1, _sc2 = st.columns([2, 2])
                             _save_label = "✓ Update" if _is_edit else "✓ Save"
-                            # Only disable for field validation errors — NOT for conflicts
-                            # (conflict is checked inside handler to avoid disabled-click race)
-                            _save_ok = (not _form_err) and _e_frac > _s_frac and bool(_sel_days)
                             if _sc1.button(_save_label, type="primary",
                                            key=f"sf_save_{_fv}", disabled=not _save_ok):
-                                # DEBUG — remove after fix
-                                st.write(f"DEBUG sel_days={_sel_days} s={_s_frac} e={_e_frac} entries={st.session_state['sched_entries']}")
-                                # Conflict check runs HERE — inside handler — guaranteed correct
+                                # Read stored values — set during this very render
+                                _d  = st.session_state.get("_sf_days", [])
+                                _sf = st.session_state.get("_sf_s_frac", 0)
+                                _ef = st.session_state.get("_sf_e_frac", 0)
+                                _ei = st.session_state.get("_sf_edit_idx")
+
                                 def _fc(v):
-                                    return f"{int(v):02d}:{int(round((v - int(v)) * 60)):02d}"
-                                _conflicts_now = []
-                                for _ci2, _ce2 in enumerate(st.session_state["sched_entries"]):
-                                    if _is_edit and _ci2 == _edit_idx:
+                                    return f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
+
+                                _cx = []
+                                for _ci, _ce in enumerate(st.session_state["sched_entries"]):
+                                    if _ei is not None and _ci == _ei:
                                         continue
-                                    _sh2 = [d for d in _sel_days if d in _ce2["days"]]
-                                    if _sh2 and _s_frac < _ce2["end"] and _ce2["start"] < _e_frac:
-                                        _conflicts_now.append(
-                                            f"{', '.join(_sh2)}: {_fc(_ce2['start'])}–{_fc(_ce2['end'])}"
-                                        )
-                                if _conflicts_now:
-                                    st.session_state[_conflict_key] = (
-                                        "⚠️ Time overlap with: "
-                                        + "; ".join(_conflicts_now)
+                                    _shared = [x for x in _d if x in _ce["days"]]
+                                    if _shared and _sf < _ce["end"] and _ce["start"] < _ef:
+                                        _cx.append(f"{', '.join(_shared)}: {_fc(_ce['start'])}–{_fc(_ce['end'])}")
+
+                                if _cx:
+                                    st.session_state["_sf_conflict"] = (
+                                        "⚠️ Overlap with: " + "; ".join(_cx)
                                         + " — adjust times before saving."
                                     )
                                 else:
-                                    st.session_state.pop(_conflict_key, None)
-                                    _new_entry = {"days": list(_sel_days), "start": _s_frac, "end": _e_frac}
-                                    if _is_edit:
-                                        st.session_state["sched_entries"][_edit_idx] = _new_entry
+                                    st.session_state["_sf_conflict"] = None
+                                    _new = {"days": _d, "start": _sf, "end": _ef}
+                                    if _ei is not None:
+                                        st.session_state["sched_entries"][_ei] = _new
                                     else:
-                                        st.session_state["sched_entries"].append(_new_entry)
+                                        st.session_state["sched_entries"].append(_new)
                                     st.session_state["sched_form_open"] = False
                                     st.session_state["sched_edit_idx"]  = None
                                 st.rerun()
+
                             if _sc2.button("Cancel", key=f"sf_cancel_{_fv}"):
                                 st.session_state["sched_form_open"] = False
                                 st.session_state["sched_edit_idx"]  = None
+                                st.session_state["_sf_conflict"]    = None
                                 st.rerun()
 
                     if st.button(
