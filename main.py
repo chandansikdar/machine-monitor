@@ -3322,15 +3322,44 @@ with tab_analysis:
                         key=f"rf_r_{_rv2}", label_visibility="collapsed"
                     )
 
+                    # Check for hour overlap before adding/updating
+                    def _rate_overlaps(new_start, new_end, existing_windows, skip_idx=None):
+                        """Return list of overlapping window descriptions."""
+                        overlaps = []
+                        for _oi, _ow in enumerate(existing_windows):
+                            if _oi == skip_idx:
+                                continue
+                            _os, _oe = _ow.get("start", 0), _ow.get("end", 24)
+                            # Two ranges [a,b) and [c,d) overlap if a < d and c < b
+                            if new_start < _oe and _os < new_end:
+                                overlaps.append(f"{_os:02d}:00–{_oe:02d}:00")
+                        return overlaps
+
                     _rb1, _rb2 = st.columns([2, 2])
                     _apply_label = "✓ Update" if _pre_idx is not None else "+ Add"
                     if _rb1.button(_apply_label, type="primary", key=f"rate_apply_{_rv2}"):
-                        if _pre_idx is not None:
-                            st.session_state["rate_windows"][_pre_idx] = dict(_form)
+                        _ns, _ne = _form.get("start", 0), _form.get("end", 24)
+                        if _ns >= _ne:
+                            st.error("End hour must be greater than start hour.")
                         else:
-                            st.session_state["rate_windows"].append(dict(_form))
-                        st.session_state["rate_version"] += 1
-                        st.rerun()
+                            _overlaps = _rate_overlaps(
+                                _ns, _ne,
+                                st.session_state["rate_windows"],
+                                skip_idx=_pre_idx
+                            )
+                            if _overlaps:
+                                st.error(
+                                    f"Hours {_ns:02d}:00–{_ne:02d}:00 overlap with "
+                                    f"already defined rate(s): {', '.join(_overlaps)}. "
+                                    f"Adjust the hours before adding."
+                                )
+                            else:
+                                if _pre_idx is not None:
+                                    st.session_state["rate_windows"][_pre_idx] = dict(_form)
+                                else:
+                                    st.session_state["rate_windows"].append(dict(_form))
+                                st.session_state["rate_version"] += 1
+                                st.rerun()
 
                     if _pre_idx is not None:
                         if _rb2.button("🗑️ Delete", type="secondary", key=f"rate_del_{_rv2}"):
