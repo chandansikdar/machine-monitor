@@ -3291,7 +3291,7 @@ with tab_analysis:
 
                     _form = st.session_state[_rbuf_key]
 
-                    _edit_title = f"**Edit rate**" if _pre_rate else "**New rate**"
+                    _edit_title = f"**Edit rate**" if _pre_rate else "**Add rate**"
                     st.markdown(_edit_title)
 
                     _fc1, _fc2, _fc3 = st.columns([3, 3, 3])
@@ -3318,7 +3318,7 @@ with tab_analysis:
                     )
 
                     _rb1, _rb2, _rb3 = st.columns([2, 2, 3])
-                    _apply_label = "✓ Update" if _pre_idx is not None else "+ Add rate"
+                    _apply_label = "✓ Update" if _pre_idx is not None else "+ Add"
                     if _rb1.button(_apply_label, type="primary", key=f"rate_apply_{_rv2}"):
                         if _pre_idx is not None:
                             st.session_state["rate_windows"][_pre_idx] = dict(_form)
