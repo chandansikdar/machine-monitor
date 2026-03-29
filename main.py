@@ -385,19 +385,81 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 off_pct = 100 - score_val
         if off_pct is not None:
             on_pct = on_pct if on_pct is not None else round(100 - off_pct, 1)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Off-schedule", f"{off_pct:.1f}%")
-            c2.metric("Scheduled", f"{on_pct:.1f}%")
+
             if data is not None and not data.empty:
-                # Add one reading interval so end date is fully included
+                # Compute time intervals
                 interval_secs = 900  # default 15 min
                 if len(data) > 1:
                     interval_secs = (data.index[1] - data.index[0]).total_seconds()
                 total_hours = (
                     (data.index.max() - data.index.min()).total_seconds() + interval_secs
                 ) / 3600
-                off_hours = total_hours * off_pct / 100
-                c3.metric("Off-schedule hours", f"{off_hours:,.1f} hrs")
+
+                # Total scheduled off time = all hours outside the permitted schedule
+                _sched_ss      = st.session_state.get("_last_schedule", {})
+                _spd_m         = _sched_ss.get("sched_per_day", {})
+                _sched_wins_m  = _sched_ss.get("sched_windows",
+                                     [{"start": _sched_ss.get("work_hour_start", 8),
+                                       "end":   _sched_ss.get("work_hour_end", 18)}])
+                _wdays_m       = _sched_ss.get("work_days", list(range(5)))
+                _run_thresh_m  = _sched_ss.get("running_threshold", 0)
+                _ind_col_m     = _sched_ss.get("indicator_col", "")
+
+                _df_m = data.copy()
+                _df_m.index = pd.to_datetime(_df_m.index)
+
+                # Build in-schedule mask per-row
+                def _in_sched_mask(df_idx):
+                    result = []
+                    _DAYS_M = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+                    _DM     = {d: i for i, d in enumerate(_DAYS_M)}
+                    for _ii in range(len(df_idx)):
+                        _dow = df_idx.dayofweek[_ii]
+                        _hr  = df_idx.hour[_ii]
+                        if _spd_m:
+                            _ok = any(
+                                _spd_m.get(_dn, {}).get("enabled", False) and
+                                _dow == _DM[_dn] and
+                                any(w["start"] <= _hr < w["end"]
+                                    for w in _spd_m.get(_dn, {}).get("windows", _sched_wins_m))
+                                for _dn in _DAYS_M
+                            )
+                        else:
+                            _ok = (_dow in _wdays_m and
+                                   any(w["start"] <= _hr < w["end"] for w in _sched_wins_m))
+                        result.append(_ok)
+                    return pd.Series(result, index=df_idx)
+
+                _in_sched_s  = _in_sched_mask(_df_m.index)
+                _off_sched_s = ~_in_sched_s
+
+                # Total scheduled off time (all readings outside schedule)
+                sched_off_hours = float(_off_sched_s.sum()) * interval_secs / 3600
+
+                # Ran during off-schedule = off-schedule AND running
+                _ind_col_m = _sched_ss.get("indicator_col", "")
+                if _ind_col_m and _ind_col_m in _df_m.columns:
+                    _running_m  = _df_m[_ind_col_m] > _run_thresh_m
+                else:
+                    # Fall back to first numeric column above threshold
+                    _num_cols_m = _df_m.select_dtypes(include="number").columns
+                    _running_m  = pd.Series(True, index=_df_m.index)
+                    if len(_num_cols_m):
+                        _running_m = _df_m[_num_cols_m[0]] > _run_thresh_m
+
+                _off_ran_mask   = _off_sched_s & _running_m
+                off_run_hours   = float(_off_ran_mask.sum()) * interval_secs / 3600
+                off_run_pct     = (off_run_hours / sched_off_hours * 100) if sched_off_hours > 0 else 0.0
+
+                # Display metrics
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total scheduled off time", f"{sched_off_hours:,.1f} hrs")
+                c2.metric("Ran during off-schedule", f"{off_run_hours:,.1f} hrs")
+                c3.metric("Ran during off-schedule", f"{off_run_pct:.1f}%")
+            else:
+                off_hours = 0
+                off_run_pct = 0.0
+
             compliance_pct = min(100, max(0, on_pct))
             bar_colour = "green" if compliance_pct >= 95 else "orange" if compliance_pct >= 80 else "red"
             st.markdown(f"**Schedule compliance: :{bar_colour}[{compliance_pct:.1f}%]**")
@@ -461,7 +523,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 off_kwh       = total_kwh * (off_pct / 100) if off_pct else 0
                 avg_power     = total_kwh / total_hours if total_hours > 0 else 0
                 cost_saved = off_kwh * rate_kwh
-                e1.metric("Off-schedule energy",    f"{off_kwh:,.0f} kWh")
+                e1.metric("Off-schedule energy",    f"{off_kwh:,.3f} kWh")
                 e2.metric("Total energy (period)",  f"{total_kwh:,.1f} kWh")
                 e3.metric("Cost saving potential",
                           f"{currency_sym}{cost_saved:,.0f}")
@@ -480,7 +542,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 total_kwh     = avg_power_kw * total_hours
                 off_kwh       = total_kwh * (off_pct / 100) if off_pct else 0
                 cost_saved = off_kwh * rate_kwh
-                e1.metric("Off-schedule energy",    f"{off_kwh:,.0f} kWh")
+                e1.metric("Off-schedule energy",    f"{off_kwh:,.3f} kWh")
                 e2.metric("Off-schedule hours",     f"{off_hours_val:,.1f} hrs")
                 e3.metric("Cost saving potential",
                           f"{currency_sym}{cost_saved:,.0f}")
@@ -582,7 +644,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 power_kw   = (1.732 * avg_voltage * avg_current * avg_pf) / 1000
                 off_kwh    = power_kw * off_run_hours
                 cost_saved = off_kwh * rate_kwh
-                e1.metric("Off-schedule energy",   f"{off_kwh:,.0f} kWh")
+                e1.metric("Off-schedule energy",   f"{off_kwh:,.3f} kWh")
                 e2.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.0f}")
                 e3.metric("Period",                f"{duration_str}")
                 # Build scenario label based on what was measured vs assumed
