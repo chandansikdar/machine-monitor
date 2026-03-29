@@ -3147,13 +3147,13 @@ with tab_analysis:
                         for _wi, _win in enumerate(_ewins):
                             _wc1, _wc2, _wc3, _wc4 = st.columns([3, 3, 1, 1])
                             _ewins[_wi]["start"] = _wc1.number_input(
-                                "Start", min_value=0, max_value=23,
+                                "Start", min_value=0, max_value=24,
                                 value=_win["start"],
                                 key=f"ew_s_{_ms_key}_{_wi}",
                                 label_visibility="collapsed"
                             )
                             _ewins[_wi]["end"] = _wc2.number_input(
-                                "End", min_value=0, max_value=23,
+                                "End", min_value=0, max_value=24,
                                 value=_win["end"],
                                 key=f"ew_e_{_ms_key}_{_wi}",
                                 label_visibility="collapsed"
@@ -3297,24 +3297,24 @@ with tab_analysis:
                     _edit_title = f"**Editing: {_pre_rate['label']}**" if _pre_rate else "**New rate**"
                     st.markdown(_edit_title)
 
-                    _fc1, _fc2, _fc3, _fc4 = st.columns([3, 2, 2, 3])
+                    _fc1, _fc2, _fc3, _fc4 = st.columns([3, 3, 3, 3])
                     _fc1.markdown("Label")
                     _fc2.markdown("From (h)")
                     _fc3.markdown("To (h)")
                     _fc4.markdown(f"{currency_symbol}/kWh")
 
-                    _fa1, _fa2, _fa3, _fa4 = st.columns([3, 2, 2, 3])
+                    _fa1, _fa2, _fa3, _fa4 = st.columns([3, 3, 3, 3])
                     _form["label"] = _fa1.text_input(
                         "lbl", value=_form.get("label","Rate"),
                         key=f"rf_lbl_{_rv2}", label_visibility="collapsed"
                     )
                     _form["start"] = _fa2.number_input(
-                        "from", min_value=0, max_value=23,
+                        "from", min_value=0, max_value=24,
                         value=_form.get("start",0),
                         key=f"rf_s_{_rv2}", label_visibility="collapsed"
                     )
                     _form["end"] = _fa3.number_input(
-                        "to", min_value=0, max_value=23,
+                        "to", min_value=0, max_value=24,
                         value=_form.get("end",23),
                         key=f"rf_e_{_rv2}", label_visibility="collapsed"
                     )
@@ -3325,7 +3325,7 @@ with tab_analysis:
                         key=f"rf_r_{_rv2}", label_visibility="collapsed"
                     )
 
-                    _rb1, _rb2, _rb3 = st.columns([3, 3, 3])
+                    _rb1, _rb2, _rb3 = st.columns([2, 2, 3])
                     _apply_label = "✓ Update" if _pre_idx is not None else "+ Add rate"
                     if _rb1.button(_apply_label, type="primary", key=f"rate_apply_{_rv2}"):
                         if _pre_idx is not None:
