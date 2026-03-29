@@ -328,8 +328,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     # Assign score early so it's available for breakdown check
     score = insights.get("health_score")
 
-    # Score breakdown (Overall Health Assessment only)
-    if analysis_type not in ("Operational Schedule Compliance",) and score is not None:
+    # Score breakdown (shown for Anomaly Detection)
+    if analysis_type == "Anomaly Detection" and score is not None:
         breakdown = insights.get("score_breakdown", [])
         if breakdown:
             with st.expander("Score explanation — what drove this score", expanded=True):
@@ -483,7 +483,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             st.markdown(f"**Schedule compliance: :{bar_colour}[{compliance_pct:.1f}%]**")
             st.progress(compliance_pct / 100)
             st.markdown("---")
-    else:
+    elif analysis_type == "Anomaly Detection":
         if score is not None:
             colour = "green" if score >= 80 else "orange" if score >= 60 else "red"
             st.markdown(f"### Health score: :{colour}[{score} / 100]")
@@ -3010,9 +3010,8 @@ with tab_analysis:
             # ── Primary analyses ──────────────────────────────────
             with st.expander("Primary analyses", expanded=True):
                 primary_options = [
-                    ("Overall Health Assessment",      "Comprehensive health score, KPIs, anomalies and narrative"),
+                    ("Anomaly Detection",               "Statistical anomalies, outliers, control chart violations. Includes health score and physics analysis when available."),
                     ("Trend & Drift Analysis",          "How fast is each parameter degrading over time?"),
-                    ("Anomaly Detection",               "Full catalogue of outliers and spikes with timestamps"),
                     ("Operational Schedule Compliance", "Running outside permitted hours or days"),
                 ]
                 for name, desc in primary_options:
@@ -3587,15 +3586,8 @@ with tab_analysis:
                 st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
                 # ── Pump physics pre-run — only when a physics-relevant analysis is selected ──
-                _physics_relevant_analyses = {
-                    "Overall Health Assessment",
-                    "Trend & Drift Analysis",
-                    "Anomaly Detection",
-                    "Correlation Analysis",
-                    "Parameter Distribution",
-                    "Cross-Parameter Comparison",
-                }
-                _run_pump_physics = bool(set(selected_analyses) & _physics_relevant_analyses)
+                # Physics module only activates with Anomaly Detection
+                _run_pump_physics = "Anomaly Detection" in selected_analyses
                 _pump_physics_summary = ""
                 if PUMP_PHYSICS_AVAILABLE and _run_pump_physics:
                     _mtype_check = machine_info.get("machine_type","")
