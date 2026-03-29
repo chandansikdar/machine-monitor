@@ -3180,21 +3180,33 @@ with tab_analysis:
                         _fv       = st.session_state["sched_form_version"]
                         _is_edit  = _edit_idx is not None
 
-                        # Pre-fill values
+                        # Pre-fill defaults — set ONCE when form opens (version changes)
                         if _is_edit and _edit_idx < len(_entries):
                             _pre_e    = _entries[_edit_idx]
                             _pre_days = _pre_e["days"]
-                            _pre_sh   = int(_pre_e["start"])
-                            _pre_sm   = int(round((_pre_e["start"] - _pre_sh) * 60))
-                            _pre_eh   = int(_pre_e["end"])
-                            _pre_em   = int(round((_pre_e["end"] - _pre_eh) * 60))
+                            _pre_sh   = f"{int(_pre_e['start']):02d}"
+                            _pre_sm   = f"{int(round((_pre_e['start'] - int(_pre_e['start'])) * 60)):02d}"
+                            _pre_eh   = f"{int(_pre_e['end']):02d}"
+                            _pre_em   = f"{int(round((_pre_e['end'] - int(_pre_e['end'])) * 60)):02d}"
                         else:
                             _pre_days = []
-                            _pre_sh, _pre_sm, _pre_eh, _pre_em = 8, 0, 18, 0
+                            _pre_sh, _pre_sm, _pre_eh, _pre_em = "08", "00", "18", "00"
+
+                        # Initialise widget keys ONCE — never override user edits
+                        if f"sf_days_{_fv}" not in st.session_state:
+                            st.session_state[f"sf_days_{_fv}"] = _pre_days
+                        if f"sf_sh_{_fv}" not in st.session_state:
+                            st.session_state[f"sf_sh_{_fv}"] = _pre_sh
+                        if f"sf_sm_{_fv}" not in st.session_state:
+                            st.session_state[f"sf_sm_{_fv}"] = _pre_sm
+                        if f"sf_eh_{_fv}" not in st.session_state:
+                            st.session_state[f"sf_eh_{_fv}"] = _pre_eh
+                        if f"sf_em_{_fv}" not in st.session_state:
+                            st.session_state[f"sf_em_{_fv}"] = _pre_em
 
                         st.markdown("**Step 1 — Select days**")
                         _sel_days = st.multiselect(
-                            "Days", options=_DAYS, default=_pre_days,
+                            "Days", options=_DAYS,
                             label_visibility="collapsed", key=f"sf_days_{_fv}",
                             placeholder="Choose one or more days…",
                         )
@@ -3203,27 +3215,27 @@ with tab_analysis:
                             st.markdown("**Step 2 — Start and End times**")
                             _sr1, _sr2, _sr3 = st.columns([3, 4, 4])
                             _sr1.markdown("**Start**")
-                            _sh_raw = _sr2.text_input("HH", value=f"{_pre_sh:02d}", key=f"sf_sh_{_fv}", placeholder="HH")
-                            _sm_raw = _sr3.text_input("MM", value=f"{_pre_sm:02d}", key=f"sf_sm_{_fv}", placeholder="MM")
+                            _sh_raw = _sr2.text_input("HH", key=f"sf_sh_{_fv}", placeholder="HH")
+                            _sm_raw = _sr3.text_input("MM", key=f"sf_sm_{_fv}", placeholder="MM")
                             _er1, _er2, _er3 = st.columns([3, 4, 4])
                             _er1.markdown("**End**")
-                            _eh_raw = _er2.text_input("HH", value=f"{_pre_eh:02d}", key=f"sf_eh_{_fv}", placeholder="HH")
-                            _em_raw = _er3.text_input("MM", value=f"{_pre_em:02d}", key=f"sf_em_{_fv}", placeholder="MM")
+                            _eh_raw = _er2.text_input("HH", key=f"sf_eh_{_fv}", placeholder="HH")
+                            _em_raw = _er3.text_input("MM", key=f"sf_em_{_fv}", placeholder="MM")
 
-                            # Validate fields
+                            # Validate
                             _form_err = None
                             try:
                                 _sh_v = int(_sh_raw.strip()); assert 0 <= _sh_v <= 23
-                            except: _sh_v = _pre_sh; _form_err = "Start HH must be 0–23"
+                            except: _sh_v = 8;  _form_err = "Start HH must be 0–23"
                             try:
                                 _sm_v = int(_sm_raw.strip()); assert 0 <= _sm_v <= 59
-                            except: _sm_v = _pre_sm; _form_err = (_form_err or "") + "  Start MM 0–59"
+                            except: _sm_v = 0;  _form_err = (_form_err or "") + "  Start MM 0–59"
                             try:
                                 _eh_v = int(_eh_raw.strip()); assert 0 <= _eh_v <= 23
-                            except: _eh_v = _pre_eh; _form_err = (_form_err or "") + "  End HH 0–23"
+                            except: _eh_v = 18; _form_err = (_form_err or "") + "  End HH 0–23"
                             try:
                                 _em_v = int(_em_raw.strip()); assert 0 <= _em_v <= 59
-                            except: _em_v = _pre_em; _form_err = (_form_err or "") + "  End MM 0–59"
+                            except: _em_v = 0;  _form_err = (_form_err or "") + "  End MM 0–59"
 
                             _s_frac = _sh_v + _sm_v / 60
                             _e_frac = _eh_v + _em_v / 60
@@ -3234,14 +3246,6 @@ with tab_analysis:
                                 _form_err = "end_before_start"
                                 st.caption(":red[End must be after Start]")
 
-                            # Store current form values in session state so handler reads them
-                            st.session_state["_sf_days"]    = list(_sel_days)
-                            st.session_state["_sf_s_frac"]  = _s_frac
-                            st.session_state["_sf_e_frac"]  = _e_frac
-                            st.session_state["_sf_err"]     = _form_err
-                            st.session_state["_sf_is_edit"] = _is_edit
-                            st.session_state["_sf_edit_idx"]= _edit_idx
-
                             # Show conflict error from previous save attempt
                             if st.session_state.get("_sf_conflict"):
                                 st.error(st.session_state["_sf_conflict"])
@@ -3251,22 +3255,23 @@ with tab_analysis:
                             _save_label = "✓ Update" if _is_edit else "✓ Save"
                             if _sc1.button(_save_label, type="primary",
                                            key=f"sf_save_{_fv}", disabled=not _save_ok):
-                                # Read stored values — set during this very render
-                                _d  = st.session_state.get("_sf_days", [])
-                                _sf = st.session_state.get("_sf_s_frac", 0)
-                                _ef = st.session_state.get("_sf_e_frac", 0)
-                                _ei = st.session_state.get("_sf_edit_idx")
+                                # Read directly from session_state — these are the actual widget values
+                                _d  = list(st.session_state.get(f"sf_days_{_fv}", []))
+                                _sf = int(str(st.session_state.get(f"sf_sh_{_fv}", "8")).strip() or "8") +                                       int(str(st.session_state.get(f"sf_sm_{_fv}", "0")).strip() or "0") / 60
+                                _ef = int(str(st.session_state.get(f"sf_eh_{_fv}", "18")).strip() or "18") +                                       int(str(st.session_state.get(f"sf_em_{_fv}", "0")).strip() or "0") / 60
 
                                 def _fc(v):
                                     return f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
 
                                 _cx = []
                                 for _ci, _ce in enumerate(st.session_state["sched_entries"]):
-                                    if _ei is not None and _ci == _ei:
+                                    if _edit_idx is not None and _ci == _edit_idx:
                                         continue
                                     _shared = [x for x in _d if x in _ce["days"]]
                                     if _shared and _sf < _ce["end"] and _ce["start"] < _ef:
-                                        _cx.append(f"{', '.join(_shared)}: {_fc(_ce['start'])}–{_fc(_ce['end'])}")
+                                        _cx.append(
+                                            f"{', '.join(_shared)}: {_fc(_ce['start'])}–{_fc(_ce['end'])}"
+                                        )
 
                                 if _cx:
                                     st.session_state["_sf_conflict"] = (
@@ -3276,8 +3281,8 @@ with tab_analysis:
                                 else:
                                     st.session_state["_sf_conflict"] = None
                                     _new = {"days": _d, "start": _sf, "end": _ef}
-                                    if _ei is not None:
-                                        st.session_state["sched_entries"][_ei] = _new
+                                    if _edit_idx is not None:
+                                        st.session_state["sched_entries"][_edit_idx] = _new
                                     else:
                                         st.session_state["sched_entries"].append(_new)
                                     st.session_state["sched_form_open"] = False
