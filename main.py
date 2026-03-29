@@ -3180,108 +3180,115 @@ with tab_analysis:
                         _fv       = st.session_state["sched_form_version"]
                         _is_edit  = _edit_idx is not None
 
-                        # Pre-fill
-                        if _is_edit and _edit_idx < len(_entries):
-                            _pre_e  = _entries[_edit_idx]
-                            _pre_days = list(_pre_e["days"])
-                            _pre_sh = int(_pre_e["start"])
-                            _pre_sm = int(round((_pre_e["start"] - _pre_sh) * 60))
-                            _pre_eh = int(_pre_e["end"])
-                            _pre_em = int(round((_pre_e["end"] - _pre_eh) * 60))
-                        else:
-                            _pre_days = []
-                            _pre_sh, _pre_sm, _pre_eh, _pre_em = 8, 0, 18, 0
+                        # Form buffer — same pattern as electricity rates (proven to work)
+                        _sfbuf_key = f"sf_buf_{_fv}"
+                        if _sfbuf_key not in st.session_state:
+                            if _is_edit and _edit_idx < len(_entries):
+                                _pe = _entries[_edit_idx]
+                                _psh = int(_pe["start"])
+                                _psm = int(round((_pe["start"] - _psh) * 60))
+                                _peh = int(_pe["end"])
+                                _pem = int(round((_pe["end"] - _peh) * 60))
+                                st.session_state[_sfbuf_key] = {
+                                    "days": list(_pe["days"]),
+                                    "sh": _psh, "sm": _psm, "eh": _peh, "em": _pem
+                                }
+                            else:
+                                st.session_state[_sfbuf_key] = {
+                                    "days": [], "sh": 8, "sm": 0, "eh": 18, "em": 0
+                                }
+                        _sfbuf = st.session_state[_sfbuf_key]
 
-                        # Use st.form so all widget values are captured atomically on submit
-                        with st.form(key=f"sched_form_{_fv}", clear_on_submit=False):
-                            st.markdown("**Step 1 — Select days**")
-                            _sel_days = st.multiselect(
-                                "Days", options=_DAYS, default=_pre_days,
-                                label_visibility="collapsed",
-                                placeholder="Choose one or more days…",
-                            )
+                        st.markdown("**Step 1 — Select days**")
+                        # Write back immediately — same as _form["start"] = number_input(...)
+                        _sfbuf["days"] = st.multiselect(
+                            "Days", options=_DAYS, default=_sfbuf["days"],
+                            label_visibility="collapsed", key=f"sf_days_{_fv}",
+                            placeholder="Choose one or more days…",
+                        )
+
+                        if _sfbuf["days"]:
                             st.markdown("**Step 2 — Start and End times**")
-                            st.caption("Times in 24-hour format — HH (00–23) : MM (00–59)")
-                            _sr1, _sr2, _sr3 = st.columns([3, 4, 4])
-                            _sr1.markdown("**Start**")
-                            _sh_raw = _sr2.text_input("HH", value=f"{_pre_sh:02d}", placeholder="HH")
-                            _sm_raw = _sr3.text_input("MM", value=f"{_pre_sm:02d}", placeholder="MM")
-                            _er1, _er2, _er3 = st.columns([3, 4, 4])
-                            _er1.markdown("**End**")
-                            _eh_raw = _er2.text_input("HH", value=f"{_pre_eh:02d}", placeholder="HH")
-                            _em_raw = _er3.text_input("MM", value=f"{_pre_em:02d}", placeholder="MM")
+                            st.caption("24-hour format — HH (0–23) : MM (0–59)")
+                            _s1, _s2, _s3 = st.columns([3, 4, 4])
+                            _s1.markdown("**Start**")
+                            _sfbuf["sh"] = _s2.number_input(
+                                "Start HH", min_value=0, max_value=23,
+                                value=_sfbuf["sh"],
+                                key=f"sf_sh_{_fv}", label_visibility="collapsed"
+                            )
+                            _sfbuf["sm"] = _s3.number_input(
+                                "Start MM", min_value=0, max_value=59,
+                                value=_sfbuf["sm"],
+                                key=f"sf_sm_{_fv}", label_visibility="collapsed"
+                            )
+                            _e1, _e2, _e3 = st.columns([3, 4, 4])
+                            _e1.markdown("**End**")
+                            _sfbuf["eh"] = _e2.number_input(
+                                "End HH", min_value=0, max_value=23,
+                                value=_sfbuf["eh"],
+                                key=f"sf_eh_{_fv}", label_visibility="collapsed"
+                            )
+                            _sfbuf["em"] = _e3.number_input(
+                                "End MM", min_value=0, max_value=59,
+                                value=_sfbuf["em"],
+                                key=f"sf_em_{_fv}", label_visibility="collapsed"
+                            )
 
+                            _sf_frac = _sfbuf["sh"] + _sfbuf["sm"] / 60
+                            _ef_frac = _sfbuf["eh"] + _sfbuf["em"] / 60
+
+                            # Show any conflict error from previous save attempt
                             if st.session_state.get("_sf_conflict"):
                                 st.error(st.session_state["_sf_conflict"])
 
+                            _sb1, _sb2 = st.columns([2, 2])
                             _save_label = "✓ Update" if _is_edit else "✓ Save"
-                            _fc1, _fc2 = st.columns([2, 2])
-                            _submitted = _fc1.form_submit_button(_save_label, type="primary")
-                            _cancelled = _fc2.form_submit_button("Cancel")
+                            if _sb1.button(_save_label, type="primary", key=f"sf_save_{_fv}"):
+                                # Read values directly from buf (written this render — always current)
+                                _d   = list(_sfbuf["days"])
+                                _sf2 = _sfbuf["sh"] + _sfbuf["sm"] / 60
+                                _ef2 = _sfbuf["eh"] + _sfbuf["em"] / 60
 
-                        # Handle form submission OUTSIDE the with block
-                        if _cancelled:
-                            st.session_state["sched_form_open"] = False
-                            st.session_state["sched_edit_idx"]  = None
-                            st.session_state["_sf_conflict"]    = None
-                            st.rerun()
-
-                        if _submitted:
-                            # Validate
-                            _err = None
-                            try:
-                                _sh_v = int(_sh_raw.strip()); assert 0 <= _sh_v <= 23
-                            except: _sh_v = _pre_sh; _err = "Start HH must be 0–23"
-                            try:
-                                _sm_v = int(_sm_raw.strip()); assert 0 <= _sm_v <= 59
-                            except: _sm_v = _pre_sm; _err = (_err or "") + "  Start MM 0–59"
-                            try:
-                                _eh_v = int(_eh_raw.strip()); assert 0 <= _eh_v <= 23
-                            except: _eh_v = _pre_eh; _err = (_err or "") + "  End HH 0–23"
-                            try:
-                                _em_v = int(_em_raw.strip()); assert 0 <= _em_v <= 59
-                            except: _em_v = _pre_em; _err = (_err or "") + "  End MM 0–59"
-
-                            _sf = _sh_v + _sm_v / 60
-                            _ef = _eh_v + _em_v / 60
-
-                            if _err:
-                                st.session_state["_sf_conflict"] = _err
-                                st.rerun()
-                            elif _ef <= _sf:
-                                st.session_state["_sf_conflict"] = "End must be after Start"
-                                st.rerun()
-                            elif not _sel_days:
-                                st.session_state["_sf_conflict"] = "Select at least one day"
-                                st.rerun()
-                            else:
-                                def _fc(v):
-                                    return f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
-                                _cx = []
-                                for _ci, _ce in enumerate(st.session_state["sched_entries"]):
-                                    if _edit_idx is not None and _ci == _edit_idx:
-                                        continue
-                                    _shared = [x for x in _sel_days if x in _ce["days"]]
-                                    if _shared and _sf < _ce["end"] and _ce["start"] < _ef:
-                                        _cx.append(
-                                            f"{', '.join(_shared)}: {_fc(_ce['start'])}–{_fc(_ce['end'])}"
-                                        )
-                                if _cx:
-                                    st.session_state["_sf_conflict"] = (
-                                        "⚠️ Overlap: " + "; ".join(_cx)
-                                        + " — adjust times."
-                                    )
+                                if _ef2 <= _sf2:
+                                    st.session_state["_sf_conflict"] = "End must be after Start"
                                     st.rerun()
                                 else:
-                                    st.session_state["_sf_conflict"] = None
-                                    _new = {"days": list(_sel_days), "start": _sf, "end": _ef}
-                                    if _edit_idx is not None:
-                                        st.session_state["sched_entries"][_edit_idx] = _new
+                                    def _fct(v):
+                                        return f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
+                                    _cx = []
+                                    for _ci, _ce in enumerate(st.session_state["sched_entries"]):
+                                        if _edit_idx is not None and _ci == _edit_idx:
+                                            continue
+                                        _shared = [x for x in _d if x in _ce["days"]]
+                                        if _shared and _sf2 < _ce["end"] and _ce["start"] < _ef2:
+                                            _cx.append(
+                                                f"{', '.join(_shared)}: "
+                                                f"{_fct(_ce['start'])}–{_fct(_ce['end'])}"
+                                            )
+                                    if _cx:
+                                        st.session_state["_sf_conflict"] = (
+                                            "⚠️ Overlap with: "
+                                            + "; ".join(_cx)
+                                            + " — adjust times before saving."
+                                        )
+                                        st.rerun()
                                     else:
-                                        st.session_state["sched_entries"].append(_new)
-                                    st.session_state["sched_form_open"] = False
-                                    st.session_state["sched_edit_idx"]  = None
-                                    st.rerun()
+                                        st.session_state["_sf_conflict"] = None
+                                        _new = {"days": _d, "start": _sf2, "end": _ef2}
+                                        if _edit_idx is not None:
+                                            st.session_state["sched_entries"][_edit_idx] = _new
+                                        else:
+                                            st.session_state["sched_entries"].append(_new)
+                                        st.session_state["sched_form_open"] = False
+                                        st.session_state["sched_edit_idx"]  = None
+                                        st.rerun()
+
+                            if _sb2.button("Cancel", key=f"sf_cancel_{_fv}"):
+                                st.session_state["sched_form_open"] = False
+                                st.session_state["sched_edit_idx"]  = None
+                                st.session_state["_sf_conflict"]    = None
+                                st.rerun()
 
                     if st.button(
                         "🗑️ Clear all",
