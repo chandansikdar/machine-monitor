@@ -3220,7 +3220,7 @@ with tab_analysis:
                             )
 
                             # Row 2: End + action buttons
-                            _er1, _er2, _er3, _er4, _er5 = st.columns([3, 4, 4, 1, 1])
+                            _er1, _er2, _er3 = st.columns([3, 4, 4])
                             _er1.markdown("**End**")
                             _eh_raw = _er2.text_input(
                                 "HH", value=f"{_e_h:02d}",
@@ -3264,11 +3264,12 @@ with tab_analysis:
                             _ewins[_wi]["start"] = _start_frac
                             _ewins[_wi]["end"]   = _end_frac
 
-                            # + and × buttons at end of End row
+                            # Buttons on a row below End
+                            _btn1, _btn2, _btn3 = st.columns([3, 2, 6])
                             if _wi == len(_ewins) - 1:
                                 _last_ok = (not _t_err) and _end_frac > _start_frac
-                                if _er4.button(
-                                    "+",
+                                if _btn1.button(
+                                    "+ Add window",
                                     key=f"ew_add_{_ms_key}_{_wi}",
                                     disabled=not _last_ok,
                                     help="Add another time window"
@@ -3276,7 +3277,7 @@ with tab_analysis:
                                     _ewins.append({"start": _end_frac, "end": min(_end_frac + 4, 23.0)})
                                     st.rerun()
                             if len(_ewins) > 1:
-                                if _er5.button("×", key=f"ew_rm_{_ms_key}_{_wi}", help="Remove"):
+                                if _btn2.button("× Remove", key=f"ew_rm_{_ms_key}_{_wi}", help="Remove this window"):
                                     _ew_del = _wi
                             if _wi < len(_ewins) - 1:
                                 st.divider()
