@@ -3590,6 +3590,8 @@ with tab_analysis:
                 # Physics module only activates with Anomaly Detection
                 _run_pump_physics = "Anomaly Detection" in selected_analyses
                 _pump_physics_summary = ""
+                if not _run_pump_physics:
+                    st.session_state["_pump_physics_result"] = None
                 if PUMP_PHYSICS_AVAILABLE and _run_pump_physics:
                     _mtype_check = machine_info.get("machine_type","")
                     _is_pump_check = (_mtype_check == "Centrifugal Pump" or
