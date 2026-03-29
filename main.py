@@ -3195,10 +3195,11 @@ with tab_analysis:
                         _ewins  = st.session_state[_buf_key]
                         _ew_del = None
 
+                        st.caption("Times in 24-hour format — HH (00–23) : MM (00–59)")
                         _eh1, _eh2, _eh3, _eh4, _eh5, _eh6 = st.columns([2, 2, 2, 2, 1, 1])
-                        _eh1.markdown("Start HH *(24h)*")
+                        _eh1.markdown("Start HH")
                         _eh2.markdown("Start MM")
-                        _eh3.markdown("End HH *(24h)*")
+                        _eh3.markdown("End HH")
                         _eh4.markdown("End MM")
 
                         for _wi, _win in enumerate(_ewins):
