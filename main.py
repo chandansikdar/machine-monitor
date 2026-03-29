@@ -3269,14 +3269,32 @@ with tab_analysis:
                             _save_label = "✓ Update" if _is_edit else "✓ Save"
                             if _sc1.button(_save_label, type="primary",
                                            key=f"sf_save_{_fv}", disabled=not _save_ok):
-                                _new_entry = {"days": list(_sel_days), "start": _s_frac, "end": _e_frac}
-                                if _is_edit:
-                                    st.session_state["sched_entries"][_edit_idx] = _new_entry
+                                # Re-run conflict check inside handler to be certain
+                                _final_conflicts = []
+                                for _ci2, _ce2 in enumerate(st.session_state["sched_entries"]):
+                                    if _is_edit and _ci2 == _edit_idx:
+                                        continue
+                                    _shared2 = [d for d in _sel_days if d in _ce2["days"]]
+                                    if _shared2 and _s_frac < _ce2["end"] and _ce2["start"] < _e_frac:
+                                        _fmtt3 = lambda v: f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
+                                        _final_conflicts.append(
+                                            f"{', '.join(_shared2)}: "
+                                            f"{_fmtt3(_ce2['start'])}–{_fmtt3(_ce2['end'])}"
+                                        )
+                                if _final_conflicts:
+                                    st.error(
+                                        "Cannot save — time overlap detected:  \n"
+                                        + "  \n".join(f"• {c}" for c in _final_conflicts)
+                                    )
                                 else:
-                                    st.session_state["sched_entries"].append(_new_entry)
-                                st.session_state["sched_form_open"] = False
-                                st.session_state["sched_edit_idx"]  = None
-                                st.rerun()
+                                    _new_entry = {"days": list(_sel_days), "start": _s_frac, "end": _e_frac}
+                                    if _is_edit:
+                                        st.session_state["sched_entries"][_edit_idx] = _new_entry
+                                    else:
+                                        st.session_state["sched_entries"].append(_new_entry)
+                                    st.session_state["sched_form_open"] = False
+                                    st.session_state["sched_edit_idx"]  = None
+                                    st.rerun()
                             if _sc2.button("Cancel", key=f"sf_cancel_{_fv}"):
                                 st.session_state["sched_form_open"] = False
                                 st.session_state["sched_edit_idx"]  = None
