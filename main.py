@@ -3253,6 +3253,8 @@ with tab_analysis:
                             _save_ok = (not _form_err) and _e_frac > _s_frac and bool(_sel_days)
                             if _sc1.button(_save_label, type="primary",
                                            key=f"sf_save_{_fv}", disabled=not _save_ok):
+                                # DEBUG — remove after fix
+                                st.write(f"DEBUG sel_days={_sel_days} s={_s_frac} e={_e_frac} entries={st.session_state['sched_entries']}")
                                 # Conflict check runs HERE — inside handler — guaranteed correct
                                 def _fc(v):
                                     return f"{int(v):02d}:{int(round((v - int(v)) * 60)):02d}"
