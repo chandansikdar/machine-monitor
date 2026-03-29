@@ -338,7 +338,7 @@ class Analyzer:
         return {
             "permitted_schedule": {
                 "work_days": [["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d] for d in work_days],
-                "hours": f"{hour_start:02d}:00 – {hour_end:02d}:00",
+                "hours": f"{int(hour_start):02d}:00 – {int(hour_end):02d}:00",
             },
             "total_readings":           len(df),
             "running_readings":         running_rows,
