@@ -3398,9 +3398,11 @@ with tab_analysis:
                 with st.expander("Running indicator & electrical parameters", expanded=False):
                     indicator_col = st.selectbox(
                         "Running indicator column",
-                        options=[""] + numeric_cols_list,
-                        help="Column whose value above threshold = machine is running. Leave blank to auto-detect.",
+                        options=["-- Select --"] + numeric_cols_list,
+                        help="Select the column whose value above the threshold means the machine is running.",
                     )
+                    if indicator_col == "-- Select --":
+                        indicator_col = ""
                     run_threshold = st.number_input(
                         "Running threshold (value above = running)", value=0.0
                     )
@@ -3452,18 +3454,31 @@ with tab_analysis:
                 height=100,
             )
 
-            has_key    = bool(os.getenv("ANTHROPIC_API_KEY"))
+            has_key      = bool(os.getenv("ANTHROPIC_API_KEY"))
             no_selection = len(selected_analyses) == 0
+            # Running indicator mandatory when Schedule Compliance is selected
+            _sched_selected   = "Operational Schedule Compliance" in selected_analyses
+            _indicator_col_ok = True
+            if _sched_selected and schedule is not None:
+                _ind = (schedule or {}).get("indicator_col", "")
+                if not _ind:
+                    _indicator_col_ok = False
+            _block_analysis = not has_key or no_selection or not _indicator_col_ok
             analyze_clicked = st.button(
                 "Analyze",
                 type="primary",
                 use_container_width=True,
-                disabled=not has_key or no_selection,
+                disabled=_block_analysis,
             )
             if not has_key:
                 st.caption("Add your API key in the sidebar first.")
             if no_selection and has_key:
                 st.caption("Select at least one analysis type above.")
+            if _sched_selected and not _indicator_col_ok and has_key and not no_selection:
+                st.caption(
+                    "⚠️ Select a running indicator column in the "
+                    "‘Running indicator & electrical parameters’ section above before running analysis."
+                )
 
         with right:
             if analyze_clicked:
