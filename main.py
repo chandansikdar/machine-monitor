@@ -3180,61 +3180,59 @@ with tab_analysis:
                         _fv       = st.session_state["sched_form_version"]
                         _is_edit  = _edit_idx is not None
 
-                        # Pre-fill defaults — set ONCE when form opens (version changes)
-                        if _is_edit and _edit_idx < len(_entries):
-                            _pre_e    = _entries[_edit_idx]
-                            _pre_days = _pre_e["days"]
-                            _pre_sh   = f"{int(_pre_e['start']):02d}"
-                            _pre_sm   = f"{int(round((_pre_e['start'] - int(_pre_e['start'])) * 60)):02d}"
-                            _pre_eh   = f"{int(_pre_e['end']):02d}"
-                            _pre_em   = f"{int(round((_pre_e['end'] - int(_pre_e['end'])) * 60)):02d}"
-                        else:
-                            _pre_days = []
-                            _pre_sh, _pre_sm, _pre_eh, _pre_em = "08", "00", "18", "00"
-
-                        # Initialise widget keys ONCE — never override user edits
-                        if f"sf_days_{_fv}" not in st.session_state:
-                            st.session_state[f"sf_days_{_fv}"] = _pre_days
-                        if f"sf_sh_{_fv}" not in st.session_state:
-                            st.session_state[f"sf_sh_{_fv}"] = _pre_sh
-                        if f"sf_sm_{_fv}" not in st.session_state:
-                            st.session_state[f"sf_sm_{_fv}"] = _pre_sm
-                        if f"sf_eh_{_fv}" not in st.session_state:
-                            st.session_state[f"sf_eh_{_fv}"] = _pre_eh
-                        if f"sf_em_{_fv}" not in st.session_state:
-                            st.session_state[f"sf_em_{_fv}"] = _pre_em
+                        # Form buffer dict — same pattern as electricity rates
+                        _fbuf_key = f"sf_buf_{_fv}"
+                        if _fbuf_key not in st.session_state:
+                            if _is_edit and _edit_idx < len(_entries):
+                                _pre_e = _entries[_edit_idx]
+                                _pre_sh = int(_pre_e["start"])
+                                _pre_sm = int(round((_pre_e["start"] - _pre_sh) * 60))
+                                _pre_eh = int(_pre_e["end"])
+                                _pre_em = int(round((_pre_e["end"] - _pre_eh) * 60))
+                                st.session_state[_fbuf_key] = {
+                                    "days": list(_pre_e["days"]),
+                                    "sh": f"{_pre_sh:02d}", "sm": f"{_pre_sm:02d}",
+                                    "eh": f"{_pre_eh:02d}", "em": f"{_pre_em:02d}",
+                                }
+                            else:
+                                st.session_state[_fbuf_key] = {
+                                    "days": [], "sh": "08", "sm": "00",
+                                    "eh": "18", "em": "00",
+                                }
+                        _fbuf = st.session_state[_fbuf_key]
 
                         st.markdown("**Step 1 — Select days**")
-                        _sel_days = st.multiselect(
-                            "Days", options=_DAYS,
+                        # Write selection back to buf immediately
+                        _fbuf["days"] = st.multiselect(
+                            "Days", options=_DAYS, default=_fbuf["days"],
                             label_visibility="collapsed", key=f"sf_days_{_fv}",
                             placeholder="Choose one or more days…",
                         )
 
-                        if _sel_days:
+                        if _fbuf["days"]:
                             st.markdown("**Step 2 — Start and End times**")
                             _sr1, _sr2, _sr3 = st.columns([3, 4, 4])
                             _sr1.markdown("**Start**")
-                            _sh_raw = _sr2.text_input("HH", key=f"sf_sh_{_fv}", placeholder="HH")
-                            _sm_raw = _sr3.text_input("MM", key=f"sf_sm_{_fv}", placeholder="MM")
+                            _fbuf["sh"] = _sr2.text_input("HH", value=_fbuf["sh"], key=f"sf_sh_{_fv}", placeholder="HH")
+                            _fbuf["sm"] = _sr3.text_input("MM", value=_fbuf["sm"], key=f"sf_sm_{_fv}", placeholder="MM")
                             _er1, _er2, _er3 = st.columns([3, 4, 4])
                             _er1.markdown("**End**")
-                            _eh_raw = _er2.text_input("HH", key=f"sf_eh_{_fv}", placeholder="HH")
-                            _em_raw = _er3.text_input("MM", key=f"sf_em_{_fv}", placeholder="MM")
+                            _fbuf["eh"] = _er2.text_input("HH", value=_fbuf["eh"], key=f"sf_eh_{_fv}", placeholder="HH")
+                            _fbuf["em"] = _er3.text_input("MM", value=_fbuf["em"], key=f"sf_em_{_fv}", placeholder="MM")
 
-                            # Validate
+                            # Validate using buf values
                             _form_err = None
                             try:
-                                _sh_v = int(_sh_raw.strip()); assert 0 <= _sh_v <= 23
+                                _sh_v = int(_fbuf["sh"].strip()); assert 0 <= _sh_v <= 23
                             except: _sh_v = 8;  _form_err = "Start HH must be 0–23"
                             try:
-                                _sm_v = int(_sm_raw.strip()); assert 0 <= _sm_v <= 59
+                                _sm_v = int(_fbuf["sm"].strip()); assert 0 <= _sm_v <= 59
                             except: _sm_v = 0;  _form_err = (_form_err or "") + "  Start MM 0–59"
                             try:
-                                _eh_v = int(_eh_raw.strip()); assert 0 <= _eh_v <= 23
+                                _eh_v = int(_fbuf["eh"].strip()); assert 0 <= _eh_v <= 23
                             except: _eh_v = 18; _form_err = (_form_err or "") + "  End HH 0–23"
                             try:
-                                _em_v = int(_em_raw.strip()); assert 0 <= _em_v <= 59
+                                _em_v = int(_fbuf["em"].strip()); assert 0 <= _em_v <= 59
                             except: _em_v = 0;  _form_err = (_form_err or "") + "  End MM 0–59"
 
                             _s_frac = _sh_v + _sm_v / 60
@@ -3255,10 +3253,10 @@ with tab_analysis:
                             _save_label = "✓ Update" if _is_edit else "✓ Save"
                             if _sc1.button(_save_label, type="primary",
                                            key=f"sf_save_{_fv}", disabled=not _save_ok):
-                                # Read directly from session_state — these are the actual widget values
-                                _d  = list(st.session_state.get(f"sf_days_{_fv}", []))
-                                _sf = int(str(st.session_state.get(f"sf_sh_{_fv}", "8")).strip() or "8") +                                       int(str(st.session_state.get(f"sf_sm_{_fv}", "0")).strip() or "0") / 60
-                                _ef = int(str(st.session_state.get(f"sf_eh_{_fv}", "18")).strip() or "18") +                                       int(str(st.session_state.get(f"sf_em_{_fv}", "0")).strip() or "0") / 60
+                                # Read from buf — written during this render, always current
+                                _d  = list(_fbuf["days"])
+                                _sf = _s_frac
+                                _ef = _e_frac
 
                                 def _fc(v):
                                     return f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
