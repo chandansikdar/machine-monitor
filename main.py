@@ -3276,6 +3276,11 @@ with tab_analysis:
                             st.session_state["rate_version"] += 1
                             st.rerun()
 
+                        if st.button("🗑️ Clear all rates", type="secondary", key="rate_clear"):
+                            st.session_state["rate_windows"] = []
+                            st.session_state["rate_version"] += 1
+                            st.rerun()
+
                     st.divider()
 
                     # ── Add / edit form ───────────────────────────────────
@@ -3317,7 +3322,7 @@ with tab_analysis:
                         key=f"rf_r_{_rv2}", label_visibility="collapsed"
                     )
 
-                    _rb1, _rb2, _rb3 = st.columns([2, 2, 3])
+                    _rb1, _rb2 = st.columns([2, 2])
                     _apply_label = "✓ Update" if _pre_idx is not None else "+ Add"
                     if _rb1.button(_apply_label, type="primary", key=f"rate_apply_{_rv2}"):
                         if _pre_idx is not None:
@@ -3332,11 +3337,6 @@ with tab_analysis:
                             st.session_state["rate_windows"].pop(_pre_idx)
                             st.session_state["rate_version"] += 1
                             st.rerun()
-
-                    if _rb3.button("🗑️ Clear all rates", type="secondary", key="rate_clear"):
-                        st.session_state["rate_windows"] = []
-                        st.session_state["rate_version"] += 1
-                        st.rerun()
 
                 # ── Derive schedule dict for analysis ─────────────────────
                 _spd   = st.session_state.get("sched_per_day", {})
