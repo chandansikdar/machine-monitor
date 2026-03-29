@@ -133,7 +133,7 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
             _day_rows = df.index.dayofweek == _didx
             _wins     = _dcfg.get("windows", [{"start": 8, "end": 18}])
             _hw = pd.Series(
-                [any(w["start"] <= h < w["end"] for w in _wins) for h in df.index.hour],
+                [any(w["start"] <= h + n/60 < w["end"] for w in _wins) for h, n in zip(df.index.hour, df.index.minute)],
                 index=df.index
             )
             in_schedule |= (_day_rows & _hw)
@@ -141,7 +141,7 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         work_days = schedule.get("work_days", list(range(5)))
         day_mask  = df.index.dayofweek.isin(work_days)
         hour_mask = pd.Series(
-            [any(w["start"] <= h < w["end"] for w in sched_windows) for h in df.index.hour],
+            [any(w["start"] <= h + n/60 < w["end"] for w in sched_windows) for h, n in zip(df.index.hour, df.index.minute)],
             index=df.index
         )
         in_schedule = day_mask & hour_mask
@@ -212,7 +212,10 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         sched_label = "Scheduled (" + ", ".join(_en_days) + ")"
     else:
         work_days   = schedule.get("work_days", list(range(5)))
-        _win_strs   = " / ".join(f"{_w['start']:02d}:00–{_w['end']:02d}:00" for _w in sched_windows)
+        def _fmt_t(v):
+            h = int(v); m = int(round((v - h) * 60))
+            return f"{h:02d}:{m:02d}"
+        _win_strs   = " / ".join(f"{_fmt_t(_w['start'])}–{_fmt_t(_w['end'])}" for _w in sched_windows)
         sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {_win_strs})"
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
@@ -415,18 +418,18 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     _DM     = {d: i for i, d in enumerate(_DAYS_M)}
                     for _ii in range(len(df_idx)):
                         _dow = df_idx.dayofweek[_ii]
-                        _hr  = df_idx.hour[_ii]
+                        _hr  = df_idx.hour[_ii] + df_idx.minute[_ii] / 60
                         if _spd_m:
                             _ok = any(
                                 _spd_m.get(_dn, {}).get("enabled", False) and
                                 _dow == _DM[_dn] and
-                                any(w["start"] <= _hr < w["end"]
+                                any(w["start"] <= (_hr + _df_m.index.minute[_ii]/60) < w["end"]
                                     for w in _spd_m.get(_dn, {}).get("windows", _sched_wins_m))
                                 for _dn in _DAYS_M
                             )
                         else:
                             _ok = (_dow in _wdays_m and
-                                   any(w["start"] <= _hr < w["end"] for w in _sched_wins_m))
+                                   any(w["start"] <= (_hr + _df_m.index.minute[_ii]/60) < w["end"] for w in _sched_wins_m))
                         result.append(_ok)
                     return pd.Series(result, index=df_idx)
 
@@ -533,7 +536,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 (any(
                     _spd_e.get(_dn, {}).get("enabled", False) and
                     _df_e.index.dayofweek[_ii] == _DM_E[_dn] and
-                    any(w["start"] <= _df_e.index.hour[_ii] < w["end"]
+                    any(w["start"] <= (_df_e.index.hour[_ii] + _df_e.index.minute[_ii]/60) < w["end"]
                         for w in _spd_e.get(_dn, {}).get("windows", _wins_e))
                     for _dn in _DAYS_E
                 ) if _spd_e else (
@@ -3122,8 +3125,11 @@ with tab_analysis:
                         if not dcfg.get("enabled"):
                             return "— Off"
                         wins = dcfg.get("windows", [])
+                        def _fmtt(v):
+                            h = int(v); m = int(round((v - h) * 60))
+                            return f"{h:02d}:{m:02d}"
                         return ",  ".join(
-                            f"{w['start']:02d}:00–{w['end']:02d}:00" for w in wins
+                            f"{_fmtt(w['start'])}–{_fmtt(w['end'])}" for w in wins
                         ) if wins else "—"
 
                     _any_set = any(_spd.get(_d, {}).get("enabled") for _d in _DAYS)
@@ -3190,23 +3196,31 @@ with tab_analysis:
                         _ew_del = None
 
                         _eh1, _eh2, _eh3, _eh4 = st.columns([3, 3, 1, 1])
-                        _eh1.markdown("Start (h)")
-                        _eh2.markdown("End (h)")
+                        _eh1.markdown("Start")
+                        _eh2.markdown("End")
 
                         for _wi, _win in enumerate(_ewins):
                             _wc1, _wc2, _wc3, _wc4 = st.columns([3, 3, 1, 1])
-                            _ewins[_wi]["start"] = _wc1.number_input(
-                                "Start", min_value=0, max_value=24,
-                                value=_win["start"],
+                            # Convert stored float hours to time object
+                            _s_h = int(_win["start"]); _s_m = int(round((_win["start"] - _s_h) * 60))
+                            _e_h = int(_win["end"]);   _e_m = int(round((_win["end"]   - _e_h) * 60))
+                            _s_h = min(_s_h, 23); _e_h = min(_e_h, 23)
+                            from datetime import time as _dt
+                            _t_start = _wc1.time_input(
+                                "Start", value=_dt(_s_h, _s_m),
                                 key=f"ew_s_{_ms_key}_{_wi}",
-                                label_visibility="collapsed"
+                                label_visibility="collapsed",
+                                step=60  # 1-minute steps
                             )
-                            _ewins[_wi]["end"] = _wc2.number_input(
-                                "End", min_value=0, max_value=24,
-                                value=_win["end"],
+                            _t_end = _wc2.time_input(
+                                "End", value=_dt(_e_h, _e_m),
                                 key=f"ew_e_{_ms_key}_{_wi}",
-                                label_visibility="collapsed"
+                                label_visibility="collapsed",
+                                step=60
                             )
+                            # Store as fractional hours for backward compatibility
+                            _ewins[_wi]["start"] = _t_start.hour + _t_start.minute / 60
+                            _ewins[_wi]["end"]   = _t_end.hour   + _t_end.minute   / 60
                             if _wi == len(_ewins) - 1:
                                 _last_ok = _ewins[_wi]["end"] > _ewins[_wi]["start"]
                                 if _wc3.button(
@@ -3215,10 +3229,9 @@ with tab_analysis:
                                     disabled=not _last_ok,
                                     help="Add another time window"
                                 ):
-                                    _ewins.append({
-                                        "start": _ewins[_wi]["end"],
-                                        "end":   min(_ewins[_wi]["end"] + 4, 23)
-                                    })
+                                    _next_start = _ewins[_wi]["end"]
+                                    _next_end   = min(_next_start + 4, 23.0)
+                                    _ewins.append({"start": _next_start, "end": _next_end})
                                     st.rerun()
                             else:
                                 _wc3.write("")
@@ -3461,8 +3474,8 @@ with tab_analysis:
 
                 schedule = {
                     "work_days":         _work_days_flat,
-                    "work_hour_start":   _all_windows_flat[0]["start"],
-                    "work_hour_end":     _all_windows_flat[0]["end"],
+                    "work_hour_start":   float(_all_windows_flat[0]["start"]),
+                    "work_hour_end":     float(_all_windows_flat[0]["end"]),
                     "sched_windows":     _all_windows_flat,
                     "sched_per_day":     {d: dict(_spd[d]) for d in _DAYS if d in _spd},
                     "indicator_col":     indicator_col,
