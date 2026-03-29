@@ -3531,8 +3531,8 @@ with tab_analysis:
 
                 schedule = {
                     "work_days":         _work_days_flat,
-                    "work_hour_start":   float(_all_windows_flat[0]["start"]),
-                    "work_hour_end":     float(_all_windows_flat[0]["end"]),
+                    "work_hour_start":   int(_all_windows_flat[0]["start"]),
+                    "work_hour_end":     int(_all_windows_flat[0]["end"]),
                     "sched_windows":     _all_windows_flat,
                     "sched_entries":     list(_entries_flat),
                     "sched_per_day":     {d: dict(_spd[d]) for d in _DAYS if d in _spd},
