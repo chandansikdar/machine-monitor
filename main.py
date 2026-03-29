@@ -3139,8 +3139,9 @@ with tab_analysis:
                         _k = _fmt_win(_dcfg)
                         _in_groups.setdefault(_k, []).append(_d)
 
+                    _del_group = None
                     for _ik, _ids in _in_groups.items():
-                        _rc1, _rc2 = st.columns([6, 1])
+                        _rc1, _rc2, _rc3 = st.columns([5, 1, 1])
                         _rc1.markdown(f"**{', '.join(_ids)}** — {_ik}")
                         if _rc2.button(
                             "✏️",
@@ -3149,6 +3150,7 @@ with tab_analysis:
                         ):
                             st.session_state["sched_version"] += 1
                             _v = st.session_state["sched_version"]
+                            # Use non-pop keys so they survive the rerun
                             st.session_state[f"sched_prefill_days_{_v}"]    = list(_ids)
                             _ref_cfg = _spd.get(_ids[0], {})
                             st.session_state[f"sched_prefill_windows_{_v}"] = (
@@ -3158,6 +3160,16 @@ with tab_analysis:
                             )
                             st.session_state[f"sched_prefill_off_{_v}"] = not _ref_cfg.get("enabled", True)
                             st.rerun()
+                        if _rc3.button(
+                            "×",
+                            key=f"sched_del_{'_'.join(_ids)}",
+                            help=f"Reset {', '.join(_ids)} to off"
+                        ):
+                            _del_group = _ids
+                    if _del_group:
+                        for _d in _del_group:
+                            _spd[_d]["enabled"] = False
+                        st.rerun()
 
                     st.divider()
 
@@ -3165,7 +3177,7 @@ with tab_analysis:
                     st.markdown("**Step 1 — Select days**")
                     _v        = st.session_state["sched_version"]
                     _ms_key   = f"sched_ms_{_v}"
-                    _pre_days = st.session_state.pop(f"sched_prefill_days_{_v}", None)
+                    _pre_days = st.session_state.get(f"sched_prefill_days_{_v}", None)
                     _sel_days = st.multiselect(
                         "Days",
                         options=_DAYS,
@@ -3179,8 +3191,8 @@ with tab_analysis:
                     if _sel_days:
                         st.markdown(f"**Step 2 — Operating hours for {', '.join(_sel_days)}**")
                         _buf_key  = f"sched_buf_{_v}"
-                        _pre_wins = st.session_state.pop(f"sched_prefill_windows_{_v}", None)
-                        _pre_off  = st.session_state.pop(f"sched_prefill_off_{_v}", None)
+                        _pre_wins = st.session_state.get(f"sched_prefill_windows_{_v}", None)
+                        _pre_off  = st.session_state.get(f"sched_prefill_off_{_v}", None)
                         if _buf_key not in st.session_state:
                             if _pre_wins is not None:
                                 st.session_state[_buf_key] = _pre_wins
