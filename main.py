@@ -3586,9 +3586,18 @@ with tab_analysis:
                 st.session_state["_last_schedule"]   = schedule or {}
                 st.session_state["_machine_desc"]    = machine_info.get("description", "")
 
-                # ── Pump physics pre-run ───────────────────────────────
+                # ── Pump physics pre-run — only when a physics-relevant analysis is selected ──
+                _physics_relevant_analyses = {
+                    "Overall Health Assessment",
+                    "Trend & Drift Analysis",
+                    "Anomaly Detection",
+                    "Correlation Analysis",
+                    "Parameter Distribution",
+                    "Cross-Parameter Comparison",
+                }
+                _run_pump_physics = bool(set(selected_analyses) & _physics_relevant_analyses)
                 _pump_physics_summary = ""
-                if PUMP_PHYSICS_AVAILABLE:
+                if PUMP_PHYSICS_AVAILABLE and _run_pump_physics:
                     _mtype_check = machine_info.get("machine_type","")
                     _is_pump_check = (_mtype_check == "Centrifugal Pump" or
                                       any(k in _mtype_check.lower() for k in ["pump","centrifugal"]))
