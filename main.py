@@ -398,6 +398,9 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     (data.index.max() - data.index.min()).total_seconds() + interval_secs
                 ) / 3600
 
+                # If no schedule entries defined, assume zero off-schedule time
+                _no_sched_defined = not st.session_state.get("_last_schedule", {}).get("sched_entries")
+
                 # Total scheduled off time = all hours outside the permitted schedule
                 _sched_ss      = st.session_state.get("_last_schedule", {})
                 _spd_m         = _sched_ss.get("sched_per_day", {})
@@ -456,9 +459,15 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
 
                 # Display metrics
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Total scheduled off time", f"{sched_off_hours:,.1f} hrs")
-                c2.metric("Ran during off-schedule", f"{off_run_hours:,.1f} hrs")
-                c3.metric("Ran during off-schedule", f"{off_run_pct:.1f}%")
+                if _no_sched_defined:
+                    c1.metric("Total scheduled off time", "0.0 hrs")
+                    c2.metric("Ran during off-schedule", "0.0 hrs")
+                    c3.metric("Ran during off-schedule", "0.0%")
+                    st.caption("ℹ️ No running schedule defined — all hours treated as permitted.")
+                else:
+                    c1.metric("Total scheduled off time", f"{sched_off_hours:,.1f} hrs")
+                    c2.metric("Ran during off-schedule", f"{off_run_hours:,.1f} hrs")
+                    c3.metric("Ran during off-schedule", f"{off_run_pct:.1f}%")
             else:
                 off_hours = 0
                 off_run_pct = 0.0
@@ -3484,7 +3493,7 @@ with tab_analysis:
                     if _w not in _all_windows_flat:
                         _all_windows_flat.append(_w)
                 if not _all_windows_flat:
-                    _all_windows_flat = [{"start": 8, "end": 18}]
+                    _all_windows_flat = [{"start": 0, "end": 24}]  # no schedule = all hours permitted
 
                 rate_per_kwh = _rwins[0]["rate"] if _rwins else 0.15
 
@@ -3529,14 +3538,7 @@ with tab_analysis:
 
             has_key      = bool(os.getenv("ANTHROPIC_API_KEY"))
             no_selection = len(selected_analyses) == 0
-            # Running indicator mandatory when Schedule Compliance is selected
-            _sched_selected   = "Operational Schedule Compliance" in selected_analyses
-            _indicator_col_ok = True
-            if _sched_selected and schedule is not None:
-                _ind = (schedule or {}).get("indicator_col", "")
-                if not _ind:
-                    _indicator_col_ok = False
-            _block_analysis = not has_key or no_selection or not _indicator_col_ok
+            _block_analysis = not has_key or no_selection
             analyze_clicked = st.button(
                 "Analyze",
                 type="primary",
@@ -3547,11 +3549,6 @@ with tab_analysis:
                 st.caption("Add your API key in the sidebar first.")
             if no_selection and has_key:
                 st.caption("Select at least one analysis type above.")
-            if _sched_selected and not _indicator_col_ok and has_key and not no_selection:
-                st.caption(
-                    "⚠️ Select a running indicator column in the "
-                    "‘Running indicator & electrical parameters’ section above before running analysis."
-                )
 
         with right:
             if analyze_clicked:
