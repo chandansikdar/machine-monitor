@@ -3252,13 +3252,13 @@ with tab_analysis:
                             _to    = f"{_rw.get('end',23):02d}:00"
                             _rate  = _rw.get("rate", 0.15)
                             _ra1.markdown(
-                                f"**{_lbl}** — {_from}–{_to} — "
+                                f"{_from}–{_to} — "
                                 f"{currency_symbol}{_rate:.4f}/kWh"
                             )
                             if _ra2.button(
                                 "✏️",
                                 key=f"rate_edit_{_rv}_{_ri}",
-                                help=f"Edit {_lbl}"
+                                help="Edit this rate"
                             ):
                                 st.session_state["rate_version"] += 1
                                 _nv = st.session_state["rate_version"]
@@ -3268,7 +3268,7 @@ with tab_analysis:
                             if _ra3.button(
                                 "×",
                                 key=f"rate_del_direct_{_rv}_{_ri}",
-                                help=f"Delete {_lbl}"
+                                help="Delete this rate"
                             ):
                                 _rdel_direct = _ri
                         if _rdel_direct is not None:
@@ -3286,39 +3286,31 @@ with tab_analysis:
 
                     if _rbuf_key not in st.session_state:
                         st.session_state[_rbuf_key] = _pre_rate if _pre_rate is not None else {
-                            "label": "Standard" if not _rwins else (
-                                "Peak" if len(_rwins) == 1 else f"Rate {len(_rwins)+1}"
-                            ),
-                            "start": 0, "end": 23, "rate": 0.15
+                            "start": 0, "end": 24, "rate": 0.15
                         }
 
                     _form = st.session_state[_rbuf_key]
 
-                    _edit_title = f"**Editing: {_pre_rate['label']}**" if _pre_rate else "**New rate**"
+                    _edit_title = f"**Edit rate**" if _pre_rate else "**New rate**"
                     st.markdown(_edit_title)
 
-                    _fc1, _fc2, _fc3, _fc4 = st.columns([3, 3, 3, 3])
-                    _fc1.markdown("Label")
-                    _fc2.markdown("From (h)")
-                    _fc3.markdown("To (h)")
-                    _fc4.markdown(f"{currency_symbol}/kWh")
+                    _fc1, _fc2, _fc3 = st.columns([3, 3, 3])
+                    _fc1.markdown("From (h)")
+                    _fc2.markdown("To (h)")
+                    _fc3.markdown(f"{currency_symbol}/kWh")
 
-                    _fa1, _fa2, _fa3, _fa4 = st.columns([3, 3, 3, 3])
-                    _form["label"] = _fa1.text_input(
-                        "lbl", value=_form.get("label","Rate"),
-                        key=f"rf_lbl_{_rv2}", label_visibility="collapsed"
-                    )
-                    _form["start"] = _fa2.number_input(
+                    _fa1, _fa2, _fa3 = st.columns([3, 3, 3])
+                    _form["start"] = _fa1.number_input(
                         "from", min_value=0, max_value=24,
                         value=_form.get("start",0),
                         key=f"rf_s_{_rv2}", label_visibility="collapsed"
                     )
-                    _form["end"] = _fa3.number_input(
+                    _form["end"] = _fa2.number_input(
                         "to", min_value=0, max_value=24,
                         value=_form.get("end",23),
                         key=f"rf_e_{_rv2}", label_visibility="collapsed"
                     )
-                    _form["rate"] = _fa4.number_input(
+                    _form["rate"] = _fa3.number_input(
                         "rate", min_value=0.0,
                         value=float(_form.get("rate",0.15)),
                         step=0.01, format="%.4f",
