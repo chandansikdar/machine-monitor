@@ -2846,7 +2846,8 @@ with tab_analysis:
         # ── Pump physics viability check — only when Anomaly Detection selected ──
         _mtype = machine_info.get("machine_type","")
         _is_pump = _mtype == "Centrifugal Pump" or any(kw in _mtype.lower() for kw in ["pump","centrifugal pump","water pump"])
-        if _is_pump and data is not None and not data.empty and PUMP_PHYSICS_AVAILABLE and "Anomaly Detection" in selected_analyses:
+        _selected_now = [k.replace("chk_","") for k,v in st.session_state.items() if k.startswith("chk_") and v]
+        if _is_pump and data is not None and not data.empty and PUMP_PHYSICS_AVAILABLE and "Anomaly Detection" in _selected_now:
             _phase_info = detect_phase(data)
             _phases = _phase_info.get("phases",[])
             if _phases:
