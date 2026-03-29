@@ -3108,239 +3108,167 @@ with tab_analysis:
                     st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
                 # ── Running Schedule expander ─────────────────────────
                 with st.expander("🕑 Running Schedule", expanded=False):
-                    if "sched_per_day" not in st.session_state:
-                        st.session_state["sched_per_day"] = {
-                            d: ({"enabled": True,  "windows": [{"start": 8, "end": 18}]}
-                                if d not in ("Sat","Sun")
-                                else {"enabled": False, "windows": [{"start": 8, "end": 18}]})
-                            for d in _DAYS
-                        }
-                    if "sched_version" not in st.session_state:
-                        st.session_state["sched_version"] = 0
+                    _DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 
-                    _spd = st.session_state["sched_per_day"]
+                    # Initialise new flat entry list
+                    if "sched_entries" not in st.session_state:
+                        # Migrate from old sched_per_day if it exists
+                        _old_spd = st.session_state.get("sched_per_day", {})
+                        _migrated = []
+                        if _old_spd:
+                            for _d in _DAYS:
+                                _dcfg = _old_spd.get(_d, {})
+                                if _dcfg.get("enabled") and _dcfg.get("windows"):
+                                    for _w in _dcfg["windows"]:
+                                        _migrated.append({
+                                            "days": [_d],
+                                            "start": _w["start"],
+                                            "end": _w["end"]
+                                        })
+                        st.session_state["sched_entries"] = _migrated
+                    if "sched_form_open" not in st.session_state:
+                        st.session_state["sched_form_open"] = False
+                    if "sched_edit_idx" not in st.session_state:
+                        st.session_state["sched_edit_idx"] = None
+                    if "sched_form_version" not in st.session_state:
+                        st.session_state["sched_form_version"] = 0
 
-                    # ── Current schedule summary ──────────────────────────
-                    def _fmt_win(dcfg):
-                        if not dcfg.get("enabled"):
-                            return "— Off"
-                        wins = dcfg.get("windows", [])
-                        def _fmtt(v):
-                            h = int(v); m = int(round((v - h) * 60))
-                            return f"{h:02d}:{m:02d}"
-                        return ",  ".join(
-                            f"{_fmtt(w['start'])}–{_fmtt(w['end'])}" for w in wins
-                        ) if wins else "—"
+                    _entries = st.session_state["sched_entries"]
 
-                    _any_set = any(_spd.get(_d, {}).get("enabled") for _d in _DAYS)
-                    _in_groups = {}
-                    for _d in _DAYS:
-                        _dcfg = _spd.get(_d, {"enabled": False})
-                        _k = _fmt_win(_dcfg)
-                        _in_groups.setdefault(_k, []).append(_d)
+                    # ── Format reminder ───────────────────────────────────
+                    st.caption(
+                        "Times in 24-hour format — "
+                        "**HH**: 00–23   **MM**: 00–59"
+                    )
+                    st.divider()
 
-                    _del_group = None
-                    for _ik, _ids in _in_groups.items():
-                        _rc1, _rc2, _rc3 = st.columns([5, 1, 1])
-                        _rc1.markdown(f"**{', '.join(_ids)}** — {_ik}")
-                        if _rc2.button(
-                            "✏️",
-                            key=f"sched_edit_{'_'.join(_ids)}",
-                            help=f"Edit {', '.join(_ids)}"
-                        ):
-                            st.session_state["sched_version"] += 1
-                            _v = st.session_state["sched_version"]
-                            # Use non-pop keys so they survive the rerun
-                            st.session_state[f"sched_prefill_days_{_v}"]    = list(_ids)
-                            _ref_cfg = _spd.get(_ids[0], {})
-                            st.session_state[f"sched_prefill_windows_{_v}"] = (
-                                [dict(w) for w in _ref_cfg.get("windows", [])]
-                                if _ref_cfg.get("enabled") and _ref_cfg.get("windows")
-                                else [{"start": 8, "end": 18}]
-                            )
-                            st.session_state[f"sched_prefill_off_{_v}"] = not _ref_cfg.get("enabled", True)
+                    # ── Saved entries ─────────────────────────────────────
+                    def _fmtt(v):
+                        h = int(v); m = int(round((v - h) * 60))
+                        return f"{h:02d}:{m:02d}"
+
+                    _del_entry = None
+                    for _ei, _entry in enumerate(_entries):
+                        _day_str  = ", ".join(_entry["days"])
+                        _time_str = f"{_fmtt(_entry['start'])}–{_fmtt(_entry['end'])}"
+                        _ea1, _ea2, _ea3 = st.columns([6, 1, 1])
+                        _ea1.markdown(f"**{_day_str}** — {_time_str}")
+                        if _ea2.button("✏️", key=f"se_edit_{_ei}", help="Edit"):
+                            st.session_state["sched_form_open"] = True
+                            st.session_state["sched_edit_idx"]   = _ei
+                            st.session_state["sched_form_version"] += 1
                             st.rerun()
-                        if _rc3.button(
-                            "×",
-                            key=f"sched_del_{'_'.join(_ids)}",
-                            help=f"Reset {', '.join(_ids)} to off"
-                        ):
-                            _del_group = _ids
-                    if _del_group:
-                        for _d in _del_group:
-                            _spd[_d]["enabled"] = False
+                        if _ea3.button("×", key=f"se_del_{_ei}", help="Delete"):
+                            _del_entry = _ei
+                    if _del_entry is not None:
+                        _entries.pop(_del_entry)
                         st.rerun()
 
                     st.divider()
 
-                    # ── Step 1: select days ───────────────────────────────
-                    st.markdown("**Step 1 — Select days**")
-                    _v        = st.session_state["sched_version"]
-                    _ms_key   = f"sched_ms_{_v}"
-                    _pre_days = st.session_state.get(f"sched_prefill_days_{_v}", None)
-                    _sel_days = st.multiselect(
-                        "Days",
-                        options=_DAYS,
-                        default=_pre_days if _pre_days is not None else [],
-                        label_visibility="collapsed",
-                        key=_ms_key,
-                        placeholder="Choose one or more days…",
-                    )
-
-                    # ── Step 2: time windows ──────────────────────────────
-                    if _sel_days:
-                        st.markdown(f"**Step 2 — Operating hours for {', '.join(_sel_days)}**")
-                        _buf_key  = f"sched_buf_{_v}"
-                        _pre_wins = st.session_state.get(f"sched_prefill_windows_{_v}", None)
-                        _pre_off  = st.session_state.get(f"sched_prefill_off_{_v}", None)
-                        if _buf_key not in st.session_state:
-                            if _pre_wins is not None:
-                                st.session_state[_buf_key] = _pre_wins
-                            else:
-                                _ref = _spd.get(_sel_days[0], {})
-                                st.session_state[_buf_key] = (
-                                    [dict(w) for w in _ref["windows"]]
-                                    if _ref.get("enabled") and _ref.get("windows")
-                                    else [{"start": 8, "end": 18}]
-                                )
-
-                        _ewins  = st.session_state[_buf_key]
-                        # Process any pending delete BEFORE rendering (prevents off-by-one)
-                        _ew_del_key = f"sched_del_win_{_v}"
-                        if st.session_state.get(_ew_del_key) is not None:
-                            _del_idx = st.session_state.pop(_ew_del_key)
-                            if 0 <= _del_idx < len(st.session_state[_buf_key]):
-                                st.session_state[_buf_key].pop(_del_idx)
+                    # ── Add time button ───────────────────────────────────
+                    if not st.session_state["sched_form_open"]:
+                        if st.button("+ Add time", key="sched_add_btn"):
+                            st.session_state["sched_form_open"]  = True
+                            st.session_state["sched_edit_idx"]   = None
+                            st.session_state["sched_form_version"] += 1
                             st.rerun()
 
-                        _ew_del = None
+                    # ── Entry form ────────────────────────────────────────
+                    if st.session_state["sched_form_open"]:
+                        _edit_idx = st.session_state["sched_edit_idx"]
+                        _fv       = st.session_state["sched_form_version"]
+                        _is_edit  = _edit_idx is not None
 
-                        st.caption("Times in 24-hour format — HH (00–23) : MM (00–59)")
+                        # Pre-fill values
+                        if _is_edit and _edit_idx < len(_entries):
+                            _pre_e     = _entries[_edit_idx]
+                            _pre_days  = _pre_e["days"]
+                            _pre_sh    = int(_pre_e["start"])
+                            _pre_sm    = int(round((_pre_e["start"] - _pre_sh) * 60))
+                            _pre_eh    = int(_pre_e["end"])
+                            _pre_em    = int(round((_pre_e["end"] - _pre_eh) * 60))
+                        else:
+                            _pre_days = []
+                            _pre_sh, _pre_sm, _pre_eh, _pre_em = 8, 0, 18, 0
 
-                        for _wi, _win in enumerate(_ewins):
-                            _s_h = int(_win["start"])
-                            _s_m = int(round((_win["start"] - _s_h) * 60))
-                            _e_h = int(_win["end"])
-                            _e_m = int(round((_win["end"]   - _e_h) * 60))
-                            _s_h = min(_s_h, 23); _e_h = min(_e_h, 23)
-                            _s_m = min(_s_m, 59); _e_m = min(_e_m, 59)
-
-                            # Row 1: Start
-                            _sr1, _sr2, _sr3 = st.columns([3, 4, 4])
-                            _sr1.markdown("**Start**")
-                            _sh_raw = _sr2.text_input(
-                                "HH", value=f"{_s_h:02d}",
-                                key=f"ew_sh_{_ms_key}_{_wi}",
-                                placeholder="HH"
-                            )
-                            _sm_raw = _sr3.text_input(
-                                "MM", value=f"{_s_m:02d}",
-                                key=f"ew_sm_{_ms_key}_{_wi}",
-                                placeholder="MM"
-                            )
-
-                            # Row 2: End + action buttons
-                            _er1, _er2, _er3 = st.columns([3, 4, 4])
-                            _er1.markdown("**End**")
-                            _eh_raw = _er2.text_input(
-                                "HH", value=f"{_e_h:02d}",
-                                key=f"ew_eh_{_ms_key}_{_wi}",
-                                placeholder="HH"
-                            )
-                            _em_raw = _er3.text_input(
-                                "MM", value=f"{_e_m:02d}",
-                                key=f"ew_em_{_ms_key}_{_wi}",
-                                placeholder="MM"
-                            )
-
-                            # Validate and parse
-                            _t_err = None
-                            try:
-                                _sh_v = int(_sh_raw.strip()); assert 0 <= _sh_v <= 23
-                            except:
-                                _sh_v = _s_h; _t_err = "Start HH: 0–23"
-                            try:
-                                _sm_v = int(_sm_raw.strip()); assert 0 <= _sm_v <= 59
-                            except:
-                                _sm_v = _s_m; _t_err = (_t_err or "") + "  Start MM: 0–59"
-                            try:
-                                _eh_v = int(_eh_raw.strip()); assert 0 <= _eh_v <= 23
-                            except:
-                                _eh_v = _e_h; _t_err = (_t_err or "") + "  End HH: 0–23"
-                            try:
-                                _em_v = int(_em_raw.strip()); assert 0 <= _em_v <= 59
-                            except:
-                                _em_v = _e_m; _t_err = (_t_err or "") + "  End MM: 0–59"
-
-                            _start_frac = _sh_v + _sm_v / 60
-                            _end_frac   = _eh_v + _em_v / 60
-
-                            if _t_err:
-                                st.caption(f":red[{_t_err}]")
-                            elif _end_frac <= _start_frac:
-                                _t_err = "End must be after Start"
-                                st.caption(f":red[End ≤ Start]")
-
-                            _ewins[_wi]["start"] = _start_frac
-                            _ewins[_wi]["end"]   = _end_frac
-
-                            # Buttons on a row below End
-                            _btn1, _btn2 = st.columns([3, 3])
-                            # + Add time: only on last window
-                            _is_last = (_wi == len(_ewins) - 1)
-                            _last_ok = _is_last and (not _t_err) and _end_frac > _start_frac
-                            if _btn1.button(
-                                "+ Add time",
-                                key=f"ew_add_{_ms_key}_{_wi}",
-                                disabled=not _last_ok,
-                                help="Add another time window" if _is_last else "Only available on the last window"
-                            ):
-                                _ewins.append({"start": _end_frac, "end": min(_end_frac + 4, 23.0)})
-                                st.rerun()
-                            # × Remove: always visible, disabled only when single window
-                            if _btn2.button(
-                                "× Remove",
-                                key=f"ew_rm_{_ms_key}_{_wi}",
-                                disabled=len(_ewins) <= 1,
-                                help="Remove this window"
-                            ):
-                                # Store index in session state — processed before next render
-                                st.session_state[f"sched_del_win_{_v}"] = _wi
-                                st.rerun()
-                            if _wi < len(_ewins) - 1:
-                                st.divider()
-
-                        # (delete handled pre-render above)
-
-                        _set_off = st.checkbox(
-                            "Mark these days as off (not operating)",
-                            value=False,
-                            key=f"sched_off_{_ms_key}"
+                        st.markdown("**Step 1 — Select days**")
+                        _sel_days = st.multiselect(
+                            "Days",
+                            options=_DAYS,
+                            default=_pre_days,
+                            label_visibility="collapsed",
+                            key=f"sf_days_{_fv}",
+                            placeholder="Choose one or more days…",
                         )
 
-                        if st.button(
-                            f"✓ Apply to {', '.join(_sel_days)}",
-                            type="primary",
-                            key=f"sched_apply_{_ms_key}"
-                        ):
-                            for _d in _sel_days:
-                                _spd[_d]["enabled"] = not _set_off
-                                _spd[_d]["windows"]  = [dict(w) for w in _ewins]
-                            st.session_state["sched_version"] += 1
-                            st.rerun()
+                        if _sel_days:
+                            st.markdown("**Step 2 — Start and End times**")
+                            _sr1, _sr2, _sr3 = st.columns([3, 4, 4])
+                            _sr1.markdown("**Start**")
+                            _sh_raw = _sr2.text_input("HH", value=f"{_pre_sh:02d}",
+                                key=f"sf_sh_{_fv}", placeholder="HH")
+                            _sm_raw = _sr3.text_input("MM", value=f"{_pre_sm:02d}",
+                                key=f"sf_sm_{_fv}", placeholder="MM")
+                            _er1, _er2, _er3 = st.columns([3, 4, 4])
+                            _er1.markdown("**End**")
+                            _eh_raw = _er2.text_input("HH", value=f"{_pre_eh:02d}",
+                                key=f"sf_eh_{_fv}", placeholder="HH")
+                            _em_raw = _er3.text_input("MM", value=f"{_pre_em:02d}",
+                                key=f"sf_em_{_fv}", placeholder="MM")
+
+                            # Validate
+                            _form_err = None
+                            try:
+                                _sh_v = int(_sh_raw.strip()); assert 0 <= _sh_v <= 23
+                            except: _sh_v = _pre_sh; _form_err = "Start HH must be 0–23"
+                            try:
+                                _sm_v = int(_sm_raw.strip()); assert 0 <= _sm_v <= 59
+                            except: _sm_v = _pre_sm; _form_err = (_form_err or "") + "  Start MM 0–59"
+                            try:
+                                _eh_v = int(_eh_raw.strip()); assert 0 <= _eh_v <= 23
+                            except: _eh_v = _pre_eh; _form_err = (_form_err or "") + "  End HH 0–23"
+                            try:
+                                _em_v = int(_em_raw.strip()); assert 0 <= _em_v <= 59
+                            except: _em_v = _pre_em; _form_err = (_form_err or "") + "  End MM 0–59"
+
+                            _s_frac = _sh_v + _sm_v / 60
+                            _e_frac = _eh_v + _em_v / 60
+
+                            if _form_err:
+                                st.caption(f":red[{_form_err}]")
+                            elif _e_frac <= _s_frac:
+                                _form_err = "End must be after Start"
+                                st.caption(f":red[End must be after Start]")
+
+                            _save_ok = (not _form_err) and _e_frac > _s_frac
+                            _sc1, _sc2 = st.columns([2, 2])
+                            _save_label = "✓ Update" if _is_edit else "✓ Save"
+                            if _sc1.button(_save_label, type="primary",
+                                           key=f"sf_save_{_fv}", disabled=not _save_ok):
+                                _new_entry = {"days": list(_sel_days), "start": _s_frac, "end": _e_frac}
+                                if _is_edit:
+                                    st.session_state["sched_entries"][_edit_idx] = _new_entry
+                                else:
+                                    st.session_state["sched_entries"].append(_new_entry)
+                                st.session_state["sched_form_open"] = False
+                                st.session_state["sched_edit_idx"]  = None
+                                st.rerun()
+                            if _sc2.button("Cancel", key=f"sf_cancel_{_fv}"):
+                                st.session_state["sched_form_open"] = False
+                                st.session_state["sched_edit_idx"]  = None
+                                st.rerun()
 
                     if st.button(
                         "🗑️ Clear all",
                         type="secondary",
                         key="sched_clear",
-                        help="Reset entire schedule — all days set to off"
+                        help="Remove all schedule entries"
                     ):
-                        st.session_state["sched_per_day"] = {
-                            d: {"enabled": False, "windows": [{"start": 8, "end": 18}]}
-                            for d in _DAYS
-                        }
-                        st.session_state["sched_version"] = st.session_state.get("sched_version", 0) + 1
+                        st.session_state["sched_entries"] = []
+                        st.session_state["sched_form_open"] = False
                         st.rerun()
+
 
                 # ── Electricity Rates expander ────────────────────────────
                 with st.expander("⚡ Electricity Rates", expanded=False):
@@ -3502,21 +3430,28 @@ with tab_analysis:
                             st.rerun()
 
                 # ── Derive schedule dict for analysis ─────────────────────
-                _spd   = st.session_state.get("sched_per_day", {})
+                _entries_flat = st.session_state.get("sched_entries", [])
                 _rwins = st.session_state.get("rate_windows") or [{"label":"Standard","start":0,"end":23,"rate":0.15}]
                 _cur   = (st.session_state.get("rate_currency","$ — USD") or "$ — USD")
                 currency_symbol = (_cur.split(" — ")[0].strip()
                                    if _cur != "Other"
                                    else st.session_state.get("rate_cur_sym", "$"))
 
-                # Flatten per-day schedule into work_days + sched_windows for chart/analysis
-                _work_days_flat = [_day_map[d] for d in _DAYS if _spd.get(d, {}).get("enabled", False)]
+                # Build sched_per_day from flat entries for downstream mask code
+                _day_map_full = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
+                _spd = {d: {"enabled": False, "windows": []} for d in _DAYS}
+                _work_days_set = set()
+                for _ent in _entries_flat:
+                    for _d in _ent["days"]:
+                        _spd[_d]["enabled"] = True
+                        _spd[_d]["windows"].append({"start": _ent["start"], "end": _ent["end"]})
+                        _work_days_set.add(_day_map_full.get(_d, 0))
+                _work_days_flat = sorted(_work_days_set)
                 _all_windows_flat = []
-                for _d in _DAYS:
-                    if _spd.get(_d, {}).get("enabled", False):
-                        for _w in _spd[_d].get("windows", []):
-                            if {"start": _w["start"], "end": _w["end"]} not in _all_windows_flat:
-                                _all_windows_flat.append({"start": _w["start"], "end": _w["end"]})
+                for _ent in _entries_flat:
+                    _w = {"start": _ent["start"], "end": _ent["end"]}
+                    if _w not in _all_windows_flat:
+                        _all_windows_flat.append(_w)
                 if not _all_windows_flat:
                     _all_windows_flat = [{"start": 8, "end": 18}]
 
@@ -3544,6 +3479,7 @@ with tab_analysis:
                     "work_hour_start":   float(_all_windows_flat[0]["start"]),
                     "work_hour_end":     float(_all_windows_flat[0]["end"]),
                     "sched_windows":     _all_windows_flat,
+                    "sched_entries":     list(_entries_flat),
                     "sched_per_day":     {d: dict(_spd[d]) for d in _DAYS if d in _spd},
                     "indicator_col":     indicator_col,
                     "running_threshold": float(run_threshold),
