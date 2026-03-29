@@ -3286,17 +3286,17 @@ with tab_analysis:
                     # ── Add / edit form ───────────────────────────────────
                     _rv2      = st.session_state["rate_version"]
                     _rbuf_key = f"rate_form_{_rv2}"
-                    _pre_rate = st.session_state.pop(f"rate_prefill_{_rv2}", None)
-                    _pre_idx  = st.session_state.pop(f"rate_prefill_idx_{_rv2}", None)
+                    _pre_rate = st.session_state.get(f"rate_prefill_{_rv2}", None)
+                    _pre_idx  = st.session_state.get(f"rate_prefill_idx_{_rv2}", None)
 
                     if _rbuf_key not in st.session_state:
-                        st.session_state[_rbuf_key] = _pre_rate if _pre_rate is not None else {
+                        st.session_state[_rbuf_key] = dict(_pre_rate) if _pre_rate is not None else {
                             "start": 0, "end": 24, "rate": 0.15
                         }
 
                     _form = st.session_state[_rbuf_key]
 
-                    _edit_title = f"**Edit rate**" if _pre_rate else "**Add rate**"
+                    _edit_title = "**Edit rate**" if _pre_idx is not None else "**Add rate**"
                     st.markdown(_edit_title)
 
                     _fc1, _fc2, _fc3 = st.columns([3, 3, 3])
@@ -3358,12 +3358,17 @@ with tab_analysis:
                                     st.session_state["rate_windows"][_pre_idx] = dict(_form)
                                 else:
                                     st.session_state["rate_windows"].append(dict(_form))
+                                # Clear prefill keys now that apply is done
+                                st.session_state.pop(f"rate_prefill_{_rv2}", None)
+                                st.session_state.pop(f"rate_prefill_idx_{_rv2}", None)
                                 st.session_state["rate_version"] += 1
                                 st.rerun()
 
                     if _pre_idx is not None:
                         if _rb2.button("🗑️ Delete", type="secondary", key=f"rate_del_{_rv2}"):
                             st.session_state["rate_windows"].pop(_pre_idx)
+                            st.session_state.pop(f"rate_prefill_{_rv2}", None)
+                            st.session_state.pop(f"rate_prefill_idx_{_rv2}", None)
                             st.session_state["rate_version"] += 1
                             st.rerun()
 
