@@ -3205,6 +3205,14 @@ with tab_analysis:
                                 )
 
                         _ewins  = st.session_state[_buf_key]
+                        # Process any pending delete BEFORE rendering (prevents off-by-one)
+                        _ew_del_key = f"sched_del_win_{_v}"
+                        if st.session_state.get(_ew_del_key) is not None:
+                            _del_idx = st.session_state.pop(_ew_del_key)
+                            if 0 <= _del_idx < len(st.session_state[_buf_key]):
+                                st.session_state[_buf_key].pop(_del_idx)
+                            st.rerun()
+
                         _ew_del = None
 
                         st.caption("Times in 24-hour format — HH (00–23) : MM (00–59)")
@@ -3296,13 +3304,13 @@ with tab_analysis:
                                 disabled=len(_ewins) <= 1,
                                 help="Remove this window"
                             ):
-                                _ew_del = _wi
+                                # Store index in session state — processed before next render
+                                st.session_state[f"sched_del_win_{_v}"] = _wi
+                                st.rerun()
                             if _wi < len(_ewins) - 1:
                                 st.divider()
 
-                        if _ew_del is not None:
-                            st.session_state[_buf_key].pop(_ew_del)
-                            st.rerun()
+                        # (delete handled pre-render above)
 
                         _set_off = st.checkbox(
                             "Mark these days as off (not operating)",
