@@ -3265,25 +3265,26 @@ with tab_analysis:
                             _ewins[_wi]["end"]   = _end_frac
 
                             # Buttons on a row below End
-                            _btn1, _btn2, _btn3 = st.columns([3, 3, 5])
-                            if _wi == len(_ewins) - 1:
-                                _last_ok = (not _t_err) and _end_frac > _start_frac
-                                if _btn1.button(
-                                    "+ Add time",
-                                    key=f"ew_add_{_ms_key}_{_wi}",
-                                    disabled=not _last_ok,
-                                    help="Add another time window"
-                                ):
-                                    _ewins.append({"start": _end_frac, "end": min(_end_frac + 4, 23.0)})
-                                    st.rerun()
+                            _btn1, _btn2 = st.columns([3, 3])
+                            # + Add time: only on last window
+                            _is_last = (_wi == len(_ewins) - 1)
+                            _last_ok = _is_last and (not _t_err) and _end_frac > _start_frac
+                            if _btn1.button(
+                                "+ Add time",
+                                key=f"ew_add_{_ms_key}_{_wi}",
+                                disabled=not _last_ok,
+                                help="Add another time window" if _is_last else "Only available on the last window"
+                            ):
+                                _ewins.append({"start": _end_frac, "end": min(_end_frac + 4, 23.0)})
+                                st.rerun()
+                            # × Remove: always visible, disabled only when single window
                             if _btn2.button(
                                 "× Remove",
                                 key=f"ew_rm_{_ms_key}_{_wi}",
                                 disabled=len(_ewins) <= 1,
                                 help="Remove this window"
                             ):
-                                if len(_ewins) > 1:
-                                    _ew_del = _wi
+                                _ew_del = _wi
                             if _wi < len(_ewins) - 1:
                                 st.divider()
 
