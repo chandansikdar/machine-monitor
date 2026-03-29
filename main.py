@@ -3206,7 +3206,7 @@ with tab_analysis:
                             _s_m = min(_s_m, 59); _e_m = min(_e_m, 59)
 
                             # Row 1: Start
-                            _sr1, _sr2, _sr3, _sr4 = st.columns([2, 2, 2, 5])
+                            _sr1, _sr2, _sr3 = st.columns([3, 4, 4])
                             _sr1.markdown("**Start**")
                             _sh_raw = _sr2.text_input(
                                 "HH", value=f"{_s_h:02d}",
@@ -3220,7 +3220,7 @@ with tab_analysis:
                             )
 
                             # Row 2: End + action buttons
-                            _er1, _er2, _er3, _er4, _er5 = st.columns([2, 2, 2, 1, 1])
+                            _er1, _er2, _er3, _er4, _er5 = st.columns([3, 4, 4, 1, 1])
                             _er1.markdown("**End**")
                             _eh_raw = _er2.text_input(
                                 "HH", value=f"{_e_h:02d}",
