@@ -3195,46 +3195,91 @@ with tab_analysis:
                         _ewins  = st.session_state[_buf_key]
                         _ew_del = None
 
-                        _eh1, _eh2, _eh3, _eh4 = st.columns([3, 3, 1, 1])
-                        _eh1.markdown("Start")
-                        _eh2.markdown("End")
+                        _eh1, _eh2, _eh3, _eh4, _eh5, _eh6 = st.columns([2, 2, 2, 2, 1, 1])
+                        _eh1.markdown("Start HH *(24h)*")
+                        _eh2.markdown("Start MM")
+                        _eh3.markdown("End HH *(24h)*")
+                        _eh4.markdown("End MM")
 
                         for _wi, _win in enumerate(_ewins):
-                            _wc1, _wc2, _wc3, _wc4 = st.columns([3, 3, 1, 1])
-                            # Convert stored float hours to time object
-                            _s_h = int(_win["start"]); _s_m = int(round((_win["start"] - _s_h) * 60))
-                            _e_h = int(_win["end"]);   _e_m = int(round((_win["end"]   - _e_h) * 60))
+                            _s_h = int(_win["start"])
+                            _s_m = int(round((_win["start"] - _s_h) * 60))
+                            _e_h = int(_win["end"])
+                            _e_m = int(round((_win["end"]   - _e_h) * 60))
                             _s_h = min(_s_h, 23); _e_h = min(_e_h, 23)
-                            from datetime import time as _dt
-                            _t_start = _wc1.time_input(
-                                "Start", value=_dt(_s_h, _s_m),
-                                key=f"ew_s_{_ms_key}_{_wi}",
+                            _s_m = min(_s_m, 59); _e_m = min(_e_m, 59)
+
+                            _wc1, _wc2, _wc3, _wc4, _wc5, _wc6 = st.columns([2, 2, 2, 2, 1, 1])
+
+                            _sh_raw = _wc1.text_input(
+                                "SH", value=f"{_s_h:02d}",
+                                key=f"ew_sh_{_ms_key}_{_wi}",
                                 label_visibility="collapsed",
-                                step=60  # 1-minute steps
+                                placeholder="HH"
                             )
-                            _t_end = _wc2.time_input(
-                                "End", value=_dt(_e_h, _e_m),
-                                key=f"ew_e_{_ms_key}_{_wi}",
+                            _sm_raw = _wc2.text_input(
+                                "SM", value=f"{_s_m:02d}",
+                                key=f"ew_sm_{_ms_key}_{_wi}",
                                 label_visibility="collapsed",
-                                step=60
+                                placeholder="MM"
                             )
-                            # Store as fractional hours for backward compatibility
-                            _ewins[_wi]["start"] = _t_start.hour + _t_start.minute / 60
-                            _ewins[_wi]["end"]   = _t_end.hour   + _t_end.minute   / 60
+                            _eh_raw = _wc3.text_input(
+                                "EH", value=f"{_e_h:02d}",
+                                key=f"ew_eh_{_ms_key}_{_wi}",
+                                label_visibility="collapsed",
+                                placeholder="HH"
+                            )
+                            _em_raw = _wc4.text_input(
+                                "EM", value=f"{_e_m:02d}",
+                                key=f"ew_em_{_ms_key}_{_wi}",
+                                label_visibility="collapsed",
+                                placeholder="MM"
+                            )
+
+                            # Validate and parse
+                            _t_err = None
+                            try:
+                                _sh_v = int(_sh_raw.strip()); assert 0 <= _sh_v <= 23
+                            except:
+                                _sh_v = _s_h; _t_err = "Start HH must be 0–23"
+                            try:
+                                _sm_v = int(_sm_raw.strip()); assert 0 <= _sm_v <= 59
+                            except:
+                                _sm_v = _s_m; _t_err = (_t_err or "") + "  Start MM must be 0–59"
+                            try:
+                                _eh_v = int(_eh_raw.strip()); assert 0 <= _eh_v <= 23
+                            except:
+                                _eh_v = _e_h; _t_err = (_t_err or "") + "  End HH must be 0–23"
+                            try:
+                                _em_v = int(_em_raw.strip()); assert 0 <= _em_v <= 59
+                            except:
+                                _em_v = _e_m; _t_err = (_t_err or "") + "  End MM must be 0–59"
+
+                            _start_frac = _sh_v + _sm_v / 60
+                            _end_frac   = _eh_v + _em_v / 60
+                            if _t_err:
+                                _wc5.markdown(f"<span style='color:red;font-size:0.75em'>{_t_err}</span>",
+                                              unsafe_allow_html=True)
+                            elif _end_frac <= _start_frac:
+                                _t_err = "End must be after Start"
+                                _wc5.markdown("<span style='color:red;font-size:0.75em'>End ≤ Start</span>",
+                                              unsafe_allow_html=True)
+
+                            _ewins[_wi]["start"] = _start_frac
+                            _ewins[_wi]["end"]   = _end_frac
+
                             if _wi == len(_ewins) - 1:
-                                _last_ok = _ewins[_wi]["end"] > _ewins[_wi]["start"]
-                                if _wc3.button(
+                                _last_ok = (not _t_err) and _end_frac > _start_frac
+                                if _wc6.button(
                                     "+",
                                     key=f"ew_add_{_ms_key}_{_wi}",
                                     disabled=not _last_ok,
                                     help="Add another time window"
                                 ):
-                                    _next_start = _ewins[_wi]["end"]
-                                    _next_end   = min(_next_start + 4, 23.0)
-                                    _ewins.append({"start": _next_start, "end": _next_end})
+                                    _ewins.append({"start": _end_frac, "end": min(_end_frac + 4, 23.0)})
                                     st.rerun()
                             else:
-                                _wc3.write("")
+                                _wc6.write("")
                             if len(_ewins) > 1:
                                 if _wc4.button("×", key=f"ew_rm_{_ms_key}_{_wi}", help="Remove"):
                                     _ew_del = _wi
