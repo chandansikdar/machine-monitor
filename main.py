@@ -657,11 +657,20 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 assumptions    = "Add a kW, kWh, or current (A) column to enable energy calculation."
                 method_detail  = ""
 
-            cost_saved = off_kwh * rate_kwh
+            # Zero out energy metrics when no schedule is defined
+            if _no_sched_defined:
+                off_kwh    = 0.0
+                cost_saved = 0.0
+            else:
+                cost_saved = off_kwh * rate_kwh
 
             e1, e2 = st.columns(2)
-            e1.metric("Off-schedule energy", f"{off_kwh:,.3f} kWh")
-            e2.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.2f}")
+            if _no_sched_defined:
+                e1.metric("Off-schedule energy", "N/A")
+                e2.metric("Cost saving potential", "N/A")
+            else:
+                e1.metric("Off-schedule energy", f"{off_kwh:,.3f} kWh")
+                e2.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.2f}")
 
             calc_note = (
                 f"**Scenario:** {scenario_label}  \n"
