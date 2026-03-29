@@ -3241,49 +3241,38 @@ with tab_analysis:
                                 _form_err = "End must be after Start"
                                 st.caption(f":red[End must be after Start]")
 
-                            # Conflict check using render-phase values (reliable in Streamlit)
+                            # Show stored conflict error (set by previous save attempt)
                             _conflict_key = f"sched_conflict_msg_{_fv}"
+                            if st.session_state.get(_conflict_key):
+                                st.error(st.session_state[_conflict_key])
 
-                            def _fc(v):
-                                return f"{int(v):02d}:{int(round((v - int(v)) * 60)):02d}"
-
-                            _save_conflicts = []
-                            if (not _form_err) and _e_frac > _s_frac and _sel_days:
+                            _sc1, _sc2 = st.columns([2, 2])
+                            _save_label = "✓ Update" if _is_edit else "✓ Save"
+                            # Only disable for field validation errors — NOT for conflicts
+                            # (conflict is checked inside handler to avoid disabled-click race)
+                            _save_ok = (not _form_err) and _e_frac > _s_frac and bool(_sel_days)
+                            if _sc1.button(_save_label, type="primary",
+                                           key=f"sf_save_{_fv}", disabled=not _save_ok):
+                                # Conflict check runs HERE — inside handler — guaranteed correct
+                                def _fc(v):
+                                    return f"{int(v):02d}:{int(round((v - int(v)) * 60)):02d}"
+                                _conflicts_now = []
                                 for _ci2, _ce2 in enumerate(st.session_state["sched_entries"]):
                                     if _is_edit and _ci2 == _edit_idx:
                                         continue
-                                    _shared = [d for d in _sel_days if d in _ce2["days"]]
-                                    if _shared and _s_frac < _ce2["end"] and _ce2["start"] < _e_frac:
-                                        _save_conflicts.append(
-                                            f"{', '.join(_shared)}: {_fc(_ce2['start'])}–{_fc(_ce2['end'])}"
+                                    _sh2 = [d for d in _sel_days if d in _ce2["days"]]
+                                    if _sh2 and _s_frac < _ce2["end"] and _ce2["start"] < _e_frac:
+                                        _conflicts_now.append(
+                                            f"{', '.join(_sh2)}: {_fc(_ce2['start'])}–{_fc(_ce2['end'])}"
                                         )
-
-                            if _save_conflicts:
-                                st.error(
-                                    "⚠️ Time overlap with existing: "
-                                    + "; ".join(_save_conflicts)
-                                    + " — change the times before saving."
-                                )
-
-                            # Clear old conflict message if no conflict now
-                            if not _save_conflicts:
-                                st.session_state.pop(_conflict_key, None)
-
-                            _save_ok = (not _form_err) and _e_frac > _s_frac and not _save_conflicts
-                            _sc1, _sc2 = st.columns([2, 2])
-                            _save_label = "✓ Update" if _is_edit else "✓ Save"
-                            if _sc1.button(_save_label, type="primary",
-                                           key=f"sf_save_{_fv}", disabled=not _save_ok):
-                                # Final guard — re-check before writing
-                                _final_ok = True
-                                for _ci3, _ce3 in enumerate(st.session_state["sched_entries"]):
-                                    if _is_edit and _ci3 == _edit_idx:
-                                        continue
-                                    _sh3 = [d for d in _sel_days if d in _ce3["days"]]
-                                    if _sh3 and _s_frac < _ce3["end"] and _ce3["start"] < _e_frac:
-                                        _final_ok = False
-                                        break
-                                if _final_ok:
+                                if _conflicts_now:
+                                    st.session_state[_conflict_key] = (
+                                        "⚠️ Time overlap with: "
+                                        + "; ".join(_conflicts_now)
+                                        + " — adjust times before saving."
+                                    )
+                                else:
+                                    st.session_state.pop(_conflict_key, None)
                                     _new_entry = {"days": list(_sel_days), "start": _s_frac, "end": _e_frac}
                                     if _is_edit:
                                         st.session_state["sched_entries"][_edit_idx] = _new_entry
@@ -3291,7 +3280,7 @@ with tab_analysis:
                                         st.session_state["sched_entries"].append(_new_entry)
                                     st.session_state["sched_form_open"] = False
                                     st.session_state["sched_edit_idx"]  = None
-                                    st.rerun()
+                                st.rerun()
                             if _sc2.button("Cancel", key=f"sf_cancel_{_fv}"):
                                 st.session_state["sched_form_open"] = False
                                 st.session_state["sched_edit_idx"]  = None
