@@ -3241,6 +3241,29 @@ with tab_analysis:
                                 _form_err = "End must be after Start"
                                 st.caption(f":red[End must be after Start]")
 
+                            # Conflict check: do any existing entries overlap on the same day?
+                            _conflicts = []
+                            if (not _form_err) and _e_frac > _s_frac:
+                                for _ci, _ce in enumerate(_entries):
+                                    if _is_edit and _ci == _edit_idx:
+                                        continue   # skip self when editing
+                                    _shared_days = [d for d in _sel_days if d in _ce["days"]]
+                                    if _shared_days:
+                                        # Overlap if ranges intersect: new_start < ce_end AND ce_start < new_end
+                                        if _s_frac < _ce["end"] and _ce["start"] < _e_frac:
+                                            _fmtt2 = lambda v: f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
+                                            _conflicts.append(
+                                                f"{', '.join(_shared_days)}: "
+                                                f"{_fmtt2(_ce['start'])}–{_fmtt2(_ce['end'])}"
+                                            )
+
+                            if _conflicts:
+                                st.error(
+                                    f"Time overlap with existing entr{'y' if len(_conflicts)==1 else 'ies'}:  \n"
+                                    + "  \n".join(f"• {c}" for c in _conflicts)
+                                )
+                                _form_err = "overlap"
+
                             _save_ok = (not _form_err) and _e_frac > _s_frac
                             _sc1, _sc2 = st.columns([2, 2])
                             _save_label = "✓ Update" if _is_edit else "✓ Save"
