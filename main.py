@@ -488,191 +488,180 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             currency_sym  = _schedule.get("currency_symbol", "$")
             rate_kwh      = _schedule.get("rate_per_kwh", 0.15)
 
-            # Auto-detect energy source: kWh column > power column > current calculation
-            kwh_col   = next(
-                (c for c in data.columns if any(k in c.lower() for k in ["kwh", "kw_h", "energy", "consumption"])),
-                None
-            )
-            power_col = next(
-                (c for c in data.columns if any(k in c.lower() for k in ["kw", "power"]) and c != kwh_col),
-                None
-            )
+            # ── Off-schedule energy: row-by-row calculation ───────────
+            # Step 1: detect available columns
+            kwh_col   = next((c for c in data.columns if any(k in c.lower()
+                              for k in ["kwh","kw_h","energy","consumption"])), None)
+            power_col = next((c for c in data.columns if any(k in c.lower()
+                              for k in ["kw","power"]) and c != kwh_col), None)
+            current_col = next((c for c in data.columns if any(k in c.lower()
+                                for k in ["current","amp"])), None)
+            voltage_col = next((c for c in data.columns if any(k in c.lower()
+                                for k in ["voltage","volt","_v","volts"])), None)
+            pf_col      = next((c for c in data.columns if any(k in c.lower()
+                                for k in ["power_factor","pf","cos_phi","cosphi"])), None)
 
-            # Calculate time span
             interval_secs = 900
             if len(data) > 1:
                 interval_secs = (data.index[1] - data.index[0]).total_seconds()
-            total_hours   = ((data.index.max() - data.index.min()).total_seconds() + interval_secs) / 3600
-            off_hours_val = total_hours * (off_pct / 100) if off_pct else 0
-
-            # Format duration string
+            interval_h = interval_secs / 3600
+            total_hours = ((data.index.max() - data.index.min()).total_seconds()
+                           + interval_secs) / 3600
             total_days  = int(total_hours // 24)
             rem_hours   = int(total_hours % 24)
-            if total_days > 0:
-                duration_str = f"{total_days}d {rem_hours}h" if rem_hours else f"{total_days} days"
+            duration_str = (f"{total_days}d {rem_hours}h" if rem_hours else f"{total_days} days")                            if total_days > 0 else f"{int(total_hours)}h"
+
+            # Step 2: build off-schedule mask (already computed above as in_sched_s)
+            # Recompute here using _last_schedule (analysis may have been stored)
+            _sched_e      = st.session_state.get("_last_schedule", {})
+            _spd_e        = _sched_e.get("sched_per_day", {})
+            _wins_e       = _sched_e.get("sched_windows",
+                                [{"start": _sched_e.get("work_hour_start", 8),
+                                  "end":   _sched_e.get("work_hour_end", 18)}])
+            _wdays_e      = _sched_e.get("work_days", list(range(5)))
+            _run_thresh_e = _sched_e.get("running_threshold", 0)
+            _ind_col_e    = _sched_e.get("indicator_col", "")
+            voltage_e     = _sched_e.get("voltage", 415.0)
+            pf_e          = _sched_e.get("power_factor", 0.85)
+
+            _df_e = data.copy()
+            _df_e.index = pd.to_datetime(_df_e.index)
+            _DAYS_E = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+            _DM_E   = {d: i for i, d in enumerate(_DAYS_E)}
+
+            _in_sched_e = pd.Series([
+                (any(
+                    _spd_e.get(_dn, {}).get("enabled", False) and
+                    _df_e.index.dayofweek[_ii] == _DM_E[_dn] and
+                    any(w["start"] <= _df_e.index.hour[_ii] < w["end"]
+                        for w in _spd_e.get(_dn, {}).get("windows", _wins_e))
+                    for _dn in _DAYS_E
+                ) if _spd_e else (
+                    _df_e.index.dayofweek[_ii] in _wdays_e and
+                    any(w["start"] <= _df_e.index.hour[_ii] < w["end"] for w in _wins_e)
+                ))
+                for _ii in range(len(_df_e))
+            ], index=_df_e.index)
+
+            _off_sched_e = ~_in_sched_e
+
+            # Step 3: build running mask using indicator column
+            if _ind_col_e and _ind_col_e in _df_e.columns:
+                _running_e = _df_e[_ind_col_e] > _run_thresh_e
+            elif power_col and power_col in _df_e.columns:
+                _running_e = _df_e[power_col] > _run_thresh_e
+            elif current_col and current_col in _df_e.columns:
+                _running_e = _df_e[current_col] > _run_thresh_e
             else:
-                duration_str = f"{int(total_hours)}h"
+                _running_e = pd.Series(True, index=_df_e.index)
+
+            # Step 4: off-schedule AND running rows
+            _off_run_e = _off_sched_e & _running_e
+            _df_off    = _df_e[_off_run_e]
+            off_run_intervals = int(_off_run_e.sum())
+            off_run_hours_e   = off_run_intervals * interval_h
+
+            # Step 5: compute power per row then multiply by interval duration
+            # Priority: kWh column > kW column > V x I x PF
+            scenario_label = ""
+            assumptions    = ""
+            method_detail  = ""
+
+            if kwh_col and kwh_col in _df_e.columns:
+                # kWh column = energy per interval already — just sum off-schedule running rows
+                off_kwh = float(_df_off[kwh_col].sum())
+                total_kwh = float(_df_e[kwh_col].sum())
+                scenario_label = "Energy meter (kWh column) — direct summation of off-schedule running intervals"
+                assumptions    = "No assumptions — energy directly measured each interval."
+                method_detail  = (
+                    f"Off-schedule running intervals: **{off_run_intervals:,}** "
+                    f"({off_run_hours_e:.2f} h)  \n"
+                    f"Total energy (full period): **{total_kwh:,.3f} kWh**  \n"
+                    f"Off-schedule running energy: sum of `{kwh_col}` for those intervals = "
+                    f"**{off_kwh:,.3f} kWh**"
+                )
+
+            elif power_col and power_col in _df_e.columns:
+                # kW column: energy per interval = kW × interval_h
+                _power_off = _df_off[power_col].clip(lower=0)
+                off_kwh    = float((_power_off * interval_h).sum())
+                total_kwh  = float((_df_e[power_col].clip(lower=0) * interval_h).sum())
+                scenario_label = f"Power (kW) column — energy = power × interval duration"
+                assumptions    = "No assumptions — power measured each interval, integrated over time."
+                method_detail  = (
+                    f"Off-schedule running intervals: **{off_run_intervals:,}** "
+                    f"({off_run_hours_e:.2f} h)  \n"
+                    f"Total energy (full period): **{total_kwh:,.3f} kWh**  \n"
+                    f"Off-schedule running energy: Σ(`{power_col}` × {interval_h:.4f} h) "
+                    f"= **{off_kwh:,.3f} kWh**"
+                )
+
+            elif current_col and current_col in _df_e.columns:
+                # Current-based: P = √3 × V × I × PF / 1000, then E = P × interval_h
+                _V = (_df_off[voltage_col].clip(lower=0) if voltage_col and voltage_col in _df_e.columns
+                      else pd.Series(voltage_e, index=_df_off.index))
+                _I = _df_off[current_col].clip(lower=0)
+                _PF = (_df_off[pf_col].clip(lower=0, upper=1) if pf_col and pf_col in _df_e.columns
+                       else pd.Series(pf_e, index=_df_off.index))
+                _power_off_kw = (1.732 * _V * _I * _PF) / 1000
+                off_kwh = float((_power_off_kw * interval_h).sum())
+
+                # Total energy over full period
+                _V_all  = (_df_e[voltage_col].clip(lower=0) if voltage_col and voltage_col in _df_e.columns
+                           else pd.Series(voltage_e, index=_df_e.index))
+                _I_all  = _df_e[current_col].clip(lower=0)
+                _PF_all = (_df_e[pf_col].clip(lower=0, upper=1) if pf_col and pf_col in _df_e.columns
+                           else pd.Series(pf_e, index=_df_e.index))
+                total_kwh = float(((1.732 * _V_all * _I_all * _PF_all) / 1000 * interval_h).sum())
+
+                v_src  = f"measured from `{voltage_col}`" if voltage_col and voltage_col in _df_e.columns else f"entered ({voltage_e:.0f} V)"
+                pf_src = f"measured from `{pf_col}`"     if pf_col and pf_col in _df_e.columns       else f"entered ({pf_e:.2f})"
+                if voltage_col and voltage_col in _df_e.columns and pf_col and pf_col in _df_e.columns:
+                    scenario_label = "Current + voltage + power factor all measured"
+                    assumptions    = "No assumptions — V, I and PF all measured per interval."
+                elif voltage_col and voltage_col in _df_e.columns:
+                    scenario_label = "Current + voltage measured | Power factor entered by user"
+                    assumptions    = f"PF assumed = {pf_e:.2f} (entered)."
+                elif pf_col and pf_col in _df_e.columns:
+                    scenario_label = "Current + power factor measured | Voltage entered by user"
+                    assumptions    = f"Voltage assumed = {voltage_e:.0f} V (entered)."
+                else:
+                    scenario_label = "Current only | Voltage and power factor entered by user"
+                    assumptions    = f"Voltage = {voltage_e:.0f} V and PF = {pf_e:.2f} both entered."
+
+                method_detail = (
+                    f"Off-schedule running intervals: **{off_run_intervals:,}** "
+                    f"({off_run_hours_e:.2f} h)  \n"
+                    f"Formula per interval: P (kW) = √3 × V × I × PF ÷ 1000  \n"
+                    f"V: {v_src} | PF: {pf_src}  \n"
+                    f"Energy per interval = P × {interval_h:.4f} h  \n"
+                    f"Total energy (full period): **{total_kwh:,.3f} kWh**  \n"
+                    f"Off-schedule running energy: Σ(Pᵢ × {interval_h:.4f} h) = **{off_kwh:,.3f} kWh**"
+                )
+            else:
+                off_kwh   = 0.0
+                total_kwh = 0.0
+                scenario_label = "No energy, power, or current column detected"
+                assumptions    = "Add a kW, kWh, or current (A) column to enable energy calculation."
+                method_detail  = ""
+
+            cost_saved = off_kwh * rate_kwh
 
             e1, e2, e3, e4 = st.columns(4)
+            e1.metric("Off-schedule energy", f"{off_kwh:,.3f} kWh")
+            e2.metric("Off-schedule running", f"{off_run_hours_e:,.2f} hrs")
+            e3.metric("Total energy (period)", f"{total_kwh:,.3f} kWh")
+            e4.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.2f}")
 
-            calc_note = ""
-
-            if kwh_col:
-                # Use cumulative or interval kWh column directly
-                total_kwh     = float(data[kwh_col].sum())
-                off_kwh       = total_kwh * (off_pct / 100) if off_pct else 0
-                avg_power     = total_kwh / total_hours if total_hours > 0 else 0
-                cost_saved = off_kwh * rate_kwh
-                e1.metric("Off-schedule energy",    f"{off_kwh:,.3f} kWh")
-                e2.metric("Total energy (period)",  f"{total_kwh:,.1f} kWh")
-                e3.metric("Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.0f}")
-                calc_note = (
-                    f"Scenario: Energy meter data available  \n"
-                    f"Method: Direct summation of column `{kwh_col}`. No assumptions required.  \n"
-                    f"---  \n"
-                    f"Total energy in period ({duration_str}): **{total_kwh:,.1f} kWh**  \n"
-                    f"Off-schedule energy = {total_kwh:,.1f} kWh x {off_pct:.1f}% = **{off_kwh:,.0f} kWh**  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh} = **{currency_sym}{cost_saved:,.0f}**"
-                )
-
-            elif power_col:
-                # Use power (kW) column — integrate over time
-                avg_power_kw  = float(data[power_col].mean())
-                total_kwh     = avg_power_kw * total_hours
-                off_kwh       = total_kwh * (off_pct / 100) if off_pct else 0
-                cost_saved = off_kwh * rate_kwh
-                e1.metric("Off-schedule energy",    f"{off_kwh:,.3f} kWh")
-                e2.metric("Off-schedule hours",     f"{off_hours_val:,.1f} hrs")
-                e3.metric("Cost saving potential",
-                          f"{currency_sym}{cost_saved:,.0f}")
-                calc_note = (
-                    f"Scenario: Power (kW) data available, no energy meter  \n"
-                    f"Method: Power x time from column `{power_col}`.  \n"
-                    f"Assumption: Average power assumed constant. Actual energy may vary if load fluctuates.  \n"
-                    f"---  \n"
-                    f"Average power (full period): **{avg_power_kw:.1f} kW**  \n"
-                    f"Off-schedule hours: **{off_hours_val:.1f} h**  \n"
-                    f"Off-schedule energy = {avg_power_kw:.1f} kW x {off_hours_val:.1f} h = **{off_kwh:,.0f} kWh**  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh} = **{currency_sym}{cost_saved:,.0f}**"
-                )
-
-            elif current_col and off_pct is not None:
-                # Current-based 3-phase calculation
-                voltage_col = next(
-                    (c for c in data.columns if any(k in c.lower()
-                     for k in ["voltage", "volt", "_v", "volts"])),
-                    None
-                )
-                pf_col = next(
-                    (c for c in data.columns if any(k in c.lower()
-                     for k in ["power_factor", "pf", "cos_phi", "cosphi", "cos phi"])),
-                    None
-                )
-                # Build off-schedule + running mask
-                _sched      = st.session_state.get("_last_schedule", {})
-                _wdays        = _sched.get("work_days", list(range(5)))
-                _sched_wins   = _sched.get("sched_windows",
-                                    [{"start": _sched.get("work_hour_start", 8),
-                                      "end":   _sched.get("work_hour_end", 18)}])
-                _spd_inner    = _sched.get("sched_per_day", {})
-                _run_thresh   = _sched.get("running_threshold", 0)
-                voltage       = _sched.get("voltage", 415.0)
-                pf          = _sched.get("power_factor", 0.85)
-                _df         = data.copy()
-                _df.index   = pd.to_datetime(_df.index)
-                in_sched     = (
-                    (pd.Series(False, index=_df.index).pipe(lambda _base: _base.__class__({
-                        i: any(
-                            (_df.index.dayofweek[i] == {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}.get(_dn, -1)
-                             and _spd_inner.get(_dn, {}).get("enabled", False)
-                             and any(w["start"] <= _df.index.hour[i] < w["end"]
-                                     for w in _spd_inner.get(_dn, {}).get("windows", _sched_wins)))
-                            for _dn in (["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-                                        if _spd_inner else [])
-                        ) if _spd_inner else (
-                            _df.index.dayofweek[i] in _wdays
-                            and any(w["start"] <= _df.index.hour[i] < w["end"] for w in _sched_wins)
-                        )
-                        for i in range(len(_df))
-                    })) if False else
-                    pd.Series(
-                        [
-                            any(
-                                _spd_inner.get(_dn, {}).get("enabled", False) and
-                                _df.index.dayofweek[_ii] == {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}[_dn] and
-                                any(w["start"] <= _df.index.hour[_ii] < w["end"]
-                                    for w in _spd_inner.get(_dn, {}).get("windows", _sched_wins))
-                                for _dn in (["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] if _spd_inner else [])
-                            ) if _spd_inner else (
-                                _df.index.dayofweek[_ii] in _wdays and
-                                any(w["start"] <= _df.index.hour[_ii] < w["end"] for w in _sched_wins)
-                            )
-                            for _ii in range(len(_df))
-                        ],
-                        index=_df.index
-                    ))
-                )
-                off_sched_mask = ~in_sched
-                running_mask   = _df[current_col] > _run_thresh
-                off_run_mask   = off_sched_mask & running_mask
-                off_run_data   = _df[off_run_mask]
-                if len(off_run_data) > 0:
-                    avg_current   = float(off_run_data[current_col].mean())
-                    off_run_hours = len(off_run_data) * interval_secs / 3600
-                    current_src   = f"avg of {len(off_run_data):,} off-schedule running readings"
-                else:
-                    avg_current   = float(_df[off_sched_mask][current_col].mean()) if off_sched_mask.any() else float(_df[current_col].mean())
-                    off_run_hours = off_hours_val
-                    current_src   = "all off-schedule readings (running threshold not matched)"
-                if voltage_col and pf_col:
-                    avg_voltage = float(off_run_data[voltage_col].mean()) if len(off_run_data) > 0 else float(_df[voltage_col].mean())
-                    avg_pf      = float(off_run_data[pf_col].mean()) if len(off_run_data) > 0 else float(_df[pf_col].mean())
-                    assumptions = "No assumptions — V, I and PF all measured from off-schedule running periods."
-                elif voltage_col:
-                    avg_voltage = float(off_run_data[voltage_col].mean()) if len(off_run_data) > 0 else float(_df[voltage_col].mean())
-                    avg_pf      = pf
-                    assumptions = f"Voltage measured ({avg_voltage:.0f} V from off-schedule running). PF assumed = {pf}."
-                elif pf_col:
-                    avg_voltage = voltage
-                    avg_pf      = float(off_run_data[pf_col].mean()) if len(off_run_data) > 0 else float(_df[pf_col].mean())
-                    assumptions = f"PF measured ({avg_pf:.2f} from off-schedule running). Voltage assumed = {voltage} V."
-                else:
-                    avg_voltage = voltage
-                    avg_pf      = pf
-                    assumptions = f"Both assumed — {voltage} V, PF={pf}. Add voltage and power_factor columns for higher accuracy."
-                power_kw   = (1.732 * avg_voltage * avg_current * avg_pf) / 1000
-                off_kwh    = power_kw * off_run_hours
-                cost_saved = off_kwh * rate_kwh
-                e1.metric("Off-schedule energy",   f"{off_kwh:,.3f} kWh")
-                e2.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.0f}")
-                e3.metric("Period",                f"{duration_str}")
-                # Build scenario label based on what was measured vs assumed
-                if voltage_col and pf_col:
-                    scenario_label = "Scenario: Current + voltage + power factor all measured"
-                elif voltage_col:
-                    scenario_label = "Scenario: Current + voltage measured | Power factor entered by user"
-                elif pf_col:
-                    scenario_label = "Scenario: Current + power factor measured | Voltage entered by user"
-                else:
-                    scenario_label = "Scenario: Current only | Voltage and power factor entered by user"
-                v_source  = f"measured from `{voltage_col}`" if voltage_col else f"user input ({avg_voltage:.0f} V)"
-                pf_source = f"measured from `{pf_col}`"     if pf_col      else f"user input ({avg_pf:.2f})"
-                calc_note = (
-                    f"{scenario_label}  \n"
-                    f"Method: 3-phase power formula on off-schedule running readings only.  \n"
-                    f"---  \n"
-                    f"Off-schedule running readings (current > {_run_thresh} A): **{len(off_run_data):,}** ({current_src})  \n"
-                    f"Avg current (off-schedule running): {avg_current:.1f} A — from `{current_col}`  \n"
-                    f"Voltage: {avg_voltage:.0f} V — {v_source}  \n"
-                    f"Power factor: {avg_pf:.2f} — {pf_source}  \n"
-                    f"---  \n"
-                    f"Power = 1.732 x {avg_voltage:.0f}V x {avg_current:.1f}A x {avg_pf:.2f} / 1000 = {power_kw:.1f} kW  \n"
-                    f"Off-schedule running hours: {off_run_hours:.1f} h  \n"
-                    f"Off-schedule energy = {power_kw:.1f} kW x {off_run_hours:.1f} h = **{off_kwh:,.0f} kWh**  \n"
-                    f"Cost saving = {off_kwh:,.0f} kWh x {currency_sym}{rate_kwh} = **{currency_sym}{cost_saved:,.0f}**"
-                )
-
+            calc_note = (
+                f"**Scenario:** {scenario_label}  \n"
+                f"**Assumptions:** {assumptions}  \n"
+                f"---  \n"
+                f"{method_detail}  \n"
+                f"---  \n"
+                f"Cost saving = {off_kwh:,.3f} kWh × {currency_sym}{rate_kwh} "
+                f"= **{currency_sym}{cost_saved:,.2f}**"
+            ) if scenario_label and method_detail else ""
             if calc_note:
                 with st.expander("Calculation details", expanded=False):
                     st.markdown(
