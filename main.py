@@ -3345,8 +3345,8 @@ with tab_analysis:
                         for _ri, _rw in enumerate(_rwins):
                             _ra1, _ra2, _ra3 = st.columns([6, 1, 1])
                             _lbl   = _rw.get("label", "Rate")
-                            _from  = f"{_rw.get('start',0):02d}:00"
-                            _to    = f"{_rw.get('end',23):02d}:00"
+                            _from  = f"{int(_rw.get('start',0)):02d}:00"
+                            _to    = f"{int(_rw.get('end',23)):02d}:00"
                             _rate  = _rw.get("rate", 0.15)
                             _ra1.markdown(
                                 f"{_from}–{_to} — "
@@ -3429,7 +3429,7 @@ with tab_analysis:
                             _os, _oe = _ow.get("start", 0), _ow.get("end", 24)
                             # Two ranges [a,b) and [c,d) overlap if a < d and c < b
                             if new_start < _oe and _os < new_end:
-                                overlaps.append(f"{_os:02d}:00–{_oe:02d}:00")
+                                overlaps.append(f"{int(_os):02d}:00–{int(_oe):02d}:00")
                         return overlaps
 
                     _rb1, _rb2 = st.columns([2, 2])
@@ -3446,7 +3446,7 @@ with tab_analysis:
                             )
                             if _overlaps:
                                 st.error(
-                                    f"Hours {_ns:02d}:00–{_ne:02d}:00 overlap with "
+                                    f"Hours {int(_ns):02d}:00–{int(_ne):02d}:00 overlap with "
                                     f"already defined rate(s): {', '.join(_overlaps)}. "
                                     f"Adjust the hours before adding."
                                 )
