@@ -463,7 +463,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     c1.metric("Total scheduled off time", "0.0 hrs")
                     c2.metric("Ran during off-schedule", "0.0 hrs")
                     c3.metric("Ran during off-schedule", "0.0%")
-                    st.caption("ℹ️ No running schedule defined — all hours treated as permitted.")
+                    st.caption("ℹ️ No running schedule defined — all hours treated as running.")
                 else:
                     c1.metric("Total scheduled off time", f"{sched_off_hours:,.1f} hrs")
                     c2.metric("Ran during off-schedule", f"{off_run_hours:,.1f} hrs")
