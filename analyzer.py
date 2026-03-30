@@ -211,6 +211,7 @@ class Analyzer:
         analysis_type: str,
         date_range: Optional[tuple] = None,
         baseline_period: Optional[tuple] = None,
+        current_period: Optional[tuple] = None,
         extra_context: str = "",
         schedule: Optional[dict] = None,
         logs_text: str = "",
@@ -271,13 +272,59 @@ class Analyzer:
                     f"{len(filtered):,} rows). {_dropped:,} stopped/idle rows excluded to prevent "
                     f"zero-state readings from inflating drift."
                 ) if _dropped > 0 else "All rows used (no stopped-state rows identified)."
+
+                # Baseline mean — from baseline_period if set, else first 20% of running rows
+                if baseline_period and baseline_period[0] != baseline_period[1]:
+                    _bl_data = self._filter_by_date(_trend_data, baseline_period)
+                    _bl_data = self._filter_running_only(_bl_data, schedule)
+                    _bl_label = f"{baseline_period[0]} to {baseline_period[1]}"
+                else:
+                    _n_bl = max(1, int(len(_trend_data) * 0.20))
+                    _bl_data = _trend_data.iloc[:_n_bl]
+                    _bl_label = f"first 20% of running data ({_n_bl} rows)"
+
+                # Current mean — from current_period if set, else last min(30d, 20%) of running rows
+                if current_period and current_period[0] != current_period[1]:
+                    _cur_data = self._filter_by_date(_trend_data, current_period)
+                    _cur_data = self._filter_running_only(_cur_data, schedule)
+                    _cur_label = f"{current_period[0]} to {current_period[1]}"
+                else:
+                    _interval_days = _days / max(len(_trend_data) - 1, 1) if len(_trend_data) > 1 else 1
+                    _cur_n = max(1, min(
+                        int(len(_trend_data) * 0.20),
+                        int(30 / max(_interval_days, 1e-6)),
+                    ))
+                    _cur_data = _trend_data.iloc[-_cur_n:]
+                    _cur_label = f"last min(30d, 20%) of running data ({_cur_n} rows)"
+
+                # Per-parameter drift vs baseline
+                _drift_summary = {}
+                for _c in _numeric.columns:
+                    _bl_s  = _bl_data[_c].dropna()  if _c in _bl_data.columns  else pd.Series(dtype=float)
+                    _cur_s = _cur_data[_c].dropna() if _c in _cur_data.columns else pd.Series(dtype=float)
+                    if len(_bl_s) > 0 and len(_cur_s) > 0 and _bl_s.mean() != 0:
+                        _drift_pct = round(100 * (_cur_s.mean() - _bl_s.mean()) / _bl_s.mean(), 2)
+                        _drift_summary[_c] = {
+                            "baseline_mean": round(float(_bl_s.mean()), 4),
+                            "current_mean":  round(float(_cur_s.mean()), 4),
+                            "drift_pct":     _drift_pct,
+                            "direction":     "rising" if _drift_pct > 0 else "falling",
+                        }
+
+                _drift_note = (
+                    f"Baseline period: {_bl_label}. "
+                    f"Current period: {_cur_label}. "
+                    f"Drift = (current mean - baseline mean) / baseline mean × 100."
+                )
+
                 ml_signals = {
                     "tier": 1,
                     "tier_label": "Trend analysis — statistical only (running-state rows)",
                     "data_days": _days,
                     "columns_analysed": _numeric.columns.tolist(),
                     "statistical": ml_engine._statistical(_numeric, thresholds),
-                    "guidance": ml_engine._guidance(1, _days) + " " + _running_note,
+                    "drift_vs_baseline": _drift_summary,
+                    "guidance": ml_engine._guidance(1, _days) + " " + _running_note + " " + _drift_note,
                 }
             elif analysis_type == "Anomaly Detection":
                 # Full ML pipeline including isolation forest and control charts
@@ -530,6 +577,13 @@ Worst timestamps: {iso.get('worst_timestamps', [])}
             ml_section += f"""
 Threshold breach counts:
 {json.dumps(ml_signals.get('threshold_breaches', {}), indent=2, default=str)}
+"""
+        if "drift_vs_baseline" in ml_signals and ml_signals["drift_vs_baseline"]:
+            ml_section += f"""
+=== DRIFT VS BASELINE ===
+Per-parameter drift: current period mean vs baseline mean.
+Use these values as the PRIMARY drift metric. Do not recalculate from the raw statistical flags.
+{json.dumps(ml_signals["drift_vs_baseline"], indent=2, default=str)}
 """
 
         # For Schedule Compliance — only send schedule data, no sensor stats
