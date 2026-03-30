@@ -886,11 +886,12 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         _cd_cur = _cd_run.iloc[-_cur_n:] if _tot_rows >= _cur_n else _cd_run
 
                     st.caption(
-                        "Trend charts use running-state rows only for limit and trend calculations. "
-                        "UCL/LCL = ±3σ (red solid).  UWL/LWL = ±2σ (amber dashed).  "
-                        "Green long-dash = linear trend.  "
-                        "Dark green solid = baseline mean.  Teal dash-dot = current period mean.  "
-                        "Purple dotted = engineering thresholds."
+                        "Trend charts use running-state rows only. "
+                        "UCL/LCL/UWL/LWL computed from the baseline period (not the full window) "
+                        "so limits reflect confirmed normal operation. "
+                        "UCL/LCL = baseline ±3σ (red solid).  UWL/LWL = baseline ±2σ (amber dashed).  "
+                        "Blue solid = baseline mean.  Teal dash-dot = current period mean.  "
+                        "Green long-dash = linear trend.  Purple dotted = engineering thresholds."
                     )
 
                     for _col in _numeric:
@@ -899,19 +900,20 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         if len(_s_run) < 4:
                             _s_run = _s_all
 
-                        # Limits from full running window
-                        _mu  = float(_s_run.mean())
-                        _sd  = float(_s_run.std()) or 1e-9
-                        _ucl = _mu + 3*_sd; _uwl = _mu + 2*_sd
-                        _lwl = _mu - 2*_sd; _lcl = _mu - 3*_sd
-
-                        # Baseline mean and current mean
+                        # Baseline and current series
                         _s_bl  = _cd_bl[_col].dropna()  if (_col in _cd_bl.columns  and not _cd_bl.empty)  else _s_run
                         _s_cur = _cd_cur[_col].dropna() if (_col in _cd_cur.columns and not _cd_cur.empty) else _s_run
-                        _mu_bl  = float(_s_bl.mean())  if len(_s_bl)  > 0 else _mu
-                        _mu_cur = float(_s_cur.mean()) if len(_s_cur) > 0 else _mu
+                        _mu_bl  = float(_s_bl.mean())  if len(_s_bl)  > 0 else float(_s_run.mean())
+                        _mu_cur = float(_s_cur.mean()) if len(_s_cur) > 0 else float(_s_run.mean())
                         _drift_from_bl = round(100 * (_mu_cur - _mu_bl) / _mu_bl, 1) if _mu_bl != 0 else 0.0
                         _drift_dir = "above" if _drift_from_bl > 0 else "below"
+
+                        # Limits from BASELINE period — not full running window
+                        _s_for_limits = _s_bl if len(_s_bl) >= 4 else _s_run
+                        _mu  = float(_s_for_limits.mean())
+                        _sd  = float(_s_for_limits.std()) or 1e-9
+                        _ucl = _mu + 3*_sd; _uwl = _mu + 2*_sd
+                        _lwl = _mu - 2*_sd; _lcl = _mu - 3*_sd
 
                         # Linear trend fitted to running data, plotted across full time range
                         _xi_run = _np.arange(len(_s_run), dtype=float)
@@ -934,13 +936,12 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         _fig.add_hrect(y0=_lcl, y1=_lwl, fillcolor="rgba(192,57,43,0.07)", line_width=0, layer="below")
                         _fig.add_hrect(y0=_lwl, y1=_uwl, fillcolor="rgba(230,126,34,0.07)", line_width=0, layer="below")
 
-                        # Control limit lines
+                        # Control limit lines (computed from baseline period)
                         for _yv, _lc, _ld, _lw, _ln in [
-                            (_ucl, "#C0392B", "solid", 1.5, f"UCL {_ucl:.3g} (mean+3σ)"),
-                            (_uwl, "#E67E22", "dash",  1.0, f"UWL {_uwl:.3g} (mean+2σ)"),
-                            (_mu,  "#2C3E50", "solid", 1.5, f"Mean {_mu:.3g} (full window)"),
-                            (_lwl, "#E67E22", "dash",  1.0, f"LWL {_lwl:.3g} (mean-2σ)"),
-                            (_lcl, "#C0392B", "solid", 1.5, f"LCL {_lcl:.3g} (mean-3σ)"),
+                            (_ucl, "#C0392B", "solid", 1.5, f"UCL {_ucl:.3g} (baseline+3σ)"),
+                            (_uwl, "#E67E22", "dash",  1.0, f"UWL {_uwl:.3g} (baseline+2σ)"),
+                            (_lwl, "#E67E22", "dash",  1.0, f"LWL {_lwl:.3g} (baseline-2σ)"),
+                            (_lcl, "#C0392B", "solid", 1.5, f"LCL {_lcl:.3g} (baseline-3σ)"),
                         ]:
                             _fig.add_trace(_go.Scatter(
                                 x=[_xi_all[0], _xi_all[-1]], y=[_yv, _yv],
@@ -985,7 +986,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
 
                         # Trend line
                         if not _np.all(_np.isnan(_trend_full)):
-                            _trd_pct = round(100 * (_coeffs[0] * len(_s_run)) / _mu, 1) if _mu != 0 else 0
+                            _trd_pct = round(100 * (_coeffs[0] * len(_s_run)) / _mu_bl, 1) if _mu_bl != 0 else 0
                             _dir = "rising" if _coeffs[0] > 0 else "falling"
                             _fig.add_trace(_go.Scatter(
                                 x=_xi_all, y=_trend_full,
