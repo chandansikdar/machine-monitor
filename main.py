@@ -838,6 +838,8 @@ if "last_data" not in st.session_state:
     st.session_state["last_data"] = None
 if "last_multi_results" not in st.session_state:
     st.session_state["last_multi_results"] = None
+if "last_multi_alerts" not in st.session_state:
+    st.session_state["last_multi_alerts"] = {}
 
 
 # ------------------------------------------------------------------ #
@@ -2351,6 +2353,7 @@ def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
     """Run the actual analysis loop and store results in session state."""
     _analyzer    = Analyzer()
     _all_results = {}
+    _all_alerts  = {}
     _progress    = st.progress(0)
     _status      = st.empty()
     _sel         = meta["selected_analyses"]
@@ -2375,13 +2378,16 @@ def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
         )
         if _result["success"]:
             _all_results[_atype] = _result["insights"]
+            _all_alerts[_atype]  = _result.get("alerts", [])
             db.save_analysis(selected_id, _atype, _result["insights"])
         else:
             _all_results[_atype] = {"error": _result["error"]}
+            _all_alerts[_atype]  = []
         _progress.progress((_i + 1) / len(_sel))
     _status.empty()
     _progress.empty()
     st.session_state["last_multi_results"] = _all_results
+    st.session_state["last_multi_alerts"]  = _all_alerts
     st.session_state["last_data"]          = override_data if override_data is not None else meta["filtered_data"]
     st.rerun()
 
@@ -3790,6 +3796,60 @@ with tab_analysis:
                         else:
                             render_insights(insights, st.session_state.get("last_data"), viz,
                                             analysis_type=atype)
+                            # ── Alert engine panel (Anomaly Detection only) ──────────
+                            if atype == "Anomaly Detection":
+                                _ae_alerts = (st.session_state.get("last_multi_alerts") or {}).get(atype, [])
+                                _ae_crit   = [a for a in _ae_alerts if a["level"] == "Critical"]
+                                _ae_warn   = [a for a in _ae_alerts if a["level"] == "Warning"]
+                                _ae_adv    = [a for a in _ae_alerts if a["level"] == "Advisory"]
+                                _ae_label  = (
+                                    (f"  \u00b7  {len(_ae_crit)} critical" if _ae_crit else "") +
+                                    (f"  \u00b7  {len(_ae_warn)} warning(s)" if _ae_warn else "") +
+                                    (f"  \u00b7  {len(_ae_adv)} advisory" if _ae_adv else "") +
+                                    ("  \u00b7  No alerts" if not _ae_alerts else "")
+                                )
+                                with st.expander(
+                                    f"\U0001f514 Alert engine \u2014 {len(_ae_alerts)} alert(s){_ae_label}",
+                                    expanded=bool(_ae_crit),
+                                ):
+                                    if not _ae_alerts:
+                                        st.success("No alerts generated. All parameters within limits.")
+                                    else:
+                                        _ae_colors = {
+                                            "Critical": ("#A32D2D", "#FFF0F0"),
+                                            "Warning":  ("#BA7517", "#FFFBF0"),
+                                            "Advisory": ("#185FA5", "#EAF4FF"),
+                                        }
+                                        _ae_icons = {
+                                            "Critical": "\U0001f534",
+                                            "Warning":  "\U0001f7e1",
+                                            "Advisory": "\U0001f535",
+                                        }
+                                        for _al in _ae_alerts:
+                                            _bc, _bg = _ae_colors.get(_al["level"], ("#555", "#F8F8F8"))
+                                            _icon    = _ae_icons.get(_al["level"], "\u2022")
+                                            _dtb     = _al.get("days_to_breach")
+                                            _dtb_str = (
+                                                f' &nbsp;\u00b7&nbsp; <span style="color:#A32D2D;font-weight:600">'
+                                                f'Breach in ~{_dtb} day(s)</span>'
+                                                if _dtb is not None and _dtb > 0 else ""
+                                            )
+                                            _conf    = _al.get("confidence", "")
+                                            _trig    = _al.get("trigger", "").replace("_", " ").title()
+                                            _cons    = _al.get("consistency", "").title()
+                                            st.markdown(
+                                                f'<div style="background:{_bg};border-left:4px solid {_bc};'
+                                                f'padding:8px 12px;margin-bottom:8px;border-radius:3px;">'
+                                                f'<span style="font-weight:700;color:{_bc}">'
+                                                f'{_icon} {_al["level"]} \u00b7 {_al["parameter"]}</span>'
+                                                f' &nbsp;\u00b7&nbsp; <span style="color:#888;font-size:0.82em">'
+                                                f'{_cons} \u00b7 Trigger: {_trig} \u00b7 Confidence: {_conf}'
+                                                f'</span>{_dtb_str}<br>'
+                                                f'<span style="font-size:0.87em;margin-top:4px;display:block">'
+                                                f'{_al["message"]}</span>'
+                                                f'</div>',
+                                                unsafe_allow_html=True,
+                                            )
                 else:
                     if not st.session_state.get("_pending_analysis"):
                         st.markdown(
