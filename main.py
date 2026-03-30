@@ -855,7 +855,15 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     _cd = _chart_data.copy()
                     if not isinstance(_cd.index, _pd.DatetimeIndex):
                         _cd.index = _pd.to_datetime(_cd.index)
-                    _numeric = _cd.select_dtypes(include="number").columns.tolist()[:6]
+                    _all_numeric = _cd.select_dtypes(include="number").columns.tolist()
+                    _numeric = st.multiselect(
+                        "Parameters to plot",
+                        options=_all_numeric,
+                        default=_all_numeric,
+                        key="trend_chart_params",
+                    )
+                    if not _numeric:
+                        _numeric = _all_numeric
 
                     # Running-state mask (same logic as analyzer._filter_running_only)
                     if _ind_col and _ind_col in _cd.columns:
