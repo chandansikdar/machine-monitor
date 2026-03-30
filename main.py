@@ -842,12 +842,14 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 import plotly.graph_objects as _go
                 import pandas as _pd
                 import numpy as _np
-                from analyzer import _parse_thresholds
+                from analyzer import _parse_thresholds, Analyzer as _AZ
                 _desc       = st.session_state.get("_machine_desc", "")
                 _thresholds = _parse_thresholds(_desc) or {}
                 _schedule   = st.session_state.get("_last_schedule", {})
                 _ind_col    = _schedule.get("indicator_col", "")
                 _run_thr    = _schedule.get("running_threshold", 0)
+                _cur_period = st.session_state.get("current_period")
+                _bl_period  = st.session_state.get("baseline_period")
                 _chart_data = data if (data is not None and not data.empty) else st.session_state.get("last_data")
                 if _chart_data is not None and not _chart_data.empty:
                     _cd = _chart_data.copy()
@@ -866,10 +868,28 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         )
                     _cd_run = _cd[_run_mask]
 
+                    # Baseline and current period subsets (running rows only)
+                    _cd_bl  = _AZ._filter_by_date(_cd_run, _bl_period)  if _bl_period  else _cd_run
+                    if not isinstance(_cd_bl, __builtins__.__class__) and (not hasattr(_cd_bl, "empty") or _cd_bl.empty):
+                        _cd_bl = _cd_run
+                    _cd_cur = _AZ._filter_by_date(_cd_run, _cur_period) if _cur_period else _pd.DataFrame()
+                    # Default current period: last min(30 days, 20%) of running rows
+                    if _cd_cur.empty:
+                        _tot_rows = len(_cd_run)
+                        _interval_min = max(1, int(
+                            (_cd.index[-1] - _cd.index[0]).total_seconds() / 60 / max(len(_cd) - 1, 1)
+                        ))
+                        _cur_n = max(1, min(
+                            int(_tot_rows * 0.20),
+                            int(30 * 24 * 60 / _interval_min),
+                        ))
+                        _cd_cur = _cd_run.iloc[-_cur_n:] if _tot_rows >= _cur_n else _cd_run
+
                     st.caption(
                         "Trend charts use running-state rows only for limit and trend calculations. "
-                        "UCL/LCL = ±3σ (red).  UWL/LWL = ±2σ (amber dashed).  "
-                        "Green line = linear trend (running data).  "
+                        "UCL/LCL = ±3σ (red solid).  UWL/LWL = ±2σ (amber dashed).  "
+                        "Green long-dash = linear trend.  "
+                        "Dark green solid = baseline mean.  Teal dash-dot = current period mean.  "
                         "Purple dotted = engineering thresholds."
                     )
 
@@ -879,16 +899,23 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         if len(_s_run) < 4:
                             _s_run = _s_all
 
-                        # Limits from running data
+                        # Limits from full running window
                         _mu  = float(_s_run.mean())
                         _sd  = float(_s_run.std()) or 1e-9
                         _ucl = _mu + 3*_sd; _uwl = _mu + 2*_sd
                         _lwl = _mu - 2*_sd; _lcl = _mu - 3*_sd
 
+                        # Baseline mean and current mean
+                        _s_bl  = _cd_bl[_col].dropna()  if (_col in _cd_bl.columns  and not _cd_bl.empty)  else _s_run
+                        _s_cur = _cd_cur[_col].dropna() if (_col in _cd_cur.columns and not _cd_cur.empty) else _s_run
+                        _mu_bl  = float(_s_bl.mean())  if len(_s_bl)  > 0 else _mu
+                        _mu_cur = float(_s_cur.mean()) if len(_s_cur) > 0 else _mu
+                        _drift_from_bl = round(100 * (_mu_cur - _mu_bl) / _mu_bl, 1) if _mu_bl != 0 else 0.0
+                        _drift_dir = "above" if _drift_from_bl > 0 else "below"
+
                         # Linear trend fitted to running data, plotted across full time range
                         _xi_run = _np.arange(len(_s_run), dtype=float)
                         _coeffs = _np.polyfit(_xi_run, _s_run.values, 1)
-                        # Map running-data x positions back to full timeline for display
                         _xi_all = _cd.index
                         _run_positions = _np.where(_run_mask.reindex(_cd.index, fill_value=False))[0]
                         _trend_full = _np.full(len(_cd), _np.nan)
@@ -896,7 +923,6 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                             _x0, _x1 = _run_positions[0], _run_positions[-1]
                             _y0 = _np.polyval(_coeffs, 0)
                             _y1 = _np.polyval(_coeffs, len(_s_run) - 1)
-                            # Extend trend line across full range
                             _slope_per_step = (_y1 - _y0) / max(_x1 - _x0, 1)
                             for _i in range(len(_cd)):
                                 _trend_full[_i] = _y0 + _slope_per_step * (_i - _x0)
@@ -912,7 +938,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         for _yv, _lc, _ld, _lw, _ln in [
                             (_ucl, "#C0392B", "solid", 1.5, f"UCL {_ucl:.3g} (mean+3σ)"),
                             (_uwl, "#E67E22", "dash",  1.0, f"UWL {_uwl:.3g} (mean+2σ)"),
-                            (_mu,  "#2C3E50", "solid", 1.5, f"Mean {_mu:.3g}"),
+                            (_mu,  "#2C3E50", "solid", 1.5, f"Mean {_mu:.3g} (full window)"),
                             (_lwl, "#E67E22", "dash",  1.0, f"LWL {_lwl:.3g} (mean-2σ)"),
                             (_lcl, "#C0392B", "solid", 1.5, f"LCL {_lcl:.3g} (mean-3σ)"),
                         ]:
@@ -921,6 +947,21 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                                 mode="lines", line=dict(color=_lc, width=_lw, dash=_ld),
                                 name=_ln, showlegend=True, hoverinfo="skip",
                             ))
+
+                        # Baseline mean line
+                        _fig.add_trace(_go.Scatter(
+                            x=[_xi_all[0], _xi_all[-1]], y=[_mu_bl, _mu_bl],
+                            mode="lines", line=dict(color="#1A5276", width=2, dash="solid"),
+                            name=f"Baseline mean {_mu_bl:.3g}", showlegend=True, hoverinfo="skip",
+                        ))
+
+                        # Current period mean line
+                        _fig.add_trace(_go.Scatter(
+                            x=[_xi_all[0], _xi_all[-1]], y=[_mu_cur, _mu_cur],
+                            mode="lines", line=dict(color="#117A65", width=2, dash="dashdot"),
+                            name=f"Current mean {_mu_cur:.3g} ({_drift_dir} baseline by {abs(_drift_from_bl)}%)",
+                            showlegend=True, hoverinfo="skip",
+                        ))
 
                         # Engineering thresholds
                         if _col in _thresholds:
@@ -944,24 +985,28 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
 
                         # Trend line
                         if not _np.all(_np.isnan(_trend_full)):
-                            _drift_pct = round(100 * (_coeffs[0] * len(_s_run)) / _mu, 1) if _mu != 0 else 0
+                            _trd_pct = round(100 * (_coeffs[0] * len(_s_run)) / _mu, 1) if _mu != 0 else 0
                             _dir = "rising" if _coeffs[0] > 0 else "falling"
                             _fig.add_trace(_go.Scatter(
                                 x=_xi_all, y=_trend_full,
                                 mode="lines",
                                 line=dict(color="#1E8449", width=2, dash="longdash"),
-                                name=f"Trend ({_dir} {abs(_drift_pct)}%)",
+                                name=f"Trend ({_dir} {abs(_trd_pct)}%)",
                                 hoverinfo="skip",
                             ))
 
                         _cl = _col.replace("_", " ").title()
                         _fig.update_layout(
-                            title=dict(text=f"Trend analysis — {_cl}", font=dict(size=14)),
+                            title=dict(
+                                text=f"Trend analysis — {_cl}  "
+                                     f"(drift vs baseline: {'+' if _drift_from_bl >= 0 else ''}{_drift_from_bl}%)",
+                                font=dict(size=14),
+                            ),
                             xaxis_title="Time", yaxis_title=_cl,
                             legend=dict(orientation="h", yanchor="top", y=-0.22,
                                         xanchor="left", x=0, bgcolor="rgba(0,0,0,0)", borderwidth=0),
                             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                            margin=dict(l=40, r=20, t=55, b=110),
+                            margin=dict(l=40, r=20, t=55, b=130),
                             hovermode="x unified", font=dict(size=12),
                         )
                         st.plotly_chart(_fig, use_container_width=True)
@@ -2519,6 +2564,7 @@ def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
             analysis_type        = _atype,
             date_range           = meta["date_range"],
             baseline_period      = meta.get("baseline_period"),
+            current_period       = meta.get("current_period"),
             extra_context        = meta["extra_context"],
             schedule             = meta["schedule"] if _atype == "Operational Schedule Compliance" else None,
             logs_text            = meta["logs_text"],
@@ -3268,6 +3314,56 @@ with tab_analysis:
                     )
                 st.session_state["baseline_period"] = baseline_period
 
+            # ── Current period for Trend Analysis ────────────────────
+            if "Trend & Drift Analysis" in selected_analyses:
+                with st.expander("📈 Current period (Trend & Drift Analysis)", expanded=False):
+                    st.markdown(
+                        "Define the **current** period whose mean is compared against the "
+                        "baseline mean to measure drift.  \n"
+                        "Default: last 30 days, or last 20% of the analysis window, "
+                        "whichever is shorter."
+                    )
+                    _use_current = st.checkbox(
+                        "Specify current period manually",
+                        key="use_current_period", value=False
+                    )
+                    if _use_current:
+                        _tot_days  = (max_d - min_d).days
+                        _def_days  = min(30, max(1, int(_tot_days * 0.20)))
+                        _cur_cols  = st.columns(2)
+                        _cur_start = _cur_cols[0].date_input(
+                            "Current period start",
+                            value=max(min_d, max_d - __import__("datetime").timedelta(days=_def_days)),
+                            min_value=min_d, max_value=max_d,
+                            key="current_period_start",
+                        )
+                        _cur_end = _cur_cols[1].date_input(
+                            "Current period end",
+                            value=max_d,
+                            min_value=min_d, max_value=max_d,
+                            key="current_period_end",
+                        )
+                        _cur_days = (_cur_end - _cur_start).days
+                        if _cur_days < 1:
+                            st.warning("⚠️ Current period must be at least 1 day.")
+                        else:
+                            st.success(f"✅ Current period: {_cur_start} – {_cur_end} ({_cur_days} days)")
+                        current_period = (_cur_start, _cur_end)
+                    else:
+                        _tot_days  = (max_d - min_d).days
+                        _def_days  = min(30, max(1, int(_tot_days * 0.20)))
+                        _cur_end   = max_d
+                        _cur_start = max(min_d, max_d - __import__("datetime").timedelta(days=_def_days))
+                        current_period = (_cur_start, _cur_end)
+                        st.info(
+                            f"ℹ️ **Default current period:** last {_def_days} days "
+                            f"({_cur_start} – {_cur_end}).  \nTick the checkbox above to set a custom window."
+                        )
+                    st.session_state["current_period"] = current_period
+            else:
+                current_period = None
+                st.session_state["current_period"] = None
+
             # Schedule config — only shown when compliance is selected
             schedule = None
             if "Operational Schedule Compliance" in selected_analyses:
@@ -3783,6 +3879,7 @@ with tab_analysis:
                     "machine_info":      machine_info,
                     "date_range":        date_range,
                     "baseline_period":   st.session_state.get("baseline_period", (min_d, min_d)),
+                    "current_period":    st.session_state.get("current_period"),
                     "extra_context":     (extra_context + "\n\n" + _pump_physics_summary).strip() if _pump_physics_summary else extra_context,
                     "schedule":          schedule,
                     "logs_text":         db.get_logs_text(selected_id),
