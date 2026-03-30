@@ -918,6 +918,11 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         # Linear trend fitted to running data, plotted across full time range
                         _xi_run = _np.arange(len(_s_run), dtype=float)
                         _coeffs = _np.polyfit(_xi_run, _s_run.values, 1)
+                        # R² of the linear fit
+                        _y_fit  = _np.polyval(_coeffs, _xi_run)
+                        _ss_res = float(_np.sum((_s_run.values - _y_fit) ** 2))
+                        _ss_tot = float(_np.sum((_s_run.values - _s_run.values.mean()) ** 2))
+                        _r2     = round(1.0 - _ss_res / _ss_tot, 2) if _ss_tot > 0 else 0.0
                         _xi_all = _cd.index
                         _run_positions = _np.where(_run_mask.reindex(_cd.index, fill_value=False))[0]
                         _trend_full = _np.full(len(_cd), _np.nan)
@@ -992,7 +997,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                                 x=_xi_all, y=_trend_full,
                                 mode="lines",
                                 line=dict(color="#1E8449", width=2, dash="longdash"),
-                                name=f"Trend ({_dir} {abs(_trd_pct)}%)",
+                                name=f"Trend ({_dir} {abs(_trd_pct)}%, R²={_r2})",
                                 hoverinfo="skip",
                             ))
 
