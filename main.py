@@ -469,18 +469,32 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     c1.metric("Total scheduled off time", "0.0 hrs")
                     c2.metric("Ran during off-schedule", "0.0 hrs")
                     c3.metric("Ran during off-schedule", "0.0%")
-                    st.caption("ℹ️ No running schedule defined — all hours treated as running.")
+                    st.caption("\u2139\ufe0f No running schedule defined \u2014 all hours treated as running.")
                 else:
                     c1.metric("Total scheduled off time", f"{sched_off_hours:,.1f} hrs")
                     c2.metric("Ran during off-schedule", f"{off_run_hours:,.1f} hrs")
                     c3.metric("Ran during off-schedule", f"{off_run_pct:.1f}%")
-            else:
-                off_hours = 0
-                off_run_pct = 0.0
 
-            compliance_pct = min(100, max(0, on_pct))
+                # Off-schedule compliance: % of off-schedule time machine was correctly NOT running
+                # = (off-schedule hrs - ran during off-schedule hrs) / off-schedule hrs
+                # Computed deterministically from raw data — NOT from Claude health_score
+                if _no_sched_defined:
+                    compliance_pct = 100.0
+                elif sched_off_hours > 0:
+                    compliance_pct = min(100.0, max(0.0,
+                        (sched_off_hours - off_run_hours) / sched_off_hours * 100.0
+                    ))
+                else:
+                    compliance_pct = 100.0
+            else:
+                compliance_pct = 0.0
+
             bar_colour = "green" if compliance_pct >= 95 else "orange" if compliance_pct >= 80 else "red"
-            st.markdown(f"**Schedule compliance: :{bar_colour}[{compliance_pct:.1f}%]**")
+            st.markdown(f"**Off-schedule compliance: :{bar_colour}[{compliance_pct:.1f}%]**")
+            st.caption(
+                "Off-schedule compliance = % of off-schedule hours the machine was correctly not running. "
+                "100% = never ran outside permitted schedule."
+            )
             st.progress(compliance_pct / 100)
             st.markdown("---")
     elif analysis_type == "Anomaly Detection":
