@@ -89,12 +89,16 @@ Rules:
   percentages, control chart violations, Isolation Forest results) in your insights.
 - DATA VOLUME: Calibrate your confidence to the amount of data available. With less than
   30 days, avoid strong predictive claims. With more data, be more definitive.
-- SCHEDULE COMPLIANCE: When analysis type is Operational Schedule Compliance, the health_score
-  should reflect schedule adherence (100 = fully compliant, 0 = running entirely off-schedule).
+- SCHEDULE COMPLIANCE: When analysis type is Operational Schedule Compliance:
+  The SCHEDULE COMPLIANCE DATA section contains a pre-computed field "off_schedule_compliance_pct".
+  You MUST use this exact value as the health_score. Do not calculate your own compliance figure.
+  You MUST use the term "off-schedule compliance" (not "schedule compliance") throughout your narrative.
+  Definition: off-schedule compliance = % of off-schedule hours the machine was correctly NOT running.
+  100% = machine never ran outside permitted schedule. 0% = machine ran during all off-schedule hours.
   Anomalies should only reference off-schedule running events, not sensor anomalies.
   KPIs must use PERCENTAGES not raw counts. Keep values SHORT (under 8 chars). Use these exact labels and formats:
-    "Schedule Compliance" — value like "30.0%"
-    "Off-Schedule" — value like "70.0%"
+    "Off-Schedule Compliance" — value taken directly from off_schedule_compliance_pct field
+    "Off-Schedule Running" — value like "70.0%"
     "Weekend" — value like "28.1%"
     "After-Hours" — value like "41.9%"
   Never use words like "of total", "runtime", "running" in the value field. Percentage only.
@@ -134,11 +138,12 @@ ANALYSIS_DESCRIPTIONS = {
     ),
     "Operational Schedule Compliance": (
         "Analyse whether the machine ran outside its permitted schedule. "
-        "Report only schedule compliance findings — off-schedule running periods, "
+        "Report only off-schedule compliance findings — off-schedule running periods, "
         "weekend running, after-hours running. "
         "Do NOT report on sensor health, vibration, temperature, pressure, or any parameter conditions. "
-        "KPIs must cover only: compliance %, off-schedule %, weekend %, after-hours %. "
-        "Health score = schedule compliance percentage (100 = fully compliant)."
+        "KPIs must cover only: off-schedule compliance %, off-schedule running %, weekend %, after-hours %. "
+        "Health score = off_schedule_compliance_pct from the AUTHORITATIVE COMPLIANCE VALUE section. "
+        "Always use the term 'off-schedule compliance' not 'schedule compliance'."
     ),
     # ── Additional analytics ──────────────────────────────────────────────────
     "Correlation Analysis": (
@@ -364,20 +369,29 @@ class Analyzer:
             for st, en in zip(starts[:10], ends[:10]):
                 off_blocks.append({"start": str(st), "end": str(en)})
 
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()[:5]
-        running_rows = int(running_mask.sum())
-        off_rows     = int(off_schedule_running.sum())
+        numeric_cols     = df.select_dtypes(include="number").columns.tolist()[:5]
+        running_rows     = int(running_mask.sum())
+        off_rows         = int(off_schedule_running.sum())
+        total_off_sched  = int((~in_schedule).sum())
+        # Off-schedule compliance: % of off-schedule time machine was correctly NOT running
+        # = (total off-schedule slots - ran during off-schedule) / total off-schedule slots
+        if total_off_sched > 0:
+            off_sched_compliance = round(100 * (total_off_sched - off_rows) / total_off_sched, 1)
+        else:
+            off_sched_compliance = 100.0
         return {
             "permitted_schedule": {
                 "work_days": [["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d] for d in work_days],
                 "hours": f"{int(hour_start):02d}:00 – {int(hour_end):02d}:00",
             },
-            "total_readings":           len(df),
-            "running_readings":         running_rows,
-            "off_schedule_readings":    off_rows,
-            "weekend_running_readings": int(weekend_running.sum()),
-            "off_schedule_pct":         round(100 * off_rows / running_rows, 1) if running_rows else 0,
-            "off_schedule_blocks":      off_blocks,
+            "total_readings":                len(df),
+            "running_readings":              running_rows,
+            "total_off_schedule_readings":   total_off_sched,
+            "off_schedule_readings":         off_rows,
+            "weekend_running_readings":      int(weekend_running.sum()),
+            "off_schedule_pct":              round(100 * off_rows / running_rows, 1) if running_rows else 0,
+            "off_schedule_compliance_pct":   off_sched_compliance,
+            "off_schedule_blocks":           off_blocks,
         }
 
     # ------------------------------------------------------------------ #
@@ -501,11 +515,16 @@ Total rows  : {len(data):,}
 Type: Operational Schedule Compliance
 Task: {analysis_desc}
 
-IMPORTANT: Report ONLY schedule compliance findings. Do NOT report on sensor health,
+=== AUTHORITATIVE COMPLIANCE VALUE ===
+off_schedule_compliance_pct = {schedule_stats.get("off_schedule_compliance_pct", "N/A") if schedule_stats else "N/A"}%
+Definition: % of off-schedule hours the machine was correctly NOT running.
+You MUST set health_score to this exact value. Do NOT calculate your own compliance figure.
+You MUST use the term "off-schedule compliance" (not "schedule compliance") in your narrative.
+
+IMPORTANT: Report ONLY off-schedule compliance findings. Do NOT report on sensor health,
 vibration, temperature, pressure, or any other parameter conditions.
-KPIs must cover only: compliance %, off-schedule hours, weekend running, after-hours running.
+KPIs must cover only: off-schedule compliance %, off-schedule running %, weekend running %, after-hours running %.
 Anomalies must reference only off-schedule running events, not sensor readings.
-Health score = schedule compliance percentage (100 = fully compliant).
 
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
