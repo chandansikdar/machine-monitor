@@ -260,16 +260,24 @@ class Analyzer:
             if analysis_type == "Operational Schedule Compliance":
                 ml_signals = {"tier": 0, "tier_label": "", "data_days": 0, "guidance": "", "statistical": {}}
             elif analysis_type == "Trend & Drift Analysis":
-                # Statistical trends only — no isolation forest, no control chart anomalies
+                # Statistical trends only — running-state rows only (stopped zeros skew drift)
+                _running_only = self._filter_running_only(filtered, schedule)
+                _trend_data   = _running_only if not _running_only.empty else filtered
                 _days = (filtered.index.max() - filtered.index.min()).days
-                _numeric = filtered.select_dtypes(include="number")
+                _numeric = _trend_data.select_dtypes(include="number")
+                _dropped = len(filtered) - len(_trend_data)
+                _running_note = (
+                    f"Trend computed on running-state rows only ({len(_trend_data):,} of "
+                    f"{len(filtered):,} rows). {_dropped:,} stopped/idle rows excluded to prevent "
+                    f"zero-state readings from inflating drift."
+                ) if _dropped > 0 else "All rows used (no stopped-state rows identified)."
                 ml_signals = {
                     "tier": 1,
-                    "tier_label": "Trend analysis — statistical only",
+                    "tier_label": "Trend analysis — statistical only (running-state rows)",
                     "data_days": _days,
                     "columns_analysed": _numeric.columns.tolist(),
                     "statistical": ml_engine._statistical(_numeric, thresholds),
-                    "guidance": ml_engine._guidance(1, _days),
+                    "guidance": ml_engine._guidance(1, _days) + " " + _running_note,
                 }
             elif analysis_type == "Anomaly Detection":
                 # Full ML pipeline including isolation forest and control charts
@@ -397,6 +405,31 @@ class Analyzer:
     # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _filter_running_only(data: pd.DataFrame, schedule: Optional[dict]) -> pd.DataFrame:
+        """
+        Return only rows where the machine is in a running state.
+
+        Uses indicator_col + running_threshold from the schedule dict when available.
+        Falls back to: values above the 10th percentile of the first numeric column.
+        This mirrors the logic in _compute_schedule_stats so behaviour is consistent.
+        """
+        if data is None or data.empty:
+            return data
+        ind_col   = (schedule or {}).get("indicator_col", "")
+        threshold = (schedule or {}).get("running_threshold", 0)
+        if ind_col and ind_col in data.columns:
+            mask = data[ind_col] > threshold
+        else:
+            num_cols = data.select_dtypes(include="number").columns
+            if len(num_cols):
+                col  = num_cols[0]
+                mask = data[col] > data[col].quantile(0.10)
+            else:
+                return data   # no numeric cols — return as-is
+        result = data[mask]
+        return result if not result.empty else data
 
     @staticmethod
     def _filter_by_date(data: pd.DataFrame, date_range) -> pd.DataFrame:
