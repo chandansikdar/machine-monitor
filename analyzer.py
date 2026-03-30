@@ -16,6 +16,7 @@ import anthropic
 import pandas as pd
 
 import ml_engine
+import alert_engine
 
 SYSTEM_PROMPT = """You are an expert industrial machine health analyst with deep knowledge of rotating equipment, process machinery, and condition monitoring.
 
@@ -267,10 +268,16 @@ class Analyzer:
                 }
             elif analysis_type == "Anomaly Detection":
                 # Full ML pipeline including isolation forest and control charts
-                ml_signals = ml_engine.run(filtered, thresholds, baseline_data=baseline_data)
+                ml_signals    = ml_engine.run(filtered, thresholds, baseline_data=baseline_data)
+                _alerts       = alert_engine.run(filtered, ml_signals, thresholds)
+                alert_summary = alert_engine.summarise(_alerts)
             else:
                 # Correlation, Distribution, Cross-Parameter — statistical only
                 ml_signals = ml_engine.run(filtered, thresholds, baseline_data=baseline_data)
+
+            if analysis_type != "Anomaly Detection":
+                _alerts       = []
+                alert_summary = {"total": 0, "critical": 0, "warning": 0, "advisory": 0, "alerts": []}
 
             # Schedule compliance stats
             schedule_stats = None
@@ -280,7 +287,8 @@ class Analyzer:
             prompt = self._build_prompt(
                 machine_info, filtered, analysis_type,
                 extra_context, schedule_stats, logs_text, ml_signals,
-                dq_context=dq_context
+                dq_context=dq_context,
+                alert_summary=alert_summary,
             )
 
             response = self.client.messages.create(
@@ -297,9 +305,13 @@ class Analyzer:
 
             insights = json.loads(raw)
             # Attach tier info for display
-            insights["_ml_tier"] = ml_signals.get("tier", 0)
+            insights["_ml_tier"]       = ml_signals.get("tier", 0)
             insights["_ml_tier_label"] = ml_signals.get("tier_label", "")
-            return {"success": True, "insights": insights}
+            return {
+                "success":  True,
+                "insights": insights,
+                "alerts":   _alerts,
+            }
 
         except json.JSONDecodeError as exc:
             return {"success": False, "error": f"Claude returned invalid JSON: {exc}"}
@@ -394,6 +406,7 @@ class Analyzer:
         logs_text: str,
         ml_signals: dict,
         dq_context: str = "",
+        alert_summary: Optional[dict] = None,
     ) -> str:
         numeric_cols = data.select_dtypes(include="number").columns.tolist()
         stats        = data[numeric_cols].describe().round(3).to_dict() if numeric_cols else {}
@@ -412,6 +425,23 @@ class Analyzer:
 === MAINTENANCE LOG HISTORY ===
 {logs_text.strip()}
 """
+        # Build alert section for Anomaly Detection
+        alert_section = ""
+        if alert_summary and alert_summary.get("total", 0) > 0:
+            alert_section = f"""
+=== ALERT ENGINE OUTPUT ===
+Deterministic alerts generated before Claude interpretation.
+Critical: {alert_summary['critical']}  Warning: {alert_summary['warning']}  Advisory: {alert_summary['advisory']}
+
+{json.dumps(alert_summary['alerts'], indent=2, default=str)}
+
+IMPORTANT: Incorporate these pre-computed alerts into your anomaly assessment.
+Reference specific alert messages, consistency (recurring/transient), and
+days_to_breach projections in your insights and score_breakdown.
+Where alerts conflict with your statistical interpretation, the alert engine
+takes precedence on level classification \u2014 explain any discrepancy.
+"""
+
         # Build compact ML signals — only flags and key numbers, not full raw stats
         stat_flags = {}
         for col, sig in ml_signals.get("statistical", {}).items():
@@ -496,7 +526,7 @@ Time range  : {data.index.min()} → {data.index.max()}
 
 === RECENT 10 READINGS ===
 {json.dumps(sample, indent=2, default=str)}
-{ml_section}{logs_section}
+{ml_section}{alert_section}{logs_section}
 === REQUESTED ANALYSIS ===
 Type: {analysis_type}
 Task: {analysis_desc}
