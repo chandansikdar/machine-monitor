@@ -736,11 +736,54 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     anomalies = insights.get("anomalies", [])
     if anomalies:
         st.subheader("Anomalies detected")
-        for a in anomalies:
-            st.warning(f"**{a.get('parameter', '—')}** — {a.get('description', '')}")
+        if analysis_type == "Operational Schedule Compliance":
+            # Structured anomaly cards with description / corrective action / potential impact
+            for _idx, _a in enumerate(anomalies):
+                _param  = _a.get("parameter", "—")
+                _desc   = _a.get("description", "")
+                _action = _a.get("corrective_action", "")
+                _impact = _a.get("potential_impact", "")
+                _rank   = f"#{_idx + 1}"
+                st.markdown(
+                    f'<div style="background:#FFFBF0;border-left:4px solid #C8A84B;'
+                    f'padding:12px 16px;margin-bottom:12px;border-radius:4px;">'
+                    f'<div style="font-weight:700;font-size:1.0em;margin-bottom:6px">'
+                    f'{_rank} &nbsp;·&nbsp; {_param}</div>'
+                    f'<div style="font-size:0.9em;margin-bottom:10px;color:#333">{_desc}</div>'
+                    f'{"<hr style=margin:8px_0;border:none;border-top:1px_solid_#e8d99a>" if _action or _impact else ""}'
+                    .replace("margin:8px_0", "margin:8px 0").replace("border-top:1px_solid_#e8d99a", "border-top:1px solid #e8d99a") +
+                    (f'<div style="margin-top:8px">'
+                     f'<span style="font-weight:600;color:#054D5F">🔧 Corrective action</span><br>'
+                     f'<span style="font-size:0.88em;color:#333">{_action}</span>'
+                     f'</div>' if _action else '') +
+                    (f'<div style="margin-top:10px">'
+                     f'<span style="font-weight:700;color:#177E40">💰 Potential impact</span><br>'
+                     f'<span style="font-size:0.88em;font-weight:600;color:#177E40">{_impact}</span>'
+                     f'</div>' if _impact else '') +
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            for a in anomalies:
+                _desc_full = a.get("description", "")
+                _action    = a.get("corrective_action", "")
+                _impact    = a.get("potential_impact", "")
+                _extra = ""
+                if _action:
+                    _extra += f"<br><span style='font-size:0.88em;color:#333'><b>🔧 Action:</b> {_action}</span>"
+                if _impact:
+                    _extra += f"<br><span style='font-size:0.88em;font-weight:600;color:#177E40'><b>💰 Impact:</b> {_impact}</span>"
+                st.markdown(
+                    f'<div style="background:#FFF8E6;border-left:4px solid #E67E22;'
+                    f'padding:10px 14px;margin-bottom:8px;border-radius:3px;">'
+                    f'<b>{a.get("parameter", "—")}</b> — {_desc_full}{_extra}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
+    # Key insights — suppressed for Schedule Compliance (content is in anomaly cards)
     key_points = insights.get("insights", [])
-    if key_points:
+    if key_points and analysis_type != "Operational Schedule Compliance":
         st.subheader("Key insights")
         for point in key_points:
             st.markdown(f"- {point}")
