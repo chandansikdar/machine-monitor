@@ -453,25 +453,33 @@ class Analyzer:
         else:
             off_sched_compliance = 100.0
 
-        # Pre-aggregate off-schedule running by day-of-week (full day — no hour grouping)
-        # Each day that has any off-schedule running is one pattern entry.
+        # Aggregate off-schedule running into two buckets only:
+        #   "Weekday" = Mon–Fri (dow 0–4)
+        #   "Weekend" = Sat–Sun (dow 5–6)
+        # This mirrors the user-defined schedule definition.
+        _WD_INTS = {0, 1, 2, 3, 4}   # Mon–Fri
+        _WE_INTS = {5, 6}             # Sat–Sun
         _pattern_agg = {}
         if off_schedule_running.any():
             _osr_df = off_schedule_running[off_schedule_running].copy()
             for _ts in _osr_df.index:
-                _dn = _DAY_NAMES_ALL[_ts.dayofweek]
-                if _dn not in _pattern_agg:
-                    _pattern_agg[_dn] = {"day": _dn, "occurrences": 0, "total_hours": 0.0}
-                # Each reading = one interval; count intervals and convert to hours
-                _pattern_agg[_dn]["total_hours"] = round(
-                    _pattern_agg[_dn]["total_hours"] + 0.25, 2)  # assumes 15-min intervals
-            # Count unique calendar dates per day-of-week
-            for _dn in _pattern_agg:
-                _dow_int = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].index(_dn)
-                _dates   = set(_osr_df[_osr_df.index.dayofweek == _dow_int].index.date)
-                _pattern_agg[_dn]["occurrences"] = len(_dates)
+                _bucket = "Weekday (Mon–Fri)" if _ts.dayofweek in _WD_INTS else "Weekend (Sat–Sun)"
+                if _bucket not in _pattern_agg:
+                    _pattern_agg[_bucket] = {
+                        "pattern": _bucket,
+                        "occurrences": 0,
+                        "total_hours": 0.0,
+                        "affected_days": set(),
+                    }
+                _pattern_agg[_bucket]["total_hours"] = round(
+                    _pattern_agg[_bucket]["total_hours"] + 0.25, 2)
+                _pattern_agg[_bucket]["affected_days"].add(_ts.date())
+            # Replace set with count for JSON serialisation
+            for _b in _pattern_agg:
+                _pattern_agg[_b]["occurrences"] = len(_pattern_agg[_b]["affected_days"])
+                del _pattern_agg[_b]["affected_days"]
 
-        # Sort by total_hours descending — most impactful day first
+        # Sort by total_hours descending — most impactful bucket first
         _patterns_sorted = sorted(_pattern_agg.values(), key=lambda x: x["total_hours"], reverse=True)
 
         _DAY_NAMES_ALL = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
