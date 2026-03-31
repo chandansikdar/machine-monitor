@@ -737,29 +737,55 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     if anomalies:
         st.subheader("Anomalies detected")
         if analysis_type == "Operational Schedule Compliance":
-            # Structured anomaly cards with description / corrective action / potential impact
+            # Structured anomaly cards: description / corrective action / potential impact
             for _idx, _a in enumerate(anomalies):
                 _param  = _a.get("parameter", "—")
                 _desc   = _a.get("description", "")
                 _action = _a.get("corrective_action", "")
                 _impact = _a.get("potential_impact", "")
                 _rank   = f"#{_idx + 1}"
+
+                # Fallback: if Claude merged content into description, extract it
+                import re as _re
+                if not _action and "corrective action" in _desc.lower():
+                    _parts = _re.split(r"corrective action\s*[:\-]", _desc, flags=_re.IGNORECASE)
+                    _desc = _parts[0].strip()
+                    _action_raw = _parts[1].strip() if len(_parts) > 1 else ""
+                    if not _impact and "potential impact" in _action_raw.lower():
+                        _ap = _re.split(r"potential impact\s*[:\-]", _action_raw, flags=_re.IGNORECASE)
+                        _action = _ap[0].strip()
+                        _impact = _ap[1].strip() if len(_ap) > 1 else ""
+                    else:
+                        _action = _action_raw
+                if not _impact and "potential impact" in _desc.lower():
+                    _parts = _re.split(r"potential impact\s*[:\-]", _desc, flags=_re.IGNORECASE)
+                    _desc   = _parts[0].strip()
+                    _impact = _parts[1].strip() if len(_parts) > 1 else ""
+
+                _desc_html = (
+                    f'<p style="margin:0 0 0 0;font-size:0.9em;color:#333">{_desc}</p>'
+                    if _desc else ""
+                )
+                _action_html = (
+                    f'<p style="margin:12px 0 4px 0;font-weight:700;color:#054D5F;font-size:0.9em">'
+                    f'🔧 Corrective action</p>'
+                    f'<p style="margin:0;font-size:0.88em;color:#333">{_action}</p>'
+                ) if _action else ""
+                _impact_html = (
+                    f'<p style="margin:12px 0 4px 0;font-weight:700;color:#177E40;font-size:0.9em">'
+                    f'💰 Potential impact</p>'
+                    f'<p style="margin:0;font-size:0.88em;font-weight:600;color:#177E40">{_impact}</p>'
+                ) if _impact else ""
+                _divider = (
+                    '<hr style="margin:10px 0;border:none;border-top:1px solid #e8d99a">' 
+                    if _action or _impact else ""
+                )
                 st.markdown(
                     f'<div style="background:#FFFBF0;border-left:4px solid #C8A84B;'
-                    f'padding:12px 16px;margin-bottom:12px;border-radius:4px;">'
-                    f'<div style="font-weight:700;font-size:1.0em;margin-bottom:6px">'
-                    f'{_rank} &nbsp;·&nbsp; {_param}</div>'
-                    f'<div style="font-size:0.9em;margin-bottom:10px;color:#333">{_desc}</div>'
-                    f'{"<hr style=margin:8px_0;border:none;border-top:1px_solid_#e8d99a>" if _action or _impact else ""}'
-                    .replace("margin:8px_0", "margin:8px 0").replace("border-top:1px_solid_#e8d99a", "border-top:1px solid #e8d99a") +
-                    (f'<div style="margin-top:8px">'
-                     f'<span style="font-weight:600;color:#054D5F">🔧 Corrective action</span><br>'
-                     f'<span style="font-size:0.88em;color:#333">{_action}</span>'
-                     f'</div>' if _action else '') +
-                    (f'<div style="margin-top:10px">'
-                     f'<span style="font-weight:700;color:#177E40">💰 Potential impact</span><br>'
-                     f'<span style="font-size:0.88em;font-weight:600;color:#177E40">{_impact}</span>'
-                     f'</div>' if _impact else '') +
+                    f'padding:14px 16px;margin-bottom:14px;border-radius:4px;">'
+                    f'<p style="margin:0 0 8px 0;font-weight:700;font-size:1.0em;color:#2C3E50">'
+                    f'{_rank} &nbsp;·&nbsp; {_param}</p>'
+                    f'{_desc_html}{_divider}{_action_html}{_impact_html}'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
