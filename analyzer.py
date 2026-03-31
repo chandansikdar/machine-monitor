@@ -425,8 +425,42 @@ class Analyzer:
             else:
                 running_mask = pd.Series(True, index=df.index)
 
-        # Schedule is day-of-week only — full day per permitted day
-        in_schedule          = df.index.dayofweek.isin(work_days)
+        hour_start   = schedule.get("work_hour_start", 8)
+        hour_end     = schedule.get("work_hour_end", 18)
+        sched_entries = schedule.get("sched_entries", [])
+        sched_per_day = schedule.get("sched_per_day", {})
+
+        # Build in_schedule mask: day + time window
+        # Uses sched_per_day (per-day windows) when available, else flat work_days + hour window
+        _DAYS_IDX = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
+        _any_spd = any(v.get("enabled") for v in sched_per_day.values()) if sched_per_day else False
+        if not sched_entries and not _any_spd:
+            # No schedule defined — all time treated as permitted
+            in_schedule = pd.Series(True, index=df.index)
+        elif _any_spd:
+            in_schedule = pd.Series(False, index=df.index)
+            for _dn, _didx in _DAYS_IDX.items():
+                _dcfg = sched_per_day.get(_dn, {})
+                if not _dcfg.get("enabled", False):
+                    continue
+                _day_rows = df.index.dayofweek == _didx
+                _wins = _dcfg.get("windows", [{"start": hour_start, "end": hour_end}])
+                _hw = pd.Series(
+                    [any(w["start"] <= h + n/60 < w["end"]
+                         for w in _wins)
+                     for h, n in zip(df.index.hour, df.index.minute)],
+                    index=df.index,
+                )
+                in_schedule |= (_day_rows & _hw)
+        else:
+            _day_mask  = df.index.dayofweek.isin(work_days)
+            _hour_mask = pd.Series(
+                [hour_start <= h + n/60 < hour_end
+                 for h, n in zip(df.index.hour, df.index.minute)],
+                index=df.index,
+            )
+            in_schedule = _day_mask & _hour_mask
+
         off_schedule_running = running_mask & ~in_schedule
         weekend_running      = running_mask & df.index.dayofweek.isin([5, 6])
 
