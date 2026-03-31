@@ -105,8 +105,11 @@ Rules:
   Never use words like "of total", "runtime", "running" in the value field. Percentage only.
   Never use raw reading counts like "5,985 readings" in KPI values.
   ANOMALIES RULE: Never list individual off-schedule events as separate anomalies.
-  Group repeated events into behavioural patterns. Maximum 3 anomaly entries total.
-  CRITICAL: Each of the three sub-fields must contain ONLY its own content — never merge them:
+  Group repeated events into behavioural patterns.
+  Only report patterns that are clearly and repeatedly evidenced in the data.
+  If only one pattern exists, return one entry. If none exist, return [].
+  Do NOT invent patterns to fill a quota. Zero anomalies is a valid result.
+  CRITICAL: Each sub-field must contain ONLY its own content — never merge them:
     "description"       — ONLY the pattern observation (what, when, frequency, cumulative hours).
                           Never include corrective action or impact text here.
     "corrective_action" — ONLY the specific fix recommendation. Never include description or impact.
@@ -157,8 +160,9 @@ ANALYSIS_DESCRIPTIONS = {
         "Always use the term 'off-schedule compliance' not 'schedule compliance'. "
         "ANOMALIES: Do NOT list every individual off-schedule block as a separate anomaly. "
         "Instead identify the PATTERNS: recurring after-hours running, systematic weekend operation, "
-        "repeated overnight starts, etc. Maximum 3 anomaly entries — each must describe a distinct "
-        "behavioural pattern, not a single event. Each anomaly must include: the pattern name, "
+        "repeated overnight starts, etc. Only report patterns clearly evidenced in the data. "
+        "If only one pattern exists return one entry; if none, return []. "
+        "Do NOT invent patterns to fill a quota. Each anomaly must include: the pattern name, "
         "frequency (e.g. 'every weekday evening'), total duration impact, and a specific "
         "corrective action recommendation. "
         "INSIGHTS: Return an empty insights array []. "
@@ -453,6 +457,46 @@ class Analyzer:
             off_sched_compliance = round(100 * (total_off_sched - off_rows) / total_off_sched, 1)
         else:
             off_sched_compliance = 100.0
+
+        # Pre-aggregate off-schedule blocks by day-of-week + hour-of-day pattern
+        # so Claude receives grouped evidence rather than raw individual blocks
+        _DAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+        _pattern_agg = {}
+        if off_schedule_running.any():
+            _osr = off_schedule_running.copy()
+            _osr_vals = _osr.astype(int).values
+            _idx = df.index
+            _in_block = False
+            _block_start = None
+            for _i, _v in enumerate(_osr_vals):
+                if _v and not _in_block:
+                    _in_block = True
+                    _block_start = _idx[_i]
+                elif not _v and _in_block:
+                    _in_block = False
+                    _block_end = _idx[_i - 1]
+                    _dow  = _DAY_NAMES[_block_start.dayofweek]
+                    _hour = _block_start.hour
+                    _dur_h = round((_block_end - _block_start).total_seconds() / 3600 + 0.25, 2)
+                    _key  = f"{_dow}_{_hour:02d}h"
+                    if _key not in _pattern_agg:
+                        _pattern_agg[_key] = {"day": _dow, "start_hour": _hour, "occurrences": 0, "total_hours": 0.0}
+                    _pattern_agg[_key]["occurrences"] += 1
+                    _pattern_agg[_key]["total_hours"] = round(_pattern_agg[_key]["total_hours"] + _dur_h, 2)
+            if _in_block:  # block runs to end of data
+                _block_end = _idx[-1]
+                _dow  = _DAY_NAMES[_block_start.dayofweek]
+                _hour = _block_start.hour
+                _dur_h = round((_block_end - _block_start).total_seconds() / 3600 + 0.25, 2)
+                _key  = f"{_dow}_{_hour:02d}h"
+                if _key not in _pattern_agg:
+                    _pattern_agg[_key] = {"day": _dow, "start_hour": _hour, "occurrences": 0, "total_hours": 0.0}
+                _pattern_agg[_key]["occurrences"] += 1
+                _pattern_agg[_key]["total_hours"] = round(_pattern_agg[_key]["total_hours"] + _dur_h, 2)
+
+        # Sort by total_hours descending so most impactful pattern is first
+        _patterns_sorted = sorted(_pattern_agg.values(), key=lambda x: x["total_hours"], reverse=True)
+
         return {
             "permitted_schedule": {
                 "work_days": [["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d] for d in work_days],
@@ -466,6 +510,7 @@ class Analyzer:
             "off_schedule_pct":              round(100 * off_rows / running_rows, 1) if running_rows else 0,
             "off_schedule_compliance_pct":   off_sched_compliance,
             "off_schedule_blocks":           off_blocks,
+            "off_schedule_patterns":         _patterns_sorted,
         }
 
     # ------------------------------------------------------------------ #
@@ -632,9 +677,13 @@ vibration, temperature, pressure, or any other parameter conditions.
 KPIs must cover only: off-schedule compliance %, off-schedule running %, weekend running %, after-hours running %.
 
 ANOMALIES — PATTERN RULE (strictly enforced):
-- Maximum 3 anomaly entries. Do NOT list every individual off-schedule block.
-- Each entry must describe a RECURRING PATTERN, not a single dated event.
-- If two or more blocks share the same time-of-day or day-of-week pattern, they are ONE entry.
+- Use the "off_schedule_patterns" field in the schedule data as your PRIMARY evidence.
+  Each entry in off_schedule_patterns is a pre-grouped pattern (day + start hour + occurrences
+  + total hours). These are the ONLY patterns that exist in the data.
+- Report one anomaly entry per pattern in off_schedule_patterns. Do not invent additional
+  patterns not present in that list.
+- If off_schedule_patterns is empty, return anomalies: []. Zero anomalies is a valid result.
+- Each anomaly entry must describe the pattern from off_schedule_patterns, not individual events.
 - You MUST populate EXACTLY THREE SEPARATE FIELDS per anomaly. Do NOT merge them.
   Do NOT put corrective_action or potential_impact text inside the description field.
 
