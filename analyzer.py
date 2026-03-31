@@ -95,7 +95,6 @@ Rules:
   You MUST use the term "off-schedule compliance" (not "schedule compliance") throughout your narrative.
   Definition: off-schedule compliance = % of off-schedule hours the machine was correctly NOT running.
   100% = machine never ran outside permitted schedule. 0% = machine ran during all off-schedule hours.
-  Anomalies should only reference off-schedule running events, not sensor anomalies.
   KPIs must use PERCENTAGES not raw counts. Keep values SHORT (under 8 chars). Use these exact labels and formats:
     "Off-Schedule Compliance" — value taken directly from off_schedule_compliance_pct field
     "Off-Schedule Running" — value like "70.0%"
@@ -103,6 +102,13 @@ Rules:
     "After-Hours" — value like "41.9%"
   Never use words like "of total", "runtime", "running" in the value field. Percentage only.
   Never use raw reading counts like "5,985 readings" in KPI values.
+  ANOMALIES RULE: Never list individual off-schedule events as separate anomalies.
+  Group repeated events into behavioural patterns. Maximum 3 anomaly entries total.
+  Each anomaly entry = one distinct pattern (e.g. "Systematic after-hours running" not
+  "Off-schedule block 2024-01-15 18:00–08:00"). Include pattern frequency and corrective action.
+  INSIGHTS RULE: Insights must NOT restate the anomaly patterns already described.
+  Insights must add new information: cost/energy saving potential, root cause hypothesis,
+  priority order for remediation. No insight may duplicate content already in the anomalies array.
 """
 
 ANALYSIS_DESCRIPTIONS = {
@@ -138,12 +144,22 @@ ANALYSIS_DESCRIPTIONS = {
     ),
     "Operational Schedule Compliance": (
         "Analyse whether the machine ran outside its permitted schedule. "
-        "Report only off-schedule compliance findings — off-schedule running periods, "
-        "weekend running, after-hours running. "
+        "Report only off-schedule compliance findings. "
         "Do NOT report on sensor health, vibration, temperature, pressure, or any parameter conditions. "
         "KPIs must cover only: off-schedule compliance %, off-schedule running %, weekend %, after-hours %. "
         "Health score = off_schedule_compliance_pct from the AUTHORITATIVE COMPLIANCE VALUE section. "
-        "Always use the term 'off-schedule compliance' not 'schedule compliance'."
+        "Always use the term 'off-schedule compliance' not 'schedule compliance'. "
+        "ANOMALIES: Do NOT list every individual off-schedule block as a separate anomaly. "
+        "Instead identify the PATTERNS: recurring after-hours running, systematic weekend operation, "
+        "repeated overnight starts, etc. Maximum 3 anomaly entries — each must describe a distinct "
+        "behavioural pattern, not a single event. Each anomaly must include: the pattern name, "
+        "frequency (e.g. 'every weekday evening'), total duration impact, and a specific "
+        "corrective action recommendation. "
+        "INSIGHTS: Must be entirely distinct from the anomalies. Do NOT restate what the anomalies "
+        "already describe. Insights should cover: (1) financial/energy saving potential from fixing "
+        "each pattern, (2) root cause hypothesis (controls failure, manual override, no auto-shutdown), "
+        "(3) priority ranking of which pattern to fix first for maximum impact. "
+        "Each insight must be specific — include hours, percentages, or cost figures where available."
     ),
     # ── Additional analytics ──────────────────────────────────────────────────
     "Correlation Analysis": (
@@ -611,7 +627,21 @@ You MUST use the term "off-schedule compliance" (not "schedule compliance") in y
 IMPORTANT: Report ONLY off-schedule compliance findings. Do NOT report on sensor health,
 vibration, temperature, pressure, or any other parameter conditions.
 KPIs must cover only: off-schedule compliance %, off-schedule running %, weekend running %, after-hours running %.
-Anomalies must reference only off-schedule running events, not sensor readings.
+
+ANOMALIES — PATTERN RULE (strictly enforced):
+- Maximum 3 anomaly entries. Do NOT list every individual off-schedule block.
+- Each entry must describe a RECURRING PATTERN (e.g. "Systematic after-hours running Mon-Fri"),
+  not a single dated event.
+- Each pattern entry must include: pattern name, frequency, cumulative hours impact,
+  and one specific corrective action.
+- If two or more blocks share the same time-of-day or day-of-week pattern, they are ONE anomaly entry.
+
+INSIGHTS — NON-REDUNDANCY RULE (strictly enforced):
+- Insights must NOT restate or summarise what the anomaly patterns already describe.
+- Each insight must add genuinely new information: estimated energy/cost saving potential,
+  root cause hypothesis (controls failure, no auto-shutdown, manual override),
+  or priority ranking of which pattern to fix first for maximum impact.
+- Include specific numbers (hours, %, CHF/year) wherever the data supports it.
 
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
@@ -643,3 +673,4 @@ Task: {analysis_desc}
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
         return prompt
+      
