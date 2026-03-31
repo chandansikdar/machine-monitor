@@ -3856,7 +3856,11 @@ with tab_analysis:
 
                 schedule = {
                     "work_days":         _work_days_flat,
-                    "permitted_days":    list(_permitted_days),
+                    "work_hour_start":   int(_all_windows_flat[0]["start"]),
+                    "work_hour_end":     int(_all_windows_flat[0]["end"]),
+                    "sched_windows":     _all_windows_flat,
+                    "sched_entries":     list(_entries_flat),
+                    "sched_per_day":     {d: dict(_spd[d]) for d in _DAYS if d in _spd},
                     "indicator_col":     indicator_col,
                     "running_threshold": float(run_threshold),
                     "currency_symbol":   currency_symbol,
