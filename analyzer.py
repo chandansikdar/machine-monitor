@@ -106,10 +106,12 @@ Rules:
   Never use raw reading counts like "5,985 readings" in KPI values.
   ANOMALIES RULE: Never list individual off-schedule events as separate anomalies.
   Group repeated events into behavioural patterns. Maximum 3 anomaly entries total.
-  Each anomaly entry = one distinct pattern with ALL THREE sub-fields populated:
-    "description"       — the pattern: what, when, how often, cumulative hours
-    "corrective_action" — one specific actionable recommendation to fix this pattern
-    "potential_impact"  — quantified benefit: hours saved, estimated cost saving, or risk reduction
+  CRITICAL: Each of the three sub-fields must contain ONLY its own content — never merge them:
+    "description"       — ONLY the pattern observation (what, when, frequency, cumulative hours).
+                          Never include corrective action or impact text here.
+    "corrective_action" — ONLY the specific fix recommendation. Never include description or impact.
+    "potential_impact"  — ONLY the quantified benefit (hours, kWh, cost saving with numbers).
+                          Never include description or corrective action text here.
   Order anomalies from highest to lowest potential_impact (most impactful pattern first).
   INSIGHTS RULE: For Schedule Compliance, return an empty insights array [].
   All actionable information belongs in the anomaly corrective_action and potential_impact fields.
@@ -633,18 +635,36 @@ ANOMALIES — PATTERN RULE (strictly enforced):
 - Maximum 3 anomaly entries. Do NOT list every individual off-schedule block.
 - Each entry must describe a RECURRING PATTERN, not a single dated event.
 - If two or more blocks share the same time-of-day or day-of-week pattern, they are ONE entry.
-- Every anomaly entry MUST populate all three sub-fields:
-    "description"       : the pattern — what, how often, cumulative hours over the analysis period
-    "corrective_action" : one specific action to stop this pattern recurring
-    "potential_impact"  : quantified benefit — hours saved per week/month, estimated cost saving,
-                          or operational risk reduction. Be specific; use the electricity rate
-                          data if available in the context.
-- Order anomalies from HIGHEST to LOWEST potential_impact.
+- You MUST populate EXACTLY THREE SEPARATE FIELDS per anomaly. Do NOT merge them.
+  Do NOT put corrective_action or potential_impact text inside the description field.
+
+  "description"       : ONLY the pattern observation — what runs when, how often,
+                        cumulative off-schedule hours over the analysis period.
+                        No corrective action text here.
+
+  "corrective_action" : ONLY the recommended fix — one specific, actionable instruction
+                        (e.g. "Configure auto-stop at 18:00 in PLC/SCADA with restart
+                        inhibit until 08:00 next permitted workday").
+                        No description or impact text here.
+
+  "potential_impact"  : ONLY the quantified benefit of fixing this pattern.
+                        Must include at least one number — hours saved per week or month,
+                        estimated kWh saving, or estimated cost saving using the electricity
+                        rate from context. Format: "Eliminating this pattern saves approx
+                        X hours/week (Y kWh/month) — estimated CHF Z/year at current rates."
+                        No description or corrective action text here.
+
+- Order anomalies from HIGHEST to LOWEST potential_impact value.
+
+EXAMPLE of correct field separation:
+  "parameter": "Systematic weekday after-hours running",
+  "description": "Pump runs 18:00–08:00 every Mon–Fri, a 14-hour window. Observed on all 65 weekdays in the 90-day period. Total: ~910 off-schedule hours.",
+  "corrective_action": "Configure a hard stop command at 18:00 in the PLC/SCADA system with auto-restart inhibit until 08:00 the following permitted workday.",
+  "potential_impact": "Eliminating this pattern saves ~910 hours/90 days (70 hrs/week). At 5 kW average load and CHF 0.15/kWh, estimated saving: CHF 4,550/year."
 
 INSIGHTS — EMPTY FOR SCHEDULE COMPLIANCE:
 - Return "insights": [] (empty array).
 - All actionable content belongs in corrective_action and potential_impact fields above.
-- Do not add insights that restate the anomaly descriptions.
 
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
