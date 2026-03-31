@@ -122,35 +122,42 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
     df = data.copy()
     df.index = pd.to_datetime(df.index)
 
-    # Determine permitted mask — per-day windows when available, else flat windows
-    _DAYS_IDX = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
-    _any_enabled = any(v.get("enabled") for v in _spd.values()) if _spd else False
+    # Build in-schedule mask — mirrors _compute_schedule_stats in analyzer.py exactly
+    _DAYS_IDX  = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
+    _any_spd   = any(v.get("enabled") for v in _spd.values()) if _spd else False
+    _work_days = schedule.get("work_days", list(range(5)))
+    _hour_s    = schedule.get("work_hour_start", 8)
+    _hour_e    = schedule.get("work_hour_end", 18)
 
-    if not _sched_entries and not _any_enabled:
-        # No schedule defined — all time treated as running (all green)
+    if not _sched_entries and not _any_spd and not _work_days:
+        # Truly no schedule defined — all time treated as permitted (all green)
         in_schedule = pd.Series(True, index=df.index)
-    elif _spd and _any_enabled:
-        # Per-day schedule: check each row against that day's own windows
+    elif _any_spd:
+        # Per-day windows from sched_per_day
         in_schedule = pd.Series(False, index=df.index)
         for _dn, _didx in _DAYS_IDX.items():
             _dcfg = _spd.get(_dn, {})
             if not _dcfg.get("enabled", False):
                 continue
             _day_rows = df.index.dayofweek == _didx
-            _wins     = _dcfg.get("windows", [{"start": 8, "end": 18}])
+            _wins     = _dcfg.get("windows", [{"start": _hour_s, "end": _hour_e}])
             _hw = pd.Series(
-                [any(w["start"] <= h + n/60 < w["end"] for w in _wins) for h, n in zip(df.index.hour, df.index.minute)],
+                [any(w["start"] <= h + n/60 < w["end"] for w in _wins)
+                 for h, n in zip(df.index.hour, df.index.minute)],
                 index=df.index
             )
             in_schedule |= (_day_rows & _hw)
-    else:
-        work_days = schedule.get("work_days", list(range(5)))
-        day_mask  = df.index.dayofweek.isin(work_days)
-        hour_mask = pd.Series(
-            [any(w["start"] <= h + n/60 < w["end"] for w in sched_windows) for h, n in zip(df.index.hour, df.index.minute)],
+    elif _work_days:
+        # Flat work_days + hour window fallback
+        _day_mask  = df.index.dayofweek.isin(_work_days)
+        _hour_mask = pd.Series(
+            [_hour_s <= h + n/60 < _hour_e
+             for h, n in zip(df.index.hour, df.index.minute)],
             index=df.index
         )
-        in_schedule = day_mask & hour_mask
+        in_schedule = _day_mask & _hour_mask
+    else:
+        in_schedule = pd.Series(True, index=df.index)
 
     # Build shading shapes — find contiguous blocks
     def _blocks(mask):
@@ -406,46 +413,47 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 ) / 3600
 
                 # If no schedule entries defined, assume zero off-schedule time
-                _sched_ss     = st.session_state.get("_last_schedule", {})
-                _permitted_m  = _sched_ss.get("permitted_days", ["Mon","Tue","Wed","Thu","Fri"])
-                _no_sched_defined = not st.session_state.get("_last_schedule", {}).get("sched_entries")
+                _no_sched_defined = not st.session_state.get("_last_schedule", {}).get("work_days")
 
-                # Total scheduled off time = all hours outside the permitted schedule
-                _sched_ss      = st.session_state.get("_last_schedule", {})
-                _spd_m         = _sched_ss.get("sched_per_day", {})
-                _sched_wins_m  = _sched_ss.get("sched_windows",
-                                     [{"start": _sched_ss.get("work_hour_start", 8),
-                                       "end":   _sched_ss.get("work_hour_end", 18)}])
-                _wdays_m       = _sched_ss.get("work_days", list(range(5)))
-                _run_thresh_m  = _sched_ss.get("running_threshold", 0)
-                _ind_col_m     = _sched_ss.get("indicator_col", "")
+                # Total scheduled off time — same mask logic as _compute_schedule_stats
+                _sched_ss     = st.session_state.get("_last_schedule", {})
+                _spd_m        = _sched_ss.get("sched_per_day", {})
+                _wdays_m      = _sched_ss.get("work_days", list(range(5)))
+                _hour_s_m     = _sched_ss.get("work_hour_start", 8)
+                _hour_e_m     = _sched_ss.get("work_hour_end", 18)
+                _run_thresh_m = _sched_ss.get("running_threshold", 0)
+                _ind_col_m    = _sched_ss.get("indicator_col", "")
+                _any_spd_m    = any(v.get("enabled") for v in _spd_m.values()) if _spd_m else False
+                _DAYS_IDX_M   = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
 
                 _df_m = data.copy()
                 _df_m.index = pd.to_datetime(_df_m.index)
 
-                # Build in-schedule mask per-row
-                def _in_sched_mask(df_idx):
-                    result = []
-                    _DAYS_M = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-                    _DM     = {d: i for i, d in enumerate(_DAYS_M)}
-                    for _ii in range(len(df_idx)):
-                        _dow = df_idx.dayofweek[_ii]
-                        _hr  = df_idx.hour[_ii] + df_idx.minute[_ii] / 60
-                        if _spd_m:
-                            _ok = any(
-                                _spd_m.get(_dn, {}).get("enabled", False) and
-                                _dow == _DM[_dn] and
-                                any(w["start"] <= (_hr + _df_m.index.minute[_ii]/60) < w["end"]
-                                    for w in _spd_m.get(_dn, {}).get("windows", _sched_wins_m))
-                                for _dn in _DAYS_M
-                            )
-                        else:
-                            _ok = (_dow in _wdays_m and
-                                   any(w["start"] <= (_hr + _df_m.index.minute[_ii]/60) < w["end"] for w in _sched_wins_m))
-                        result.append(_ok)
-                    return pd.Series(result, index=df_idx)
+                if not _wdays_m and not _any_spd_m:
+                    _in_sched_s = pd.Series(True, index=_df_m.index)
+                elif _any_spd_m:
+                    _in_sched_s = pd.Series(False, index=_df_m.index)
+                    for _dn, _di in _DAYS_IDX_M.items():
+                        _dcfg = _spd_m.get(_dn, {})
+                        if not _dcfg.get("enabled", False):
+                            continue
+                        _dr = _df_m.index.dayofweek == _di
+                        _wins = _dcfg.get("windows", [{"start": _hour_s_m, "end": _hour_e_m}])
+                        _hw = pd.Series(
+                            [any(w["start"] <= h + n/60 < w["end"] for w in _wins)
+                             for h, n in zip(_df_m.index.hour, _df_m.index.minute)],
+                            index=_df_m.index,
+                        )
+                        _in_sched_s |= (_dr & _hw)
+                else:
+                    _dm = _df_m.index.dayofweek.isin(_wdays_m)
+                    _hm = pd.Series(
+                        [_hour_s_m <= h + n/60 < _hour_e_m
+                         for h, n in zip(_df_m.index.hour, _df_m.index.minute)],
+                        index=_df_m.index,
+                    )
+                    _in_sched_s = _dm & _hm
 
-                _in_sched_s  = _in_sched_mask(_df_m.index)
                 _off_sched_s = ~_in_sched_s
 
                 # Total scheduled off time (all readings outside schedule)
