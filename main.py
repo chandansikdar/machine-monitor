@@ -113,17 +113,44 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
     if not plot_col:
         return []
 
-    work_days    = schedule.get("work_days", list(range(5)))
-    permitted_dn = schedule.get("permitted_days", ["Mon","Tue","Wed","Thu","Fri"])
+    _spd          = schedule.get("sched_per_day", {})
+    _sched_entries = schedule.get("sched_entries", [])
+    sched_windows = schedule.get("sched_windows",
+                       [{"start": schedule.get("work_hour_start", 8),
+                         "end":   schedule.get("work_hour_end", 18)}])
 
     df = data.copy()
     df.index = pd.to_datetime(df.index)
 
-    # Schedule is day-of-week only — full day per permitted day
-    if not permitted_dn:
+    # Determine permitted mask — per-day windows when available, else flat windows
+    _DAYS_IDX = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
+    _any_enabled = any(v.get("enabled") for v in _spd.values()) if _spd else False
+
+    if not _sched_entries and not _any_enabled:
+        # No schedule defined — all time treated as running (all green)
         in_schedule = pd.Series(True, index=df.index)
+    elif _spd and _any_enabled:
+        # Per-day schedule: check each row against that day's own windows
+        in_schedule = pd.Series(False, index=df.index)
+        for _dn, _didx in _DAYS_IDX.items():
+            _dcfg = _spd.get(_dn, {})
+            if not _dcfg.get("enabled", False):
+                continue
+            _day_rows = df.index.dayofweek == _didx
+            _wins     = _dcfg.get("windows", [{"start": 8, "end": 18}])
+            _hw = pd.Series(
+                [any(w["start"] <= h + n/60 < w["end"] for w in _wins) for h, n in zip(df.index.hour, df.index.minute)],
+                index=df.index
+            )
+            in_schedule |= (_day_rows & _hw)
     else:
-        in_schedule = df.index.dayofweek.isin(work_days)
+        work_days = schedule.get("work_days", list(range(5)))
+        day_mask  = df.index.dayofweek.isin(work_days)
+        hour_mask = pd.Series(
+            [any(w["start"] <= h + n/60 < w["end"] for w in sched_windows) for h, n in zip(df.index.hour, df.index.minute)],
+            index=df.index
+        )
+        in_schedule = day_mask & hour_mask
 
     # Build shading shapes — find contiguous blocks
     def _blocks(mask):
@@ -370,18 +397,44 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 # If no schedule entries defined, assume zero off-schedule time
                 _sched_ss     = st.session_state.get("_last_schedule", {})
                 _permitted_m  = _sched_ss.get("permitted_days", ["Mon","Tue","Wed","Thu","Fri"])
-                _no_sched_defined = not _permitted_m
+                _no_sched_defined = not st.session_state.get("_last_schedule", {}).get("sched_entries")
 
-                _day_map_r    = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
-                _wdays_m      = [_day_map_r[_d] for _d in _permitted_m if _d in _day_map_r]
-                _run_thresh_m = _sched_ss.get("running_threshold", 0)
-                _ind_col_m    = _sched_ss.get("indicator_col", "")
+                # Total scheduled off time = all hours outside the permitted schedule
+                _sched_ss      = st.session_state.get("_last_schedule", {})
+                _spd_m         = _sched_ss.get("sched_per_day", {})
+                _sched_wins_m  = _sched_ss.get("sched_windows",
+                                     [{"start": _sched_ss.get("work_hour_start", 8),
+                                       "end":   _sched_ss.get("work_hour_end", 18)}])
+                _wdays_m       = _sched_ss.get("work_days", list(range(5)))
+                _run_thresh_m  = _sched_ss.get("running_threshold", 0)
+                _ind_col_m     = _sched_ss.get("indicator_col", "")
 
                 _df_m = data.copy()
                 _df_m.index = pd.to_datetime(_df_m.index)
 
-                # In-schedule mask: day-of-week only (full day per permitted day)
-                _in_sched_s  = _df_m.index.dayofweek.isin(_wdays_m)
+                # Build in-schedule mask per-row
+                def _in_sched_mask(df_idx):
+                    result = []
+                    _DAYS_M = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+                    _DM     = {d: i for i, d in enumerate(_DAYS_M)}
+                    for _ii in range(len(df_idx)):
+                        _dow = df_idx.dayofweek[_ii]
+                        _hr  = df_idx.hour[_ii] + df_idx.minute[_ii] / 60
+                        if _spd_m:
+                            _ok = any(
+                                _spd_m.get(_dn, {}).get("enabled", False) and
+                                _dow == _DM[_dn] and
+                                any(w["start"] <= (_hr + _df_m.index.minute[_ii]/60) < w["end"]
+                                    for w in _spd_m.get(_dn, {}).get("windows", _sched_wins_m))
+                                for _dn in _DAYS_M
+                            )
+                        else:
+                            _ok = (_dow in _wdays_m and
+                                   any(w["start"] <= (_hr + _df_m.index.minute[_ii]/60) < w["end"] for w in _sched_wins_m))
+                        result.append(_ok)
+                    return pd.Series(result, index=df_idx)
+
+                _in_sched_s  = _in_sched_mask(_df_m.index)
                 _off_sched_s = ~_in_sched_s
 
                 # Total scheduled off time (all readings outside schedule)
@@ -3403,37 +3456,198 @@ with tab_analysis:
                 if "rate_windows" not in st.session_state:
                     st.session_state["rate_windows"] = [{"label": "Standard", "start": 0, "end": 23, "rate": 0.15}]
                 # ── Running Schedule expander ─────────────────────────
-                # Schedule is day-of-week only. Weekday = Mon–Fri (00:00–23:59).
-                # Weekend = Sat–Sun (00:00–23:59). No intra-day time windows.
                 with st.expander("🕑 Running Schedule", expanded=False):
-                    _DAYS     = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-                    _WEEKDAYS = ["Mon","Tue","Wed","Thu","Fri"]
-                    _WEEKEND  = ["Sat","Sun"]
+                    _DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 
-                    if "permitted_days" not in st.session_state:
-                        st.session_state["permitted_days"] = list(_WEEKDAYS)
+                    # Initialise new flat entry list
+                    if "sched_entries" not in st.session_state:
+                        # Migrate from old sched_per_day if it exists
+                        _old_spd = st.session_state.get("sched_per_day", {})
+                        _migrated = []
+                        if _old_spd:
+                            for _d in _DAYS:
+                                _dcfg = _old_spd.get(_d, {})
+                                if _dcfg.get("enabled") and _dcfg.get("windows"):
+                                    for _w in _dcfg["windows"]:
+                                        _migrated.append({
+                                            "days": [_d],
+                                            "start": _w["start"],
+                                            "end": _w["end"]
+                                        })
+                        st.session_state["sched_entries"] = _migrated
+                    if "sched_form_open" not in st.session_state:
+                        st.session_state["sched_form_open"] = False
+                    if "sched_edit_idx" not in st.session_state:
+                        st.session_state["sched_edit_idx"] = None
+                    if "sched_form_version" not in st.session_state:
+                        st.session_state["sched_form_version"] = 0
 
-                    st.markdown(
-                        "Select which days the machine is **permitted to run** (full day, 00:00–23:59). "
-                        "Running on any unselected day counts as off-schedule."
+                    _entries = st.session_state["sched_entries"]
+
+                    # ── Format reminder ───────────────────────────────────
+                    st.caption(
+                        "Times in 24-hour format — "
+                        "**HH**: 00–23   **MM**: 00–59"
                     )
-                    _permit_cols = st.columns(7)
-                    _new_permitted = []
-                    for _di, _dn in enumerate(_DAYS):
-                        _checked = _permit_cols[_di].checkbox(
-                            _dn,
-                            value=(_dn in st.session_state["permitted_days"]),
-                            key=f"sched_day_{_dn}",
-                        )
-                        if _checked:
-                            _new_permitted.append(_dn)
-                    st.session_state["permitted_days"] = _new_permitted
+                    st.divider()
 
-                    if _new_permitted:
-                        st.caption(f"Permitted: {', '.join(_new_permitted)} (full day each)")
-                    else:
-                        st.warning("No days selected — machine is never permitted to run."
-                                   " All running time will count as off-schedule.")
+                    # ── Saved entries ─────────────────────────────────────
+                    def _fmtt(v):
+                        h = int(v); m = int(round((v - h) * 60))
+                        return f"{h:02d}:{m:02d}"
+
+                    _del_entry = None
+                    for _ei, _entry in enumerate(_entries):
+                        _day_str  = ", ".join(_entry["days"])
+                        _time_str = f"{_fmtt(_entry['start'])}–{_fmtt(_entry['end'])}"
+                        _ea1, _ea2, _ea3 = st.columns([6, 1, 1])
+                        _ea1.markdown(f"**{_day_str}** — {_time_str}")
+                        if _ea2.button("✏️", key=f"se_edit_{_ei}", help="Edit"):
+                            st.session_state["sched_form_open"] = True
+                            st.session_state["sched_edit_idx"]   = _ei
+                            st.session_state["sched_form_version"] += 1
+                            st.rerun()
+                        if _ea3.button("×", key=f"se_del_{_ei}", help="Delete"):
+                            _del_entry = _ei
+                    if _del_entry is not None:
+                        _entries.pop(_del_entry)
+                        st.rerun()
+
+                    st.divider()
+
+                    # ── Add time button ───────────────────────────────────
+                    if not st.session_state["sched_form_open"]:
+                        if st.button("+ Add time", key="sched_add_btn"):
+                            st.session_state["sched_form_open"]  = True
+                            st.session_state["sched_edit_idx"]   = None
+                            st.session_state["sched_form_version"] += 1
+                            st.rerun()
+
+                    # ── Entry form ────────────────────────────────────────
+                    if st.session_state["sched_form_open"]:
+                        _edit_idx = st.session_state["sched_edit_idx"]
+                        _fv       = st.session_state["sched_form_version"]
+                        _is_edit  = _edit_idx is not None
+
+                        # Form buffer — same pattern as electricity rates (proven to work)
+                        _sfbuf_key = f"sf_buf_{_fv}"
+                        if _sfbuf_key not in st.session_state:
+                            if _is_edit and _edit_idx < len(_entries):
+                                _pe = _entries[_edit_idx]
+                                _psh = int(_pe["start"])
+                                _psm = int(round((_pe["start"] - _psh) * 60))
+                                _peh = int(_pe["end"])
+                                _pem = int(round((_pe["end"] - _peh) * 60))
+                                st.session_state[_sfbuf_key] = {
+                                    "days": list(_pe["days"]),
+                                    "sh": _psh, "sm": _psm, "eh": _peh, "em": _pem
+                                }
+                            else:
+                                st.session_state[_sfbuf_key] = {
+                                    "days": [], "sh": 8, "sm": 0, "eh": 18, "em": 0
+                                }
+                        _sfbuf = st.session_state[_sfbuf_key]
+
+                        st.markdown("**Step 1 — Select days**")
+                        # Write back immediately — same as _form["start"] = number_input(...)
+                        _sfbuf["days"] = st.multiselect(
+                            "Days", options=_DAYS, default=_sfbuf["days"],
+                            label_visibility="collapsed", key=f"sf_days_{_fv}",
+                            placeholder="Choose one or more days…",
+                        )
+
+                        if _sfbuf["days"]:
+                            st.markdown("**Step 2 — Start and End times**")
+                            st.caption("24-hour format — HH (0–23) : MM (0–59)")
+                            _s1, _s2, _s3 = st.columns([3, 4, 4])
+                            _s1.markdown("**Start**")
+                            _sfbuf["sh"] = _s2.number_input(
+                                "Start HH", min_value=0, max_value=23,
+                                value=_sfbuf["sh"],
+                                key=f"sf_sh_{_fv}", label_visibility="collapsed"
+                            )
+                            _sfbuf["sm"] = _s3.number_input(
+                                "Start MM", min_value=0, max_value=59,
+                                value=_sfbuf["sm"],
+                                key=f"sf_sm_{_fv}", label_visibility="collapsed"
+                            )
+                            _e1, _e2, _e3 = st.columns([3, 4, 4])
+                            _e1.markdown("**End**")
+                            _sfbuf["eh"] = _e2.number_input(
+                                "End HH", min_value=0, max_value=23,
+                                value=_sfbuf["eh"],
+                                key=f"sf_eh_{_fv}", label_visibility="collapsed"
+                            )
+                            _sfbuf["em"] = _e3.number_input(
+                                "End MM", min_value=0, max_value=59,
+                                value=_sfbuf["em"],
+                                key=f"sf_em_{_fv}", label_visibility="collapsed"
+                            )
+
+                            _sf_frac = _sfbuf["sh"] + _sfbuf["sm"] / 60
+                            _ef_frac = _sfbuf["eh"] + _sfbuf["em"] / 60
+
+                            # Show any conflict error from previous save attempt
+                            if st.session_state.get("_sf_conflict"):
+                                st.error(st.session_state["_sf_conflict"])
+
+                            _sb1, _sb2 = st.columns([2, 2])
+                            _save_label = "✓ Update" if _is_edit else "✓ Save"
+                            if _sb1.button(_save_label, type="primary", key=f"sf_save_{_fv}"):
+                                # Read values directly from buf (written this render — always current)
+                                _d   = list(_sfbuf["days"])
+                                _sf2 = _sfbuf["sh"] + _sfbuf["sm"] / 60
+                                _ef2 = _sfbuf["eh"] + _sfbuf["em"] / 60
+
+                                if _ef2 <= _sf2:
+                                    st.session_state["_sf_conflict"] = "End must be after Start"
+                                    st.rerun()
+                                else:
+                                    def _fct(v):
+                                        return f"{int(v):02d}:{int(round((v-int(v))*60)):02d}"
+                                    _cx = []
+                                    for _ci, _ce in enumerate(st.session_state["sched_entries"]):
+                                        if _edit_idx is not None and _ci == _edit_idx:
+                                            continue
+                                        _shared = [x for x in _d if x in _ce["days"]]
+                                        if _shared and _sf2 < _ce["end"] and _ce["start"] < _ef2:
+                                            _cx.append(
+                                                f"{', '.join(_shared)}: "
+                                                f"{_fct(_ce['start'])}–{_fct(_ce['end'])}"
+                                            )
+                                    if _cx:
+                                        st.session_state["_sf_conflict"] = (
+                                            "⚠️ Overlap with: "
+                                            + "; ".join(_cx)
+                                            + " — adjust times before saving."
+                                        )
+                                        st.rerun()
+                                    else:
+                                        st.session_state["_sf_conflict"] = None
+                                        _new = {"days": _d, "start": _sf2, "end": _ef2}
+                                        if _edit_idx is not None:
+                                            st.session_state["sched_entries"][_edit_idx] = _new
+                                        else:
+                                            st.session_state["sched_entries"].append(_new)
+                                        st.session_state["sched_form_open"] = False
+                                        st.session_state["sched_edit_idx"]  = None
+                                        st.rerun()
+
+                            if _sb2.button("Cancel", key=f"sf_cancel_{_fv}"):
+                                st.session_state["sched_form_open"] = False
+                                st.session_state["sched_edit_idx"]  = None
+                                st.session_state["_sf_conflict"]    = None
+                                st.rerun()
+
+                    if st.button(
+                        "🗑️ Clear all",
+                        type="secondary",
+                        key="sched_clear",
+                        help="Remove all schedule entries"
+                    ):
+                        st.session_state["sched_entries"] = []
+                        st.session_state["sched_form_open"] = False
+                        st.rerun()
 
 
                 # ── Electricity Rates expander ────────────────────────────
@@ -3596,15 +3810,30 @@ with tab_analysis:
                             st.rerun()
 
                 # ── Derive schedule dict for analysis ─────────────────────
+                _entries_flat = st.session_state.get("sched_entries", [])
                 _rwins = st.session_state.get("rate_windows") or [{"label":"Standard","start":0,"end":23,"rate":0.15}]
                 _cur   = (st.session_state.get("rate_currency","$ — USD") or "$ — USD")
                 currency_symbol = (_cur.split(" — ")[0].strip()
                                    if _cur != "Other"
                                    else st.session_state.get("rate_cur_sym", "$"))
 
-                _day_map_full   = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
-                _permitted_days = st.session_state.get("permitted_days", ["Mon","Tue","Wed","Thu","Fri"])
-                _work_days_flat = sorted([_day_map_full[_d] for _d in _permitted_days if _d in _day_map_full])
+                # Build sched_per_day from flat entries for downstream mask code
+                _day_map_full = {"Mon":0,"Tue":1,"Wed":2,"Thu":3,"Fri":4,"Sat":5,"Sun":6}
+                _spd = {d: {"enabled": False, "windows": []} for d in _DAYS}
+                _work_days_set = set()
+                for _ent in _entries_flat:
+                    for _d in _ent["days"]:
+                        _spd[_d]["enabled"] = True
+                        _spd[_d]["windows"].append({"start": _ent["start"], "end": _ent["end"]})
+                        _work_days_set.add(_day_map_full.get(_d, 0))
+                _work_days_flat = sorted(_work_days_set)
+                _all_windows_flat = []
+                for _ent in _entries_flat:
+                    _w = {"start": _ent["start"], "end": _ent["end"]}
+                    if _w not in _all_windows_flat:
+                        _all_windows_flat.append(_w)
+                if not _all_windows_flat:
+                    _all_windows_flat = [{"start": 0, "end": 24}]  # no schedule = all hours permitted
 
                 rate_per_kwh = _rwins[0]["rate"] if _rwins else 0.15
 
