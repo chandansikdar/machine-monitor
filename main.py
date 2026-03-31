@@ -211,8 +211,19 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
         hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + col_label + ": %{y:.2f}<extra></extra>"
     ))
 
-    # Legend label
-    sched_label = "Permitted (" + ", ".join(permitted_dn) + ", full day)" if permitted_dn else "All time permitted"
+    # Legend entries matching actual shading colors
+    day_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+    if _spd:
+        _en_days    = [dn for dn in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] if _spd.get(dn,{}).get("enabled")]
+        sched_label = "Scheduled (" + ", ".join(_en_days) + ")"
+    else:
+        work_days   = schedule.get("work_days", list(range(5)))
+        def _fmt_t(v):
+            h = int(v); m = int(round((v - h) * 60))
+            return f"{h:02d}:{m:02d}"
+        _win_strs   = " / ".join(f"{_fmt_t(_w['start'])}–{_fmt_t(_w['end'])}" for _w in sched_windows)
+        sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {_win_strs})"
+
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode="markers",
