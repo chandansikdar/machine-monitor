@@ -411,9 +411,7 @@ class Analyzer:
     def _compute_schedule_stats(data: pd.DataFrame, schedule: dict) -> dict:
         df = data.copy()
         df.index = pd.to_datetime(df.index)
-        work_days  = schedule.get("work_days", list(range(5)))
-        hour_start = schedule.get("work_hour_start", 8)
-        hour_end   = schedule.get("work_hour_end", 18)
+        work_days  = schedule.get("work_days", list(range(5)))   # list of int 0-6
         ind_col    = schedule.get("indicator_col", "")
         threshold  = schedule.get("running_threshold", 0)
 
@@ -427,11 +425,8 @@ class Analyzer:
             else:
                 running_mask = pd.Series(True, index=df.index)
 
-        in_schedule = (
-            df.index.dayofweek.isin(work_days) &
-            (df.index.hour >= hour_start) &
-            (df.index.hour < hour_end)
-        )
+        # Schedule is day-of-week only — full day per permitted day
+        in_schedule          = df.index.dayofweek.isin(work_days)
         off_schedule_running = running_mask & ~in_schedule
         weekend_running      = running_mask & df.index.dayofweek.isin([5, 6])
 
@@ -458,49 +453,32 @@ class Analyzer:
         else:
             off_sched_compliance = 100.0
 
-        # Pre-aggregate off-schedule blocks by day-of-week + hour-of-day pattern
-        # so Claude receives grouped evidence rather than raw individual blocks
-        _DAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+        # Pre-aggregate off-schedule running by day-of-week (full day — no hour grouping)
+        # Each day that has any off-schedule running is one pattern entry.
         _pattern_agg = {}
         if off_schedule_running.any():
-            _osr = off_schedule_running.copy()
-            _osr_vals = _osr.astype(int).values
-            _idx = df.index
-            _in_block = False
-            _block_start = None
-            for _i, _v in enumerate(_osr_vals):
-                if _v and not _in_block:
-                    _in_block = True
-                    _block_start = _idx[_i]
-                elif not _v and _in_block:
-                    _in_block = False
-                    _block_end = _idx[_i - 1]
-                    _dow  = _DAY_NAMES[_block_start.dayofweek]
-                    _hour = _block_start.hour
-                    _dur_h = round((_block_end - _block_start).total_seconds() / 3600 + 0.25, 2)
-                    _key  = f"{_dow}_{_hour:02d}h"
-                    if _key not in _pattern_agg:
-                        _pattern_agg[_key] = {"day": _dow, "start_hour": _hour, "occurrences": 0, "total_hours": 0.0}
-                    _pattern_agg[_key]["occurrences"] += 1
-                    _pattern_agg[_key]["total_hours"] = round(_pattern_agg[_key]["total_hours"] + _dur_h, 2)
-            if _in_block:  # block runs to end of data
-                _block_end = _idx[-1]
-                _dow  = _DAY_NAMES[_block_start.dayofweek]
-                _hour = _block_start.hour
-                _dur_h = round((_block_end - _block_start).total_seconds() / 3600 + 0.25, 2)
-                _key  = f"{_dow}_{_hour:02d}h"
-                if _key not in _pattern_agg:
-                    _pattern_agg[_key] = {"day": _dow, "start_hour": _hour, "occurrences": 0, "total_hours": 0.0}
-                _pattern_agg[_key]["occurrences"] += 1
-                _pattern_agg[_key]["total_hours"] = round(_pattern_agg[_key]["total_hours"] + _dur_h, 2)
+            _osr_df = off_schedule_running[off_schedule_running].copy()
+            for _ts in _osr_df.index:
+                _dn = _DAY_NAMES_ALL[_ts.dayofweek]
+                if _dn not in _pattern_agg:
+                    _pattern_agg[_dn] = {"day": _dn, "occurrences": 0, "total_hours": 0.0}
+                # Each reading = one interval; count intervals and convert to hours
+                _pattern_agg[_dn]["total_hours"] = round(
+                    _pattern_agg[_dn]["total_hours"] + 0.25, 2)  # assumes 15-min intervals
+            # Count unique calendar dates per day-of-week
+            for _dn in _pattern_agg:
+                _dow_int = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].index(_dn)
+                _dates   = set(_osr_df[_osr_df.index.dayofweek == _dow_int].index.date)
+                _pattern_agg[_dn]["occurrences"] = len(_dates)
 
-        # Sort by total_hours descending so most impactful pattern is first
+        # Sort by total_hours descending — most impactful day first
         _patterns_sorted = sorted(_pattern_agg.values(), key=lambda x: x["total_hours"], reverse=True)
 
+        _DAY_NAMES_ALL = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
         return {
             "permitted_schedule": {
-                "work_days": [["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d] for d in work_days],
-                "hours": f"{int(hour_start):02d}:00 – {int(hour_end):02d}:00",
+                "work_days": [_DAY_NAMES_ALL[d] for d in work_days],
+                "hours": "00:00 – 23:59 (full day)",
             },
             "total_readings":                len(df),
             "running_readings":              running_rows,
