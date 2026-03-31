@@ -46,8 +46,10 @@ The JSON must exactly follow this schema:
   ],
   "anomalies": [
     {
-      "parameter": "<column name>",
-      "description": "<what is anomalous, when, and why it matters>"
+      "parameter": "<column name or pattern name for schedule compliance>",
+      "description": "<what is anomalous — pattern, frequency, cumulative hours/impact>",
+      "corrective_action": "<specific recommended action to resolve this anomaly>",
+      "potential_impact": "<quantified benefit of fixing this — hours saved, cost reduction, risk reduction>"
     }
   ],
   "chart_recommendations": [
@@ -104,11 +106,13 @@ Rules:
   Never use raw reading counts like "5,985 readings" in KPI values.
   ANOMALIES RULE: Never list individual off-schedule events as separate anomalies.
   Group repeated events into behavioural patterns. Maximum 3 anomaly entries total.
-  Each anomaly entry = one distinct pattern (e.g. "Systematic after-hours running" not
-  "Off-schedule block 2024-01-15 18:00–08:00"). Include pattern frequency and corrective action.
-  INSIGHTS RULE: Insights must NOT restate the anomaly patterns already described.
-  Insights must add new information: cost/energy saving potential, root cause hypothesis,
-  priority order for remediation. No insight may duplicate content already in the anomalies array.
+  Each anomaly entry = one distinct pattern with ALL THREE sub-fields populated:
+    "description"       — the pattern: what, when, how often, cumulative hours
+    "corrective_action" — one specific actionable recommendation to fix this pattern
+    "potential_impact"  — quantified benefit: hours saved, estimated cost saving, or risk reduction
+  Order anomalies from highest to lowest potential_impact (most impactful pattern first).
+  INSIGHTS RULE: For Schedule Compliance, return an empty insights array [].
+  All actionable information belongs in the anomaly corrective_action and potential_impact fields.
 """
 
 ANALYSIS_DESCRIPTIONS = {
@@ -155,11 +159,8 @@ ANALYSIS_DESCRIPTIONS = {
         "behavioural pattern, not a single event. Each anomaly must include: the pattern name, "
         "frequency (e.g. 'every weekday evening'), total duration impact, and a specific "
         "corrective action recommendation. "
-        "INSIGHTS: Must be entirely distinct from the anomalies. Do NOT restate what the anomalies "
-        "already describe. Insights should cover: (1) financial/energy saving potential from fixing "
-        "each pattern, (2) root cause hypothesis (controls failure, manual override, no auto-shutdown), "
-        "(3) priority ranking of which pattern to fix first for maximum impact. "
-        "Each insight must be specific — include hours, percentages, or cost figures where available."
+        "INSIGHTS: Return an empty insights array []. "
+        "All actionable content is captured in corrective_action and potential_impact fields."
     ),
     # ── Additional analytics ──────────────────────────────────────────────────
     "Correlation Analysis": (
@@ -630,18 +631,20 @@ KPIs must cover only: off-schedule compliance %, off-schedule running %, weekend
 
 ANOMALIES — PATTERN RULE (strictly enforced):
 - Maximum 3 anomaly entries. Do NOT list every individual off-schedule block.
-- Each entry must describe a RECURRING PATTERN (e.g. "Systematic after-hours running Mon-Fri"),
-  not a single dated event.
-- Each pattern entry must include: pattern name, frequency, cumulative hours impact,
-  and one specific corrective action.
-- If two or more blocks share the same time-of-day or day-of-week pattern, they are ONE anomaly entry.
+- Each entry must describe a RECURRING PATTERN, not a single dated event.
+- If two or more blocks share the same time-of-day or day-of-week pattern, they are ONE entry.
+- Every anomaly entry MUST populate all three sub-fields:
+    "description"       : the pattern — what, how often, cumulative hours over the analysis period
+    "corrective_action" : one specific action to stop this pattern recurring
+    "potential_impact"  : quantified benefit — hours saved per week/month, estimated cost saving,
+                          or operational risk reduction. Be specific; use the electricity rate
+                          data if available in the context.
+- Order anomalies from HIGHEST to LOWEST potential_impact.
 
-INSIGHTS — NON-REDUNDANCY RULE (strictly enforced):
-- Insights must NOT restate or summarise what the anomaly patterns already describe.
-- Each insight must add genuinely new information: estimated energy/cost saving potential,
-  root cause hypothesis (controls failure, no auto-shutdown, manual override),
-  or priority ranking of which pattern to fix first for maximum impact.
-- Include specific numbers (hours, %, CHF/year) wherever the data supports it.
+INSIGHTS — EMPTY FOR SCHEDULE COMPLIANCE:
+- Return "insights": [] (empty array).
+- All actionable content belongs in corrective_action and potential_impact fields above.
+- Do not add insights that restate the anomaly descriptions.
 
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
@@ -673,4 +676,3 @@ Task: {analysis_desc}
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
         return prompt
-      
