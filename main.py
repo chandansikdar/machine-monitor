@@ -331,8 +331,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     # Assign score early so it's available for breakdown check
     score = insights.get("health_score")
 
-    # Score breakdown (shown for Anomaly Detection)
-    if analysis_type == "Anomaly Detection" and score is not None:
+    # Score breakdown (shown for Machine Health / Anomaly Detection)
+    if analysis_type in ("Machine Health", "Anomaly Detection") and score is not None:
         breakdown = insights.get("score_breakdown", [])
         if breakdown:
             with st.expander("Score explanation — what drove this score", expanded=True):
@@ -503,9 +503,40 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             )
             st.progress(compliance_pct / 100)
             st.markdown("---")
-    elif analysis_type == "Anomaly Detection":
-        if score is not None:
-            colour = "green" if score >= 80 else "orange" if score >= 60 else "red"
+    elif analysis_type in ("Machine Health", "Anomaly Detection"):
+        _mscores = insights.get("_machine_scores", {})
+        if _mscores:
+            # Three machine-level health score cards
+            def _score_cfg(s):
+                if s is None:
+                    return ("—", "#888", "#F8F8F8", "Insufficient data")
+                if s >= 90: return ("🟢", "#177E40", "#F0FFF4", "Normal")
+                if s >= 75: return ("🟢⚠️", "#177E40", "#FFFBE6", "Advisory")
+                if s >= 60: return ("🟡", "#BA7517", "#FFFBF0", "Warning")
+                return ("🔴", "#A32D2D", "#FFF0F0", "Critical")
+
+            _cards = [
+                ("Operational Health", "Last 1 day",  _mscores.get("operational")),
+                ("Performance Health", "Last 1 week", _mscores.get("performance")),
+                ("Asset Health",       "Last 1 month",_mscores.get("asset")),
+            ]
+            _c1, _c2, _c3 = st.columns(3)
+            for _col, (_title, _period, _val) in zip([_c1, _c2, _c3], _cards):
+                _ico, _fc, _bg, _lbl = _score_cfg(_val)
+                _val_str = f"{_val:.0f}" if _val is not None else "N/A"
+                _col.markdown(
+                    f'<div style="background:{_bg};border:1px solid {_fc};border-radius:6px;'
+                    f'padding:12px 14px;text-align:center;">'
+                    f'<div style="font-size:0.78em;color:#888;margin-bottom:2px">{_period}</div>'
+                    f'<div style="font-weight:700;font-size:0.95em;color:#333;margin-bottom:4px">{_title}</div>'
+                    f'<div style="font-size:2.2em;font-weight:800;color:{_fc};line-height:1.1">{_val_str}</div>'
+                    f'<div style="font-size:0.88em;color:{_fc};margin-top:4px">{_ico} {_lbl}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            st.markdown("")
+        elif score is not None:
+            colour = "green" if score >= 70 else "orange" if score >= 40 else "red"
             st.markdown(f"### Health score: :{colour}[{score} / 100]")
             st.progress(int(score) / 100)
 
@@ -751,7 +782,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         delta_col = "inverse" if status == "critical" else "off" if status == "warning" else "normal"
                         cols[i].metric(kpi.get("label","—"), kpi.get("value","—"),
                                        delta=delta_map.get(status), delta_color=delta_col)
-    elif kpis and analysis_type != "Trend & Drift Analysis":
+    elif kpis and analysis_type not in ("Trend & Drift Analysis", "Machine Health"):
         n_cols = min(len(kpis), 4)
         cols   = st.columns(n_cols)
         for i, kpi in enumerate(kpis[:4]):
@@ -889,11 +920,11 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
         for point in key_points:
             st.markdown(f"- {point}")
 
-    # ── Trend Analysis — per-parameter status dashboard ──────────────────
-    if analysis_type == "Trend & Drift Analysis":
-        _dvb = insights.get("_drift_vs_baseline", {})
-        if _dvb:
-            st.subheader("Parameter status")
+    # ── Machine Health — per-parameter status dashboard ──────────────────
+    if analysis_type == "Machine Health":
+        _mh = insights.get("_machine_health", {})
+        if _mh:
+            _bl_lbl  = insights.get("_baseline_label", "baseline")
             _SEV_CFG = {
                 "Critical": ("🔴", "#A32D2D", "#FFF0F0", "4px solid #A32D2D"),
                 "Warning":  ("🟡", "#BA7517", "#FFFBF0", "4px solid #BA7517"),
@@ -901,43 +932,70 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 "Normal":   ("🟢", "#177E40", "#F0FFF4", "4px solid #177E40"),
             }
             _ACTION = {
-                "Critical": "Immediate investigation required. Parameter in persistent violation of baseline limits.",
-                "Warning":  "Schedule maintenance review. Parameter showing sustained elevated breach rate.",
-                "Advisory": "Monitor closely. Early drift signal detected — trend worth tracking.",
-                "Normal":   "No action required. Parameter operating within baseline bounds.",
+                "Critical": "Immediate investigation required — persistent limit violation in last 24 hrs.",
+                "Warning":  "Schedule maintenance review — sustained elevated breach rate detected.",
+                "Advisory": "Monitor closely — early limit violation signal detected.",
+                "Normal":   "No action required — operating within baseline bounds.",
             }
-            for _param, _d in sorted(_dvb.items(), key=lambda x: {"Critical":0,"Warning":1,"Advisory":2,"Normal":3}.get(x[1].get("severity","Normal"),4)):
-                _sev   = _d.get("severity", "Normal")
-                _score = _d.get("trend_score", 100)
+            # Sub-section 1: Limit Violation
+            st.markdown(f"**Sub-section 1 — Limit Violation**")
+            st.caption(f"Per-parameter health scores across three windows. Baseline: {_bl_lbl}.")
+            # Sort by worst operational score
+            def _worst_score(d):
+                ws = d.get("window_scores", {})
+                vals = [v for v in ws.values() if v is not None]
+                return min(vals) if vals else 100
+            for _param, _d in sorted(_mh.items(), key=lambda x: _worst_score(x[1])):
+                _ws    = _d.get("window_scores", {})
+                _op    = _ws.get("operational")
+                _pf    = _ws.get("performance")
+                _as    = _ws.get("asset")
+                # Severity from worst available score
+                _min_s = min([v for v in [_op, _pf, _as] if v is not None], default=100)
+                _sev   = "Normal" if _min_s >= 90 else "Advisory" if _min_s >= 75 else "Warning" if _min_s >= 60 else "Critical"
                 _icon, _fc, _bg, _border = _SEV_CFG.get(_sev, _SEV_CFG["Normal"])
-                _limit = _d.get("driving_limit", "")
-                _rate  = _d.get("driving_breach_rate_pct", 0)
-                _drift = _d.get("drift_pct", 0)
-                _dir   = _d.get("direction", "")
-                _bl    = _d.get("baseline_mean", 0)
-                _cur   = _d.get("current_mean", 0)
-                _drift_str = f"{'+' if _drift >= 0 else ''}{_drift:.1f}% {'above' if _drift >= 0 else 'below'} baseline"
-                _action = _ACTION[_sev]
+                def _fmt(v): return f"{v:.0f}" if v is not None else "N/A"
+                _limit = ""
+                _rate  = 0
+                _rates = {}
                 st.markdown(
                     f'<div style="background:{_bg};border-left:{_border};'
-                    f'padding:10px 14px;margin-bottom:8px;border-radius:3px;">'
+                    f'padding:10px 14px;margin-bottom:6px;border-radius:3px;">'
                     f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
                     f'<span style="font-weight:700;font-size:0.95em;color:{_fc}">'
                     f'{_icon} {_param.replace("_"," ").title()}</span>'
-                    f'<span style="font-size:0.82em;color:#888">Trend score: <b>{_score}</b> / 100</span>'
+                    f'<span style="font-size:0.82em;color:#888"><b>{_sev}</b></span>'
                     f'</div>'
                     f'<div style="font-size:0.82em;color:#555;margin-top:4px">'
-                    f'<b>{_sev}</b>'
-                    + (f' · {_limit} breach rate: <b>{_rate:.1f}%</b>' if _limit and _rate > 0 else '') +
-                    f' · Mean shift: <b>{_drift_str}</b>'
-                    f' · Baseline mean: {_bl:.3g} → Current mean: {_cur:.3g}'
+                    f'Operational (1d): <b>{_fmt(_op)}</b> · '
+                    f'Performance (1w): <b>{_fmt(_pf)}</b> · '
+                    f'Asset (1m): <b>{_fmt(_as)}</b>'
                     f'</div>'
-                    f'<div style="font-size:0.82em;color:{_fc};margin-top:5px;font-style:italic">'
-                    f'{_action}'
+                    f'<div style="font-size:0.80em;color:{_fc};margin-top:4px;font-style:italic">'
+                    f'{_ACTION[_sev]}'
                     f'</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+            # Sub-section 2: Mean Shift
+            st.markdown("")
+            st.markdown(f"**Sub-section 2 — Mean Shift** (last 24h vs {_bl_lbl})")
+            st.caption("Informational only — used for predictive analytics.")
+            _ms_rows = []
+            for _param, _d in _mh.items():
+                _ms_rows.append({
+                    "Parameter":        _param.replace("_"," ").title(),
+                    "Baseline mean":    f"{_d.get('baseline_mean',0):.4g}",
+                    "Current mean":     f"{_d.get('current_mean',0):.4g}",
+                    "Shift (absolute)": f"{_d.get('mean_shift_abs',0):+.4g}",
+                    "Shift (%)":        f"{_d.get('mean_shift_pct',0):+.2f}%",
+                    "Direction":        _d.get("direction","").title(),
+                })
+            if _ms_rows:
+                import pandas as _pd2
+                st.dataframe(_pd2.DataFrame(_ms_rows).set_index("Parameter"),
+                             use_container_width=True)
 
     recs = insights.get("chart_recommendations", [])
     if data is not None:
@@ -947,7 +1005,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             for fig in _build_compliance_chart(data, _schedule):
                 st.plotly_chart(fig, use_container_width=True)
 
-        elif analysis_type == "Anomaly Detection":
+        elif analysis_type in ("Machine Health", "Anomaly Detection"):
             try:
                 import plotly.graph_objects as _go
                 import pandas as _pd
@@ -1031,7 +1089,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 import traceback
                 st.error(f"Control chart error: {_e}\n{traceback.format_exc()}")
 
-        elif analysis_type == "Trend & Drift Analysis":
+        elif analysis_type == "_Trend_removed":
             try:
                 import plotly.graph_objects as _go
                 import pandas as _pd
@@ -3346,7 +3404,7 @@ with tab_analysis:
         _mtype = machine_info.get("machine_type","")
         _is_pump = _mtype == "Centrifugal Pump" or any(kw in _mtype.lower() for kw in ["pump","centrifugal pump","water pump"])
         _selected_now = [k.replace("chk_","") for k,v in st.session_state.items() if k.startswith("chk_") and v]
-        if _is_pump and data is not None and not data.empty and PUMP_PHYSICS_AVAILABLE and "Anomaly Detection" in _selected_now:
+        if _is_pump and data is not None and not data.empty and PUMP_PHYSICS_AVAILABLE and "Machine Health" in _selected_now:
             _phase_info = detect_phase(data)
             _phases = _phase_info.get("phases",[])
             if _phases:
@@ -3510,8 +3568,7 @@ with tab_analysis:
             # ── Primary analyses ──────────────────────────────────
             with st.expander("Primary analyses", expanded=True):
                 primary_options = [
-                    ("Anomaly Detection",               "Statistical anomalies, outliers, control chart violations. Includes health score and physics analysis when available."),
-                    ("Trend & Drift Analysis",          "How fast is each parameter degrading over time?"),
+                    ("Machine Health",                  "Limit violation rates and mean shift for last 24 hrs vs baseline. Includes physics analysis where available."),
                     ("Operational Schedule Compliance", "Running outside permitted hours or days"),
                 ]
                 for name, desc in primary_options:
@@ -3614,8 +3671,8 @@ with tab_analysis:
                 st.session_state["baseline_period"] = baseline_period
 
             # ── Current period for Trend Analysis ────────────────────
-            if "Trend & Drift Analysis" in selected_analyses:
-                with st.expander("📈 Current period (Trend & Drift Analysis)", expanded=False):
+            if False:  # Current period selector retired with Trend & Drift Analysis
+                with st.expander("📈 Current period", expanded=False):
                     st.markdown(
                         "Define the **current** period whose mean is compared against the "
                         "baseline mean to measure drift.  \n"
@@ -4137,7 +4194,7 @@ with tab_analysis:
 
                 # ── Pump physics pre-run — only when a physics-relevant analysis is selected ──
                 # Physics module only activates with Anomaly Detection
-                _run_pump_physics = "Anomaly Detection" in selected_analyses
+                _run_pump_physics = "Machine Health" in selected_analyses
                 _pump_physics_summary = ""
                 if not _run_pump_physics:
                     st.session_state["_pump_physics_result"] = None
@@ -4341,7 +4398,7 @@ with tab_analysis:
                             render_insights(insights, st.session_state.get("last_data"), viz,
                                             analysis_type=atype)
                             # ── Alert engine panel (Anomaly Detection only) ──────────
-                            if atype == "Anomaly Detection":
+                            if atype == "Machine Health":
                                 _ae_alerts = (st.session_state.get("last_multi_alerts") or {}).get(atype, [])
                                 _ae_crit   = [a for a in _ae_alerts if a["level"] == "Critical"]
                                 _ae_warn   = [a for a in _ae_alerts if a["level"] == "Warning"]
