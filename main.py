@@ -1009,9 +1009,14 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             try:
                 import plotly.graph_objects as _go
                 import pandas as _pd
+                import numpy as _np
                 from analyzer import _parse_thresholds
                 _desc       = st.session_state.get("_machine_desc", "")
                 _thresholds = _parse_thresholds(_desc) or {}
+                _schedule   = st.session_state.get("_last_schedule", {}) or {}
+                _ind_col    = _schedule.get("indicator_col", "")
+                _run_thr    = _schedule.get("running_threshold", 0)
+                _bl_period  = st.session_state.get("baseline_period")
                 _chart_data = data if (data is not None and not data.empty) else st.session_state.get("last_data")
                 if _chart_data is not None and not _chart_data.empty:
                     # Ensure datetime index
@@ -1019,36 +1024,88 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     if not isinstance(_cd.index, _pd.DatetimeIndex):
                         _cd.index = _pd.to_datetime(_cd.index)
                     _numeric = _cd.select_dtypes(include="number").columns.tolist()[:6]
-                    st.caption("UCL/LCL = mean ±3σ (red).  UWL/LWL = mean ±2σ (amber dashed).  Red circles = |Z|>3 anomalies.  Purple dotted = engineering thresholds.")
+
+                    # ── Running-state mask ──────────────────────────────────────────────
+                    if _ind_col and _ind_col in _cd.columns:
+                        _run_mask = _cd[_ind_col] > _run_thr
+                    else:
+                        _nc0 = _numeric[0] if _numeric else None
+                        _run_mask = (
+                            _cd[_nc0] > _cd[_nc0].quantile(0.10)
+                            if _nc0 else _pd.Series(True, index=_cd.index)
+                        )
+                    _cd_run = _cd[_run_mask]
+
+                    # ── Baseline subset (running rows only) ─────────────────────────────
+                    if _bl_period and _bl_period[0] != _bl_period[1]:
+                        _bl_start_dt = _pd.Timestamp(_bl_period[0])
+                        _bl_end_dt   = _pd.Timestamp(_bl_period[1])
+                        _cd_bl = _cd_run[
+                            (_cd_run.index >= _bl_start_dt) &
+                            (_cd_run.index <= _bl_end_dt)
+                        ]
+                        if _cd_bl.empty:
+                            _cd_bl = _cd_run  # fallback: full running dataset
+                        _bl_end_ts = _bl_end_dt
+                    else:
+                        # Default baseline: first 20% of running rows
+                        _n20 = max(1, int(len(_cd_run) * 0.20))
+                        _cd_bl = _cd_run.iloc[:_n20]
+                        _bl_end_ts = _cd_bl.index.max() if not _cd_bl.empty else _cd.index.min()
+
+                    st.caption(
+                        "Control limits computed from baseline period (confirmed normal operation). "
+                        "UCL/LCL = baseline ±3σ (red solid).  UWL/LWL = baseline ±2σ (amber dashed).  "
+                        "Blue solid = baseline mean.  Teal dash-dot = 7-day rolling mean (post-baseline). "
+                        "Red circles = |Zₛᵇ|>3 anomalies vs baseline.  Purple dotted = engineering thresholds."
+                    )
+
                     for _col in _numeric:
-                        _s  = _cd[_col].dropna()
-                        _mu = float(_s.mean()); _sd = float(_s.std()) or 1e-9
-                        _ucl = _mu+3*_sd; _uwl = _mu+2*_sd
-                        _lwl = _mu-2*_sd; _lcl = _mu-3*_sd
-                        _z   = (_s-_mu)/_sd; _anom = _s[_z.abs()>3]
-                        _xi  = _cd.index  # DatetimeIndex
+                        _s_bl = _cd_bl[_col].dropna() if not _cd_bl.empty else _pd.Series(dtype=float)
+                        if len(_s_bl) < 2:
+                            # Fallback: compute from full running column
+                            _s_bl = _cd_run[_col].dropna() if not _cd_run.empty else _cd[_col].dropna()
+                        _mu  = float(_s_bl.mean()) if len(_s_bl) else float(_cd[_col].mean())
+                        _sd  = float(_s_bl.std())  if len(_s_bl) > 1 else 1e-9
+                        if _sd < 1e-9:
+                            _sd = 1e-9
+                        _ucl = _mu + 3*_sd; _uwl = _mu + 2*_sd
+                        _lwl = _mu - 2*_sd; _lcl = _mu - 3*_sd
+
+                        # Anomalies flagged relative to baseline mean/sd
+                        _s_full = _cd[_col].dropna()
+                        _z_bl   = (_s_full - _mu) / _sd
+                        _anom   = _s_full[_z_bl.abs() > 3]
+
+                        # 7-day rolling mean — computed on full series, shown post-baseline only
+                        _roll_all  = _cd[_col].sort_index().rolling("7D").mean()
+                        _roll_post = _roll_all[_roll_all.index > _bl_end_ts].dropna()
+
+                        _xi = _cd.index  # DatetimeIndex
+
                         _fig = _go.Figure()
-                        # Shaded zones using hrect (y-only, no x needed)
+                        # Shaded zones
                         _fig.add_hrect(y0=_uwl, y1=_ucl, fillcolor="rgba(192,57,43,0.07)", line_width=0, layer="below")
                         _fig.add_hrect(y0=_lcl, y1=_lwl, fillcolor="rgba(192,57,43,0.07)", line_width=0, layer="below")
                         _fig.add_hrect(y0=_lwl, y1=_uwl, fillcolor="rgba(230,126,34,0.07)", line_width=0, layer="below")
-                        # Limit lines as full-width scatter traces (same x type as data)
-                        for _yv,_lc,_ld,_lw,_ln in [
-                            (_ucl,"#C0392B","solid",1.5,f"UCL {_ucl:.3f} (mean+3σ)"),
-                            (_uwl,"#E67E22","dash", 1.0,f"UWL {_uwl:.3f} (mean+2σ)"),
-                            (_mu, "#2C3E50","solid",1.5,f"Mean {_mu:.3f}"),
-                            (_lwl,"#E67E22","dash", 1.0,f"LWL {_lwl:.3f} (mean-2σ)"),
-                            (_lcl,"#C0392B","solid",1.5,f"LCL {_lcl:.3f} (mean-3σ)"),
+
+                        # Control limit lines (baseline-derived, full-width)
+                        for _yv, _lc, _ld, _lw, _ln in [
+                            (_ucl, "#C0392B", "solid", 1.5, f"UCL {_ucl:.3g} (baseline+3σ)"),
+                            (_uwl, "#E67E22", "dash",  1.0, f"UWL {_uwl:.3g} (baseline+2σ)"),
+                            (_mu,  "#2C3E50", "solid", 1.5, f"Baseline mean {_mu:.3g}"),
+                            (_lwl, "#E67E22", "dash",  1.0, f"LWL {_lwl:.3g} (baseline-2σ)"),
+                            (_lcl, "#C0392B", "solid", 1.5, f"LCL {_lcl:.3g} (baseline-3σ)"),
                         ]:
                             _fig.add_trace(_go.Scatter(
                                 x=[_xi[0], _xi[-1]], y=[_yv, _yv],
                                 mode="lines", line=dict(color=_lc, width=_lw, dash=_ld),
-                                name=_ln, showlegend=True,
-                                hoverinfo="skip",
+                                name=_ln, showlegend=True, hoverinfo="skip",
                             ))
+
                         # Engineering thresholds
                         if _col in _thresholds:
-                            for _tk,_tc in [("warning","#8E44AD"),("critical","#641E16")]:
+                            for _tk, _tc in [("warning", "#8E44AD"), ("critical", "#641E16")]:
                                 _tv = _thresholds[_col].get(_tk)
                                 if _tv is not None:
                                     _fig.add_trace(_go.Scatter(
@@ -1057,22 +1114,35 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                                         name=f"{_tk.title()} threshold {_tv}", showlegend=True,
                                         hoverinfo="skip",
                                     ))
+
                         # Data line
                         _fig.add_trace(_go.Scatter(
                             x=_xi, y=_cd[_col].values,
                             mode="lines", line=dict(color="#185FA5", width=1.2),
                             name=_col,
-                            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>"+_col+": %{y:.3f}<extra></extra>",
+                            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + _col + ": %{y:.3f}<extra></extra>",
                         ))
-                        # Anomaly markers
+
+                        # 7-day rolling mean (post-baseline, teal dash-dot)
+                        if len(_roll_post) >= 2:
+                            _fig.add_trace(_go.Scatter(
+                                x=_roll_post.index, y=_roll_post.values,
+                                mode="lines",
+                                line=dict(color="#054D5F", width=1.8, dash="dashdot"),
+                                name="7-day rolling mean",
+                                hovertemplate="%{x|%Y-%m-%d}<br>7-day mean: %{y:.3f}<extra></extra>",
+                            ))
+
+                        # Anomaly markers (vs baseline)
                         if len(_anom):
                             _fig.add_trace(_go.Scatter(
                                 x=_anom.index, y=_anom.values, mode="markers",
                                 marker=dict(color="#C0392B", size=7, symbol="circle-open",
                                             line=dict(width=2, color="#C0392B")),
-                                name=f"Anomalies (|Z|>3) n={len(_anom)}",
+                                name=f"Anomalies vs baseline (|Z|>3) n={len(_anom)}",
                             ))
-                        _cl = _col.replace("_"," ").title()
+
+                        _cl = _col.replace("_", " ").title()
                         _fig.update_layout(
                             title=dict(text=f"Control chart — {_cl}", font=dict(size=14)),
                             xaxis_title="Time", yaxis_title=_cl,
