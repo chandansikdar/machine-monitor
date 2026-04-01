@@ -529,6 +529,8 @@ class Analyzer:
             "off_schedule_blocks":           off_blocks,
             "off_schedule_patterns":         _patterns_sorted,
             "data_weeks":                    max(1, round((df.index.max() - df.index.min()).days / 7, 1)),
+            "currency_symbol":               schedule.get("currency_symbol", "$"),
+            "rate_per_kwh":                  schedule.get("rate_per_kwh", 0.15),
         }
 
     # ------------------------------------------------------------------ #
@@ -673,8 +675,8 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
             # Pre-build anomaly scaffold from off_schedule_patterns so Claude cannot skip entries
             _patterns = (schedule_stats or {}).get("off_schedule_patterns", [])
             _rate     = (schedule_stats or {}).get("off_schedule_compliance_pct", "N/A")
-            _currency = (schedule or {}).get("currency_symbol", "$")
-            _kwh_rate = (schedule or {}).get("rate_per_kwh", 0.15)
+            _currency = (schedule_stats or {}).get("currency_symbol", "$")
+            _kwh_rate = (schedule_stats or {}).get("rate_per_kwh", 0.15)
             if _patterns:
                 _scaffold_lines = [
                     f"ANOMALY INSTRUCTIONS (strictly enforced):",
