@@ -222,14 +222,9 @@ def _build_compliance_chart(data: pd.DataFrame, schedule: dict) -> list:
     day_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
     if _spd:
         _en_days    = [dn for dn in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] if _spd.get(dn,{}).get("enabled")]
-        sched_label = "Scheduled (" + ", ".join(_en_days) + ")"
+        sched_label = "Scheduled"
     else:
-        work_days   = schedule.get("work_days", list(range(5)))
-        def _fmt_t(v):
-            h = int(v); m = int(round((v - h) * 60))
-            return f"{h:02d}:{m:02d}"
-        _win_strs   = " / ".join(f"{_fmt_t(_w['start'])}–{_fmt_t(_w['end'])}" for _w in sched_windows)
-        sched_label = f"Scheduled ({', '.join(day_names[d] for d in work_days)} {_win_strs})"
+        sched_label = "Scheduled"
 
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
