@@ -682,6 +682,13 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
                     f"Do NOT skip any entry. Do NOT merge entries.",
                     "",
                 ]
+                # Derive permitted window label from schedule_stats
+                _perm = (schedule_stats or {}).get("permitted_schedule", {})
+                _perm_days = ", ".join(_perm.get("work_days", []))
+                _perm_hrs  = _perm.get("hours", "defined hours")
+                # Strip "full day" suffix if present — we want just the time window
+                _perm_hrs  = _perm_hrs.replace(" (full day)", "").strip()
+
                 for _i, _p in enumerate(_patterns):
                     _hrs    = _p.get("total_hours", 0)
                     _occ    = _p.get("occurrences", 0)
@@ -691,7 +698,7 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
                     _scaffold_lines += [
                         f"ANOMALY {_i+1} OF {len(_patterns)}:",
                         f'  "parameter": "{_pname}"',
-                        f'  "description": "{_pname} off-schedule running: {_hrs} hrs total across {_occ} days (~{_wk_hrs} hrs/week). Machine ran outside its permitted schedule during this period."',
+                        f'  "description": "{_pname} off-schedule running: {_hrs} hrs total across {_occ} days (~{_wk_hrs} hrs/week). Machine ran outside the defined operating boundary of {_perm_hrs} ({_perm_days})."',
                         f'  "corrective_action": "<YOU MUST FILL THIS IN — specific action to prevent {_pname} off-schedule running>"',
                         f'  "potential_impact":  "<YOU MUST FILL THIS IN — quantify: ~{_hrs} hrs saved, ~{_kwh:.0f} {_currency} saving at {_kwh_rate} {_currency}/kWh>"',
                         "",
