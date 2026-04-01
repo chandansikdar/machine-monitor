@@ -818,7 +818,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         f'<div style="margin-top:6px">'
                         f'<span style="font-size:0.82em;color:#555">{_period_days}d period: {_kwh:,.1f} kWh · {_cur}{_cost:,.2f}</span><br>'
                         f'<span style="font-size:1.45em;font-weight:700;color:#177E40">{_annual_kwh:,.1f} kWh/year · {_cur}{_annual_cost:,.2f}/year</span><br>'
-                        f'<span style="font-size:0.75em;color:#888">annualised · {_cur}{_rate_pc}/kWh · measured power data</span>'
+
                         f'</div>'
                     )
 
