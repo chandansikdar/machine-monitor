@@ -707,7 +707,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     f'<div style="margin-bottom:4px">'
                     f'<span style="font-size:0.78em;color:#888">Off-schedule energy</span><br>'
                     f'<span style="font-size:1.0em;color:#666">{off_kwh:,.3f} kWh</span>'
-                    f'<span style="font-size:0.75em;color:#aaa"> ({_disp_days}d period)</span><br>'
+                    f'<span style="font-size:0.75em;color:#aaa"> ({_disp_days}d selected data period)</span><br>'
                     f'<span style="font-size:1.9em;font-weight:700">{_annual_kwh_d:,.1f} kWh/year</span>'
                     f'<span style="font-size:0.75em;color:#888"> annualised</span>'
                     f'</div>',
@@ -717,7 +717,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     f'<div style="margin-bottom:4px">'
                     f'<span style="font-size:0.78em;color:#888">Cost saving potential</span><br>'
                     f'<span style="font-size:1.0em;color:#666">{currency_sym}{cost_saved:,.2f}</span>'
-                    f'<span style="font-size:0.75em;color:#aaa"> ({_disp_days}d period)</span><br>'
+                    f'<span style="font-size:0.75em;color:#aaa"> ({_disp_days}d selected data period)</span><br>'
                     f'<span style="font-size:1.9em;font-weight:700">{currency_sym}{_annual_cost_d:,.2f}/year</span>'
                     f'<span style="font-size:0.75em;color:#888"> annualised</span>'
                     f'</div>',
@@ -811,7 +811,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                     _annual_cost = round(_cost * 365 / _period_days, 2)
                     _impact = (
                         f'<div style="margin-top:6px">'
-                        f'<span style="font-size:0.82em;color:#555">{_period_days}d period: {_kwh:,.1f} kWh · {_cur}{_cost:,.2f}</span><br>'
+                        f'<span style="font-size:0.82em;color:#555">{_period_days}d selected data period: {_kwh:,.1f} kWh · {_cur}{_cost:,.2f}</span><br>'
                         f'<span style="font-size:1.45em;font-weight:700;color:#177E40">{_annual_kwh:,.1f} kWh/year · {_cur}{_annual_cost:,.2f}/year</span><br>'
 
                         f'</div>'
