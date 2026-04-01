@@ -906,47 +906,6 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 "Advisory": "Monitor closely — early limit violation signal detected.",
                 "Normal":   "No action required — operating within baseline bounds.",
             }
-            # Sub-section 1: Parameter Health Score
-            st.markdown(f"**Sub-section 1 — Parameter Health Score**")
-            st.caption(f"Per-parameter health scores across three windows. Baseline: {_bl_lbl}.")
-            # Sort by worst operational score
-            def _worst_score(d):
-                ws = d.get("window_scores", {})
-                vals = [v for v in ws.values() if v is not None]
-                return min(vals) if vals else 100
-            for _param, _d in sorted(_mh.items(), key=lambda x: _worst_score(x[1])):
-                _ws    = _d.get("window_scores", {})
-                _op    = _ws.get("operational")
-                _pf    = _ws.get("performance")
-                _as    = _ws.get("asset")
-                # Severity from worst available score
-                _min_s = min([v for v in [_op, _pf, _as] if v is not None], default=100)
-                _sev   = "Normal" if _min_s >= 90 else "Advisory" if _min_s >= 75 else "Warning" if _min_s >= 60 else "Critical"
-                _icon, _fc, _bg, _border = _SEV_CFG.get(_sev, _SEV_CFG["Normal"])
-                def _fmt(v): return f"{v:.0f}" if v is not None else "N/A"
-                _limit = ""
-                _rate  = 0
-                _rates = {}
-                st.markdown(
-                    f'<div style="background:{_bg};border-left:{_border};'
-                    f'padding:10px 14px;margin-bottom:6px;border-radius:3px;">'
-                    f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
-                    f'<span style="font-weight:700;font-size:0.95em;color:{_fc}">'
-                    f'{_icon} {_param.replace("_"," ").title()}</span>'
-                    f'<span style="font-size:0.82em;color:#888"><b>{_sev}</b></span>'
-                    f'</div>'
-                    f'<div style="font-size:0.82em;color:#555;margin-top:4px">'
-                    f'Operational (1d): <b>{_fmt(_op)}</b> · '
-                    f'Performance (1w): <b>{_fmt(_pf)}</b> · '
-                    f'Asset (1m): <b>{_fmt(_as)}</b>'
-                    f'</div>'
-                    f'<div style="font-size:0.80em;color:{_fc};margin-top:4px;font-style:italic">'
-                    f'{_ACTION[_sev]}'
-                    f'</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
             # Sub-section 2: Mean Shift
             st.markdown("")
             st.markdown(f"**Sub-section 2 — Mean Shift** (last 24h vs {_bl_lbl})")
@@ -4370,6 +4329,87 @@ with tab_analysis:
                             unsafe_allow_html=True
                         )
                     st.markdown("")
+
+                    # ── Parameter Health Score table (toggle button) ──────────
+                    _mh_data = _mh_multi.get("_machine_health", {}) if _mh_multi else {}
+                    if _mh_data:
+                        _bl_lbl_top = (_mh_multi or {}).get("_baseline_label", "baseline")
+                        if st.button(
+                            "📋 Parameter Health Scores ▼",
+                            key="toggle_param_health_table",
+                        ):
+                            st.session_state["_param_health_open"] =                                 not st.session_state.get("_param_health_open", False)
+
+                        if st.session_state.get("_param_health_open", False):
+                            # Score → cell style helper
+                            def _cell(v):
+                                if v is None:
+                                    return ("N/A", "#F5F5F5", "#888")
+                                if v >= 90: return (f"{v:.0f}", "#E8F5E9", "#177E40")
+                                if v >= 75: return (f"{v:.0f}", "#FFFDE7", "#BA7517")
+                                if v >= 60: return (f"{v:.0f}", "#FFF3E0", "#E65100")
+                                return       (f"{v:.0f}", "#FFEBEE", "#A32D2D")
+
+                            def _status(op, pf, as_):
+                                vals = [v for v in [op, pf, as_] if v is not None]
+                                if not vals: return ("—", "#888")
+                                m = min(vals)
+                                if m >= 90: return ("🟢 Normal",   "#177E40")
+                                if m >= 75: return ("🔵 Advisory", "#185FA5")
+                                if m >= 60: return ("🟡 Warning",  "#BA7517")
+                                return             ("🔴 Critical", "#A32D2D")
+
+                            def _worst(d):
+                                ws = d.get("window_scores", {})
+                                vals = [v for v in ws.values() if v is not None]
+                                return min(vals) if vals else 100
+
+                            _hdr = (
+                                '<table style="width:100%;border-collapse:collapse;'
+                                'font-size:0.88em;margin-top:6px">'
+                                '<thead><tr style="background:#F0F4F8">'
+                                '<th style="padding:8px 12px;text-align:left;border:1px solid #DDE;'
+                                'font-weight:700;min-width:130px">Parameter</th>'
+                                '<th style="padding:8px 12px;text-align:center;border:1px solid #DDE;'
+                                'font-weight:700;width:90px">Op (1d)</th>'
+                                '<th style="padding:8px 12px;text-align:center;border:1px solid #DDE;'
+                                'font-weight:700;width:90px">Perf (1w)</th>'
+                                '<th style="padding:8px 12px;text-align:center;border:1px solid #DDE;'
+                                'font-weight:700;width:90px">Asset (1m)</th>'
+                                '<th style="padding:8px 12px;text-align:center;border:1px solid #DDE;'
+                                'font-weight:700;width:110px">Status</th>'
+                                '</tr></thead><tbody>'
+                            )
+                            _rows_html = ""
+                            for _p, _d in sorted(_mh_data.items(), key=lambda x: _worst(x[1])):
+                                _ws  = _d.get("window_scores", {})
+                                _op  = _ws.get("operational")
+                                _pf  = _ws.get("performance")
+                                _as  = _ws.get("asset")
+                                _op_txt, _op_bg, _op_fc = _cell(_op)
+                                _pf_txt, _pf_bg, _pf_fc = _cell(_pf)
+                                _as_txt, _as_bg, _as_fc = _cell(_as)
+                                _st_lbl, _st_fc = _status(_op, _pf, _as)
+                                _rows_html += (
+                                    f'<tr>'
+                                    f'<td style="padding:7px 12px;border:1px solid #DDE;'
+                                    f'font-weight:600">{_p.replace("_"," ").title()}</td>'
+                                    f'<td style="padding:7px 12px;text-align:center;border:1px solid #DDE;'
+                                    f'background:{_op_bg};color:{_op_fc};font-weight:700">{_op_txt}</td>'
+                                    f'<td style="padding:7px 12px;text-align:center;border:1px solid #DDE;'
+                                    f'background:{_pf_bg};color:{_pf_fc};font-weight:700">{_pf_txt}</td>'
+                                    f'<td style="padding:7px 12px;text-align:center;border:1px solid #DDE;'
+                                    f'background:{_as_bg};color:{_as_fc};font-weight:700">{_as_txt}</td>'
+                                    f'<td style="padding:7px 12px;text-align:center;border:1px solid #DDE;'
+                                    f'color:{_st_fc};font-weight:600">{_st_lbl}</td>'
+                                    f'</tr>'
+                                )
+                            st.markdown(
+                                _hdr + _rows_html + "</tbody></table>",
+                                unsafe_allow_html=True
+                            )
+                            st.caption(f"Scores sorted by worst window. Baseline: {_bl_lbl_top}.")
+                            st.markdown("")
 
                 # ── Pump physics results panel ────────────────────────
                 _phys_res = st.session_state.get("_pump_physics_result")
