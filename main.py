@@ -504,38 +504,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             st.progress(compliance_pct / 100)
             st.markdown("---")
     elif analysis_type in ("Machine Health", "Anomaly Detection"):
-        _mscores = insights.get("_machine_scores", {})
-        if _mscores:
-            # Three machine-level health score cards
-            def _score_cfg(s):
-                if s is None:
-                    return ("—", "#888", "#F8F8F8", "Insufficient data")
-                if s >= 90: return ("🟢", "#177E40", "#F0FFF4", "Normal")
-                if s >= 75: return ("🟢⚠️", "#177E40", "#FFFBE6", "Advisory")
-                if s >= 60: return ("🟡", "#BA7517", "#FFFBF0", "Warning")
-                return ("🔴", "#A32D2D", "#FFF0F0", "Critical")
-
-            _cards = [
-                ("Operational Health", "Last 1 day",  _mscores.get("operational")),
-                ("Performance Health", "Last 1 week", _mscores.get("performance")),
-                ("Asset Health",       "Last 1 month",_mscores.get("asset")),
-            ]
-            _c1, _c2, _c3 = st.columns(3)
-            for _col, (_title, _period, _val) in zip([_c1, _c2, _c3], _cards):
-                _ico, _fc, _bg, _lbl = _score_cfg(_val)
-                _val_str = f"{_val:.0f}" if _val is not None else "N/A"
-                _col.markdown(
-                    f'<div style="background:{_bg};border:1px solid {_fc};border-radius:6px;'
-                    f'padding:12px 14px;text-align:center;">'
-                    f'<div style="font-size:0.78em;color:#888;margin-bottom:2px">{_period}</div>'
-                    f'<div style="font-weight:700;font-size:0.95em;color:#333;margin-bottom:4px">{_title}</div>'
-                    f'<div style="font-size:2.2em;font-weight:800;color:{_fc};line-height:1.1">{_val_str}</div>'
-                    f'<div style="font-size:0.88em;color:{_fc};margin-top:4px">{_ico} {_lbl}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-            st.markdown("")
-        elif score is not None:
+        if score is not None:
             colour = "green" if score >= 70 else "orange" if score >= 40 else "red"
             st.markdown(f"### Health score: :{colour}[{score} / 100]")
             st.progress(int(score) / 100)
@@ -937,8 +906,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 "Advisory": "Monitor closely — early limit violation signal detected.",
                 "Normal":   "No action required — operating within baseline bounds.",
             }
-            # Sub-section 1: Limit Violation
-            st.markdown(f"**Sub-section 1 — Limit Violation**")
+            # Sub-section 1: Parameter Health Score
+            st.markdown(f"**Sub-section 1 — Parameter Health Score**")
             st.caption(f"Per-parameter health scores across three windows. Baseline: {_bl_lbl}.")
             # Sort by worst operational score
             def _worst_score(d):
@@ -4370,6 +4339,38 @@ with tab_analysis:
             _show_results = not st.session_state.get("_pending_analysis", False)
             if _show_results:
 
+                # ── Machine Health score cards (rendered first, before physics) ─
+                _mh_multi = (st.session_state.get("last_multi_results") or {}).get("Machine Health", {})
+                _mscores_top = _mh_multi.get("_machine_scores", {}) if _mh_multi else {}
+                if _mscores_top:
+                    def _score_cfg_top(s):
+                        if s is None:
+                            return ("—", "#888", "#F8F8F8", "Insufficient data")
+                        if s >= 90: return ("🟢", "#177E40", "#F0FFF4", "Normal")
+                        if s >= 75: return ("🟢⚠️", "#177E40", "#FFFBE6", "Advisory")
+                        if s >= 60: return ("🟡", "#BA7517", "#FFFBF0", "Warning")
+                        return ("🔴", "#A32D2D", "#FFF0F0", "Critical")
+                    _cards_top = [
+                        ("Operational Health", "Last 1 day",   _mscores_top.get("operational")),
+                        ("Performance Health", "Last 1 week",  _mscores_top.get("performance")),
+                        ("Asset Health",       "Last 1 month", _mscores_top.get("asset")),
+                    ]
+                    _tc1, _tc2, _tc3 = st.columns(3)
+                    for _tcol, (_ttitle, _tperiod, _tval) in zip([_tc1, _tc2, _tc3], _cards_top):
+                        _tico, _tfc, _tbg, _tlbl = _score_cfg_top(_tval)
+                        _tval_str = f"{_tval:.0f}" if _tval is not None else "N/A"
+                        _tcol.markdown(
+                            f'<div style="background:{_tbg};border:1px solid {_tfc};border-radius:6px;'
+                            f'padding:12px 14px;text-align:center;">'
+                            f'<div style="font-size:0.78em;color:#888;margin-bottom:2px">{_tperiod}</div>'
+                            f'<div style="font-weight:700;font-size:0.95em;color:#333;margin-bottom:4px">{_ttitle}</div>'
+                            f'<div style="font-size:2.2em;font-weight:800;color:{_tfc};line-height:1.1">{_tval_str}</div>'
+                            f'<div style="font-size:0.88em;color:{_tfc};margin-top:4px">{_tico} {_tlbl}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                    st.markdown("")
+
                 # ── Pump physics results panel ────────────────────────
                 _phys_res = st.session_state.get("_pump_physics_result")
                 if _phys_res and _phys_res.get("phases"):
@@ -4401,7 +4402,13 @@ with tab_analysis:
                             for _w in _ph_r.get("warnings", []):
                                 st.warning(_w)
                             # Metrics table
-                            _mets = _ph_r.get("metrics", {})
+                            _mets_raw = _ph_r.get("metrics", {})
+                            # Keep only Load Factor (always) and Voltage Imbalance (if present)
+                            _KEEP_METRICS = {"load factor", "voltage imbalance"}
+                            _mets = {
+                                k: v for k, v in _mets_raw.items()
+                                if any(keep in k.lower() for keep in _KEEP_METRICS)
+                            }
                             if _mets:
                                 _met_cols = st.columns(min(len(_mets), 3))
                                 for _mi, (_mk, _mv) in enumerate(_mets.items()):
