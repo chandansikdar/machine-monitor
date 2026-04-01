@@ -317,19 +317,83 @@ class Analyzer:
                     _cur_data = _trend_data.iloc[-_cur_n:]
                     _cur_label = f"last min(30d, 20%) of running data ({_cur_n} rows)"
 
-                # Per-parameter drift vs baseline
+                # Per-parameter breach-rate severity + mean shift (context only)
+                # Severity thresholds (grounded in 3-sigma statistical expectation):
+                #   UCL (3-sigma): expected breach rate 0.27% at steady state
+                #     Normal   < 1%    | Advisory 1-5%   | Warning 5-20%  | Critical > 20%
+                #   UWL (2-sigma): expected breach rate 4.55% at steady state
+                #     Normal   < 5%    | Advisory 5-15%  | Warning 15-40% | Critical > 40%
+                #   Final severity = max(UCL_severity, UWL_severity)
+                #   LCL/LWL: same thresholds applied symmetrically for downward drift
+                _SEV_ORDER = {"Normal": 0, "Advisory": 1, "Warning": 2, "Critical": 3}
+
+                def _breach_severity(rate_pct, limit_type):
+                    """Return severity string for a given breach rate and limit type."""
+                    if limit_type in ("UCL", "LCL"):
+                        if rate_pct > 20: return "Critical"
+                        if rate_pct > 5:  return "Warning"
+                        if rate_pct > 1:  return "Advisory"
+                        return "Normal"
+                    else:  # UWL / LWL
+                        if rate_pct > 40: return "Critical"
+                        if rate_pct > 15: return "Warning"
+                        if rate_pct > 5:  return "Advisory"
+                        return "Normal"
+
                 _drift_summary = {}
                 for _c in _numeric.columns:
                     _bl_s  = _bl_data[_c].dropna()  if _c in _bl_data.columns  else pd.Series(dtype=float)
                     _cur_s = _cur_data[_c].dropna() if _c in _cur_data.columns else pd.Series(dtype=float)
-                    if len(_bl_s) > 0 and len(_cur_s) > 0 and _bl_s.mean() != 0:
-                        _drift_pct = round(100 * (_cur_s.mean() - _bl_s.mean()) / _bl_s.mean(), 2)
-                        _drift_summary[_c] = {
-                            "baseline_mean": round(float(_bl_s.mean()), 4),
-                            "current_mean":  round(float(_cur_s.mean()), 4),
-                            "drift_pct":     _drift_pct,
-                            "direction":     "rising" if _drift_pct > 0 else "falling",
-                        }
+                    if len(_bl_s) < 4 or len(_cur_s) < 4:
+                        continue
+
+                    _bl_mean = float(_bl_s.mean())
+                    _bl_std  = float(_bl_s.std()) or 1e-9
+                    _cur_mean = float(_cur_s.mean())
+
+                    # Control limits from baseline
+                    _ucl = _bl_mean + 3 * _bl_std
+                    _uwl = _bl_mean + 2 * _bl_std
+                    _lcl = _bl_mean - 3 * _bl_std
+                    _lwl = _bl_mean - 2 * _bl_std
+
+                    # Breach rates on current period data
+                    _n = len(_cur_s)
+                    _ucl_rate = round(100 * (_cur_s > _ucl).sum() / _n, 2)
+                    _uwl_rate = round(100 * ((_cur_s > _uwl) & (_cur_s <= _ucl)).sum() / _n, 2)
+                    _lcl_rate = round(100 * (_cur_s < _lcl).sum() / _n, 2)
+                    _lwl_rate = round(100 * ((_cur_s < _lwl) & (_cur_s >= _lcl)).sum() / _n, 2)
+
+                    # Severity per limit, then take the worst
+                    _sev_ucl = _breach_severity(_ucl_rate, "UCL")
+                    _sev_uwl = _breach_severity(_uwl_rate, "UWL")
+                    _sev_lcl = _breach_severity(_lcl_rate, "LCL")
+                    _sev_lwl = _breach_severity(_lwl_rate, "LWL")
+
+                    _all_sevs = [(_sev_ucl, "UCL", _ucl_rate, _ucl),
+                                 (_sev_uwl, "UWL", _uwl_rate, _uwl),
+                                 (_sev_lcl, "LCL", _lcl_rate, _lcl),
+                                 (_sev_lwl, "LWL", _lwl_rate, _lwl)]
+                    _worst = max(_all_sevs, key=lambda x: _SEV_ORDER[x[0]])
+                    _worst_sev, _worst_limit, _worst_rate, _worst_val = _worst
+
+                    # Mean shift — contextual, not severity driver
+                    _drift_pct = round(100 * (_cur_mean - _bl_mean) / _bl_mean, 2) if _bl_mean != 0 else 0.0
+
+                    _drift_summary[_c] = {
+                        "baseline_mean":   round(_bl_mean, 4),
+                        "current_mean":    round(_cur_mean, 4),
+                        "drift_pct":       _drift_pct,
+                        "direction":       "rising" if _drift_pct > 0 else "falling",
+                        "severity":        _worst_sev,
+                        "driving_limit":   _worst_limit,
+                        "driving_limit_value": round(_worst_val, 4),
+                        "driving_breach_rate_pct": _worst_rate,
+                        "breach_rates": {
+                            "UCL": _ucl_rate, "UWL": _uwl_rate,
+                            "LCL": _lcl_rate, "LWL": _lwl_rate,
+                        },
+                    }
 
                 _drift_note = (
                     f"Baseline period: {_bl_label}. "
@@ -513,6 +577,23 @@ class Analyzer:
         # Sort by total_hours descending — most impactful bucket first
         _patterns_sorted = sorted(_pattern_agg.values(), key=lambda x: x["total_hours"], reverse=True)
 
+        # Actual average power during off-schedule running — use power/current column if available
+        # Priority: power_kW > motor_current_A (proxy via schedule threshold) > fallback 0
+        _avg_power_kw = 0.0
+        _power_col = next(
+            (c for c in df.select_dtypes(include="number").columns
+             if any(k in c.lower() for k in ["power_kw", "power_k", "kw"])), None
+        )
+        if _power_col is None:
+            _power_col = next(
+                (c for c in df.select_dtypes(include="number").columns
+                 if any(k in c.lower() for k in ["power"])), None
+            )
+        if _power_col and off_schedule_running.any():
+            _osr_power = df.loc[off_schedule_running, _power_col].dropna()
+            if len(_osr_power) > 0:
+                _avg_power_kw = round(float(_osr_power.mean()), 3)
+
         _DAY_NAMES_ALL = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 
         # Build a per-day-group schedule description that captures all distinct windows
@@ -557,6 +638,7 @@ class Analyzer:
             "data_weeks":                    max(1, round((df.index.max() - df.index.min()).days / 7, 1)),
             "currency_symbol":               schedule.get("currency_symbol", "$"),
             "rate_per_kwh":                  schedule.get("rate_per_kwh", 0.15),
+            "avg_power_kw":                  _avg_power_kw,
         }
 
     # ------------------------------------------------------------------ #
@@ -690,9 +772,13 @@ Threshold breach counts:
 """
         if "drift_vs_baseline" in ml_signals and ml_signals["drift_vs_baseline"]:
             ml_section += f"""
-=== DRIFT VS BASELINE ===
-Per-parameter drift: current period mean vs baseline mean.
-Use these values as the PRIMARY drift metric. Do not recalculate from the raw statistical flags.
+=== TREND SEVERITY AND DRIFT VS BASELINE ===
+Per-parameter breach-rate severity. Severity is determined solely by breach rate against
+baseline control limits (UCL/LCL = 3-sigma, UWL/LWL = 2-sigma).
+Mean shift (drift_pct) is CONTEXTUAL INFORMATION ONLY — it explains why breach rates are
+elevated but does not determine severity. Always report severity from the "severity" field
+and state which limit drove it (driving_limit) and its breach rate (driving_breach_rate_pct).
+Then report mean shift as supporting context: "current mean is X% above/below baseline mean."
 {json.dumps(ml_signals["drift_vs_baseline"], indent=2, default=str)}
 """
 
@@ -700,9 +786,10 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
         if analysis_type == "Operational Schedule Compliance":
             # Pre-build anomaly scaffold from off_schedule_patterns so Claude cannot skip entries
             _patterns = (schedule_stats or {}).get("off_schedule_patterns", [])
-            _rate     = (schedule_stats or {}).get("off_schedule_compliance_pct", "N/A")
-            _currency = (schedule_stats or {}).get("currency_symbol", "$")
-            _kwh_rate = (schedule_stats or {}).get("rate_per_kwh", 0.15)
+            _rate      = (schedule_stats or {}).get("off_schedule_compliance_pct", "N/A")
+            _currency  = (schedule_stats or {}).get("currency_symbol", "$")
+            _kwh_rate  = (schedule_stats or {}).get("rate_per_kwh", 0.15)
+            _avg_kw    = (schedule_stats or {}).get("avg_power_kw", 0.0)
             if _patterns:
                 _scaffold_lines = [
                     f"ANOMALY INSTRUCTIONS (strictly enforced):",
