@@ -695,13 +695,39 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
             else:
                 cost_saved = off_kwh * rate_kwh
 
+            # Compute period days and annualised figures for display
+            if data is not None and not data.empty:
+                _disp_days = max(1, (data.index.max() - data.index.min()).days)
+            else:
+                _disp_days = 90
+            _annual_kwh_d  = round(off_kwh  * 365 / _disp_days, 1)
+            _annual_cost_d = round(cost_saved * 365 / _disp_days, 2)
+
             e1, e2 = st.columns(2)
             if _no_sched_defined:
                 e1.metric("Off-schedule energy", "N/A")
                 e2.metric("Cost saving potential", "N/A")
             else:
-                e1.metric("Off-schedule energy", f"{off_kwh:,.3f} kWh")
-                e2.metric("Cost saving potential",  f"{currency_sym}{cost_saved:,.2f}")
+                e1.markdown(
+                    f'<div style="margin-bottom:4px">'
+                    f'<span style="font-size:0.78em;color:#888">Off-schedule energy</span><br>'
+                    f'<span style="font-size:1.6em;font-weight:600">{off_kwh:,.3f} kWh</span>'
+                    f'<span style="font-size:0.8em;color:#888"> ({_disp_days}d period)</span><br>'
+                    f'<span style="font-size:1.1em;font-weight:500;color:#555">{_annual_kwh_d:,.1f} kWh/year</span>'
+                    f'<span style="font-size:0.78em;color:#888"> (annualised)</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                e2.markdown(
+                    f'<div style="margin-bottom:4px">'
+                    f'<span style="font-size:0.78em;color:#888">Cost saving potential</span><br>'
+                    f'<span style="font-size:1.6em;font-weight:600">{currency_sym}{cost_saved:,.2f}</span>'
+                    f'<span style="font-size:0.8em;color:#888"> ({_disp_days}d period)</span><br>'
+                    f'<span style="font-size:1.1em;font-weight:500;color:#555">{currency_sym}{_annual_cost_d:,.2f}/year</span>'
+                    f'<span style="font-size:0.78em;color:#888"> (annualised)</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
 
             calc_note = (
                 f"**Scenario:** {scenario_label}  \n"
