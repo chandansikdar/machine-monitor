@@ -454,9 +454,10 @@ class Analyzer:
                 raw = parts[1].lstrip("json").strip() if len(parts) > 1 else raw
 
             insights = json.loads(raw)
-            # Attach tier info for display
-            insights["_ml_tier"]       = ml_signals.get("tier", 0)
-            insights["_ml_tier_label"] = ml_signals.get("tier_label", "")
+            # Attach tier info and drift signals for display
+            insights["_ml_tier"]            = ml_signals.get("tier", 0)
+            insights["_ml_tier_label"]      = ml_signals.get("tier_label", "")
+            insights["_drift_vs_baseline"]  = ml_signals.get("drift_vs_baseline", {})
             return {
                 "success":  True,
                 "insights": insights,
