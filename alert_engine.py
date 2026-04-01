@@ -66,7 +66,7 @@ _R2_MIN = 0.60
 _IQR_WARN = 1.5   # Warning band boundary
 _IQR_CRIT = 3.0   # Critical band boundary
 
-# Default sampling interval (minutes) â€” used if index frequency cannot be inferred
+# Default sampling interval (minutes) — used if index frequency cannot be inferred
 _DEFAULT_INTERVAL_MIN = 15
 
 
