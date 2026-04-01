@@ -751,7 +751,7 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         delta_col = "inverse" if status == "critical" else "off" if status == "warning" else "normal"
                         cols[i].metric(kpi.get("label","—"), kpi.get("value","—"),
                                        delta=delta_map.get(status), delta_color=delta_col)
-    elif kpis:
+    elif kpis and analysis_type != "Trend & Drift Analysis":
         n_cols = min(len(kpis), 4)
         cols   = st.columns(n_cols)
         for i, kpi in enumerate(kpis[:4]):
