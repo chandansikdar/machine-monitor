@@ -64,7 +64,8 @@ The JSON must exactly follow this schema:
 }
 
 Rules:
-- health_score must reflect the actual data, not be optimistic by default.
+- health_score: if the prompt contains a MACHINE HEALTH SIGNALS section, use the pre-computed
+  "Overall health score" value verbatim. Otherwise compute from the data.
 - Only reference column names that appear in the dataset.
 - kpis should cover the 3–5 most critical parameters for this machine type.
 - insights should be specific (include values, trends, percentages) not generic.
@@ -130,23 +131,18 @@ ANALYSIS_DESCRIPTIONS = {
         "(4) Overall degradation trajectory. "
         "Be specific — cite actual values, percentages and parameter names."
     ),
-    "Trend & Drift Analysis": (
-        "Focus exclusively on gradual trends and drift over time. "
-        "For each parameter: report the drift percentage (recent vs early period), "
-        "direction (rising or falling), and rate. "
-        "Identify which parameters are trending towards warning or critical thresholds "
-        "and estimate time to breach where possible. "
-        "Flag any parameters showing accelerating drift. "
-        "Do not report on current anomalies or spikes — focus only on sustained directional change."
-    ),
-    "Anomaly Detection": (
-        "Identify and catalogue all anomalous events. "
-        "For each anomaly: name the parameter, state the anomalous value, "
-        "give the timestamp or approximate period, state the Z-score or IQR deviation, "
-        "and explain why it is significant. "
-        "Report Isolation Forest multivariate anomalies if available. "
-        "Distinguish between isolated spikes and sustained out-of-range periods. "
-        "Do not report on trends — focus on sudden, unexpected deviations."
+    "Machine Health": (
+        "Assess the overall health of the machine based on pre-computed limit violation rates "
+        "and mean shift analysis for the last 24 hours of running data. "
+        "The prompt contains a MACHINE HEALTH SIGNALS section with two sub-sections: "
+        "LIMIT VIOLATION (breach rates and scores per parameter) and "
+        "MEAN SHIFT (current vs baseline mean per parameter). "
+        "For each parameter in LIMIT VIOLATION: report the severity, driving limit, breach rate, "
+        "and the score (0-100). "
+        "For each parameter in MEAN SHIFT: report the % shift and absolute shift from baseline. "
+        "Overall health score = mean of all per-parameter scores (already provided — use verbatim). "
+        "Narrative must name the 2-3 most critical parameters and state their scores. "
+        "Do not invent findings beyond what the pre-computed signals show."
     ),
     "Operational Schedule Compliance": (
         "Analyse whether the machine ran outside its permitted schedule. "
@@ -280,152 +276,149 @@ class Analyzer:
             # Schedule Compliance: skip entirely
             if analysis_type == "Operational Schedule Compliance":
                 ml_signals = {"tier": 0, "tier_label": "", "data_days": 0, "guidance": "", "statistical": {}}
-            elif analysis_type == "Trend & Drift Analysis":
-                # Statistical trends only — running-state rows only (stopped zeros skew drift)
-                _running_only = self._filter_running_only(filtered, schedule)
-                _trend_data   = _running_only if not _running_only.empty else filtered
-                _days = (filtered.index.max() - filtered.index.min()).days
-                _numeric = _trend_data.select_dtypes(include="number")
-                _dropped = len(filtered) - len(_trend_data)
-                _running_note = (
-                    f"Trend computed on running-state rows only ({len(_trend_data):,} of "
-                    f"{len(filtered):,} rows). {_dropped:,} stopped/idle rows excluded to prevent "
-                    f"zero-state readings from inflating drift."
-                ) if _dropped > 0 else "All rows used (no stopped-state rows identified)."
+            elif analysis_type == "Machine Health":
+                # Machine Health — three windows × per-parameter scoring
+                # Formula per parameter per window:
+                #   Violation Score  = 100 × (violations / n_timestamps)
+                #   Severity Score   = mean(100 × |actual_i − limit| / |limit|) for violations, capped 100
+                #   Limit Score      = min(Violation Score, Severity Score)
+                #   Combined Score   = 0.6 × critical_limit_score + 0.4 × warning_limit_score
+                #   Health Score     = 100 − Combined Score
+                # Machine score per window = mean of per-parameter health scores
+                # Windows: 1d → Operational, 1w → Performance, 1m → Asset (min 30 datapoints)
 
-                # Baseline mean — from baseline_period if set, else first 20% of running rows
+                _days    = (filtered.index.max() - filtered.index.min()).days
+                _running = self._filter_running_only(filtered, schedule)
+                _run     = _running if not _running.empty else filtered
+                _numeric = _run.select_dtypes(include="number")
+                _last_ts = _run.index.max()
+
+                # Baseline: user-defined or first 20% of running rows
                 if baseline_period and baseline_period[0] != baseline_period[1]:
-                    _bl_data = self._filter_by_date(_trend_data, baseline_period)
-                    _bl_data = self._filter_running_only(_bl_data, schedule)
+                    _bl_data  = self._filter_by_date(_run, baseline_period)
+                    _bl_data  = self._filter_running_only(_bl_data, schedule)
                     _bl_label = f"{baseline_period[0]} to {baseline_period[1]}"
                 else:
-                    _n_bl = max(1, int(len(_trend_data) * 0.20))
-                    _bl_data = _trend_data.iloc[:_n_bl]
+                    _n_bl    = max(1, int(len(_run) * 0.20))
+                    _bl_data = _run.iloc[:_n_bl]
                     _bl_label = f"first 20% of running data ({_n_bl} rows)"
 
-                # Current mean — from current_period if set, else last min(30d, 20%) of running rows
-                if current_period and current_period[0] != current_period[1]:
-                    _cur_data = self._filter_by_date(_trend_data, current_period)
-                    _cur_data = self._filter_running_only(_cur_data, schedule)
-                    _cur_label = f"{current_period[0]} to {current_period[1]}"
-                else:
-                    _interval_days = _days / max(len(_trend_data) - 1, 1) if len(_trend_data) > 1 else 1
-                    _cur_n = max(1, min(
-                        int(len(_trend_data) * 0.20),
-                        int(30 / max(_interval_days, 1e-6)),
-                    ))
-                    _cur_data = _trend_data.iloc[-_cur_n:]
-                    _cur_label = f"last min(30d, 20%) of running data ({_cur_n} rows)"
+                # Define three windows
+                _windows = {
+                    "operational":  ("Operational Health",  pd.Timedelta(days=1)),
+                    "performance":  ("Performance Health",  pd.Timedelta(weeks=1)),
+                    "asset":        ("Asset Health",        pd.Timedelta(days=30)),
+                }
+                _MIN_PTS = 30
 
-                # Per-parameter breach-rate severity + mean shift (context only)
-                # Severity thresholds (grounded in 3-sigma statistical expectation):
-                #   UCL (3-sigma): expected breach rate 0.27% at steady state
-                #     Normal   < 1%    | Advisory 1-5%   | Warning 5-20%  | Critical > 20%
-                #   UWL (2-sigma): expected breach rate 4.55% at steady state
-                #     Normal   < 5%    | Advisory 5-15%  | Warning 15-40% | Critical > 40%
-                #   Final severity = max(UCL_severity, UWL_severity)
-                #   LCL/LWL: same thresholds applied symmetrically for downward drift
-                _SEV_ORDER = {"Normal": 0, "Advisory": 1, "Warning": 2, "Critical": 3}
+                def _limit_score(s_win, limit, limit_abs):
+                    """Score for one limit (UCL/LCL/UWL/LWL) over window series s_win."""
+                    if limit_abs == 0:
+                        return 0.0
+                    n = len(s_win)
+                    if n < _MIN_PTS:
+                        return None  # insufficient data
+                    # Violations: above UCL/UWL or below LCL/LWL
+                    above = limit_abs > 0 and limit in ("UCL", "UWL")
+                    if above:
+                        viol = s_win[s_win > limit_abs]
+                    else:
+                        viol = s_win[s_win < limit_abs]
+                    n_viol = len(viol)
+                    if n_viol == 0:
+                        return 0.0
+                    v_score  = min(100.0, 100.0 * n_viol / n)
+                    sev_vals = (100.0 * (viol - limit_abs).abs() / abs(limit_abs)).clip(upper=100)
+                    s_score  = float(sev_vals.mean())
+                    return min(v_score, s_score)
 
-                def _breach_severity(rate_pct, limit_type):
-                    """Return severity string for a given breach rate and limit type."""
-                    if limit_type in ("UCL", "LCL"):
-                        if rate_pct > 20: return "Critical"
-                        if rate_pct > 5:  return "Warning"
-                        if rate_pct > 1:  return "Advisory"
-                        return "Normal"
-                    else:  # UWL / LWL
-                        if rate_pct > 40: return "Critical"
-                        if rate_pct > 15: return "Warning"
-                        if rate_pct > 5:  return "Advisory"
-                        return "Normal"
+                # Collect per-parameter scores per window
+                _mh_signals  = {}   # for display (last 24h data for sub-section 2)
+                _window_scores = {k: [] for k in _windows}
 
-                _drift_summary = {}
                 for _c in _numeric.columns:
-                    _bl_s  = _bl_data[_c].dropna()  if _c in _bl_data.columns  else pd.Series(dtype=float)
-                    _cur_s = _cur_data[_c].dropna() if _c in _cur_data.columns else pd.Series(dtype=float)
-                    if len(_bl_s) < 4 or len(_cur_s) < 4:
+                    _bl_s = _bl_data[_c].dropna() if _c in _bl_data.columns else pd.Series(dtype=float)
+                    if len(_bl_s) < 4:
                         continue
 
                     _bl_mean = float(_bl_s.mean())
                     _bl_std  = float(_bl_s.std()) or 1e-9
-                    _cur_mean = float(_cur_s.mean())
 
-                    # Control limits from baseline
-                    _ucl = _bl_mean + 3 * _bl_std
-                    _uwl = _bl_mean + 2 * _bl_std
-                    _lcl = _bl_mean - 3 * _bl_std
-                    _lwl = _bl_mean - 2 * _bl_std
+                    # Thresholds: user-defined first, else baseline control limits
+                    _thr_crit_hi = thresholds[_c].get("critical") if thresholds and _c in thresholds else _bl_mean + 3*_bl_std
+                    _thr_warn_hi = thresholds[_c].get("warning")  if thresholds and _c in thresholds else _bl_mean + 2*_bl_std
+                    _thr_crit_lo = None if (thresholds and _c in thresholds and
+                                            thresholds[_c].get("critical", 0) > thresholds[_c].get("warning", 0))                                    else _bl_mean - 3*_bl_std
+                    _thr_warn_lo = None if (thresholds and _c in thresholds and
+                                            thresholds[_c].get("critical", 0) > thresholds[_c].get("warning", 0))                                    else _bl_mean - 2*_bl_std
 
-                    # Breach rates on current period data
-                    _n = len(_cur_s)
-                    _ucl_rate = round(100 * (_cur_s > _ucl).sum() / _n, 2)
-                    _uwl_rate = round(100 * ((_cur_s > _uwl) & (_cur_s <= _ucl)).sum() / _n, 2)
-                    _lcl_rate = round(100 * (_cur_s < _lcl).sum() / _n, 2)
-                    _lwl_rate = round(100 * ((_cur_s < _lwl) & (_cur_s >= _lcl)).sum() / _n, 2)
+                    _param_window_scores = {}
 
-                    # Severity per limit, then take the worst
-                    _sev_ucl = _breach_severity(_ucl_rate, "UCL")
-                    _sev_uwl = _breach_severity(_uwl_rate, "UWL")
-                    _sev_lcl = _breach_severity(_lcl_rate, "LCL")
-                    _sev_lwl = _breach_severity(_lwl_rate, "LWL")
+                    for _wk, (_wlabel, _wdelta) in _windows.items():
+                        _w_data = _run[_run.index >= (_last_ts - _wdelta)][_c].dropna()
+                        if len(_w_data) < _MIN_PTS:
+                            _param_window_scores[_wk] = None
+                            continue
 
-                    _all_sevs = [(_sev_ucl, "UCL", _ucl_rate, _ucl),
-                                 (_sev_uwl, "UWL", _uwl_rate, _uwl),
-                                 (_sev_lcl, "LCL", _lcl_rate, _lcl),
-                                 (_sev_lwl, "LWL", _lwl_rate, _lwl)]
-                    _worst = max(_all_sevs, key=lambda x: _SEV_ORDER[x[0]])
-                    _worst_sev, _worst_limit, _worst_rate, _worst_val = _worst
+                        # Critical limits (weight 0.6)
+                        _s_crit_hi = _limit_score(_w_data, "UCL", _thr_crit_hi) if _thr_crit_hi else 0.0
+                        _s_crit_lo = _limit_score(_w_data, "LCL", _thr_crit_lo) if _thr_crit_lo else 0.0
+                        _s_crit    = max(_s_crit_hi or 0.0, _s_crit_lo or 0.0)
 
-                    # Mean shift — contextual, not severity driver
-                    _drift_pct = round(100 * (_cur_mean - _bl_mean) / _bl_mean, 2) if _bl_mean != 0 else 0.0
+                        # Warning limits (weight 0.4)
+                        _s_warn_hi = _limit_score(_w_data, "UWL", _thr_warn_hi) if _thr_warn_hi else 0.0
+                        _s_warn_lo = _limit_score(_w_data, "LWL", _thr_warn_lo) if _thr_warn_lo else 0.0
+                        _s_warn    = max(_s_warn_hi or 0.0, _s_warn_lo or 0.0)
 
-                    # Trend severity score (0-100) — mirrors threshold violation rate scale
-                    # Used as the Trend Score component in the Overall Health Score formula
-                    _SEV_SCORE = {"Normal": 100, "Advisory": 70, "Warning": 40, "Critical": 0}
-                    _trend_score = _SEV_SCORE[_worst_sev]
+                        _combined  = min(100.0, 0.6 * _s_crit + 0.4 * _s_warn)
+                        _h_score   = round(100.0 - _combined, 1)
+                        _param_window_scores[_wk] = _h_score
+                        _window_scores[_wk].append(_h_score)
 
-                    _drift_summary[_c] = {
-                        "baseline_mean":   round(_bl_mean, 4),
-                        "current_mean":    round(_cur_mean, 4),
-                        "drift_pct":       _drift_pct,
-                        "direction":       "rising" if _drift_pct > 0 else "falling",
-                        "severity":        _worst_sev,
-                        "trend_score":     _trend_score,
-                        "driving_limit":   _worst_limit,
-                        "driving_limit_value": round(_worst_val, 4),
-                        "driving_breach_rate_pct": _worst_rate,
-                        "breach_rates": {
-                            "UCL": _ucl_rate, "UWL": _uwl_rate,
-                            "LCL": _lcl_rate, "LWL": _lwl_rate,
-                        },
+                    # Last 24h data for mean shift sub-section
+                    _w24 = _run[_run.index >= (_last_ts - pd.Timedelta(hours=24))][_c].dropna()
+                    _cur_mean = float(_w24.mean()) if len(_w24) >= 2 else _bl_mean
+                    _abs_shift = round(_cur_mean - _bl_mean, 4)
+                    _pct_shift = round(100 * _abs_shift / _bl_mean, 2) if _bl_mean != 0 else 0.0
+
+                    _mh_signals[_c] = {
+                        "window_scores":        _param_window_scores,
+                        "baseline_mean":        round(_bl_mean, 4),
+                        "current_mean":         round(_cur_mean, 4),
+                        "mean_shift_pct":       _pct_shift,
+                        "mean_shift_abs":       _abs_shift,
+                        "direction":            "rising" if _pct_shift > 0 else "falling",
+                        "thresholds_used":      "user-defined" if (thresholds and _c in thresholds) else "baseline control limits",
                     }
 
-                _drift_note = (
-                    f"Baseline period: {_bl_label}. "
-                    f"Current period: {_cur_label}. "
-                    f"Drift = (current mean - baseline mean) / baseline mean × 100."
+                # Machine-level scores per window (mean of per-parameter scores)
+                def _machine_score(scores):
+                    valid = [s for s in scores if s is not None]
+                    return round(sum(valid) / len(valid), 1) if valid else None
+
+                _machine_scores = {
+                    "operational": _machine_score(_window_scores["operational"]),
+                    "performance": _machine_score(_window_scores["performance"]),
+                    "asset":       _machine_score(_window_scores["asset"]),
+                }
+
+                # Full ML pipeline for control chart signals
+                ml_signals = ml_engine.run(filtered, thresholds, baseline_data=_bl_data)
+                ml_signals["machine_health"]    = _mh_signals
+                ml_signals["machine_scores"]    = _machine_scores
+                ml_signals["baseline_label"]    = _bl_label
+                ml_signals["tier_label"]        = (
+                    f"Machine Health — 3-window scoring (1d/1w/1m), baseline: {_bl_label}"
                 )
 
-                ml_signals = {
-                    "tier": 1,
-                    "tier_label": "Trend analysis — statistical only (running-state rows)",
-                    "data_days": _days,
-                    "columns_analysed": _numeric.columns.tolist(),
-                    "statistical": ml_engine._statistical(_numeric, thresholds),
-                    "drift_vs_baseline": _drift_summary,
-                    "guidance": ml_engine._guidance(1, _days) + " " + _running_note + " " + _drift_note,
-                }
-            elif analysis_type == "Anomaly Detection":
-                # Full ML pipeline including isolation forest and control charts
-                ml_signals    = ml_engine.run(filtered, thresholds, baseline_data=baseline_data)
                 _alerts       = alert_engine.run(filtered, ml_signals, thresholds)
                 alert_summary = alert_engine.summarise(_alerts)
+
             else:
                 # Correlation, Distribution, Cross-Parameter — statistical only
                 ml_signals = ml_engine.run(filtered, thresholds, baseline_data=baseline_data)
 
-            if analysis_type != "Anomaly Detection":
+            if analysis_type not in ("Machine Health", "Anomaly Detection"):
                 _alerts       = []
                 alert_summary = {"total": 0, "critical": 0, "warning": 0, "advisory": 0, "alerts": []}
 
@@ -458,6 +451,9 @@ class Analyzer:
             insights["_ml_tier"]            = ml_signals.get("tier", 0)
             insights["_ml_tier_label"]      = ml_signals.get("tier_label", "")
             insights["_drift_vs_baseline"]  = ml_signals.get("drift_vs_baseline", {})
+            insights["_machine_health"]     = ml_signals.get("machine_health", {})
+            insights["_machine_scores"]     = ml_signals.get("machine_scores", {})
+            insights["_baseline_label"]     = ml_signals.get("baseline_label", "")
             return {
                 "success":  True,
                 "insights": insights,
@@ -777,15 +773,37 @@ Worst timestamps: {iso.get('worst_timestamps', [])}
 Threshold breach counts:
 {json.dumps(ml_signals.get('threshold_breaches', {}), indent=2, default=str)}
 """
-        if "drift_vs_baseline" in ml_signals and ml_signals["drift_vs_baseline"]:
+        if "machine_health" in ml_signals and ml_signals["machine_health"]:
+            _mh  = ml_signals["machine_health"]
+            _ms  = {c: {"baseline_mean": d["baseline_mean"], "current_mean": d["current_mean"],
+                        "mean_shift_pct": d["mean_shift_pct"], "mean_shift_abs": d["mean_shift_abs"],
+                        "direction": d["direction"], "thresholds_used": d.get("thresholds_used","")}
+                   for c, d in _mh.items()}
+            _msc = ml_signals.get("machine_scores", {})
+            # Use operational health score as health_score (most current)
+            _op_score = _msc.get("operational")
+            if _op_score is not None:
+                ml_section += f"""
+=== MACHINE HEALTH SIGNALS ===
+Baseline: {ml_signals.get("baseline_label", "")}
+
+MACHINE-LEVEL SCORES (use these verbatim as health_score — use operational):
+  Operational Health (last 1 day):  {_msc.get("operational", "insufficient data")}
+  Performance Health (last 1 week): {_msc.get("performance", "insufficient data")}
+  Asset Health (last 1 month):      {_msc.get("asset", "insufficient data")}
+
+Score interpretation: 90-100=Normal, 75-89=Advisory, 60-74=Warning, <60=Critical
+Health score = 100 - (0.6 × critical_limit_score + 0.4 × warning_limit_score)
+
+PER-PARAMETER WINDOW SCORES:
+{json.dumps({c: d.get("window_scores",{}) for c, d in _mh.items()}, indent=2, default=str)}
+
+SUB-SECTION 2 — MEAN SHIFT (last 24h vs baseline):
+{json.dumps(_ms, indent=2, default=str)}
+"""
+        elif "drift_vs_baseline" in ml_signals and ml_signals["drift_vs_baseline"]:
             ml_section += f"""
-=== TREND SEVERITY AND DRIFT VS BASELINE ===
-Per-parameter breach-rate severity. Severity is determined solely by breach rate against
-baseline control limits (UCL/LCL = 3-sigma, UWL/LWL = 2-sigma).
-Mean shift (drift_pct) is CONTEXTUAL INFORMATION ONLY — it explains why breach rates are
-elevated but does not determine severity. Always report severity from the "severity" field
-and state which limit drove it (driving_limit) and its breach rate (driving_breach_rate_pct).
-Then report mean shift as supporting context: "current mean is X% above/below baseline mean."
+=== DRIFT VS BASELINE ===
 {json.dumps(ml_signals["drift_vs_baseline"], indent=2, default=str)}
 """
 
