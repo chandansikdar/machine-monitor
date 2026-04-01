@@ -688,36 +688,6 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 assumptions    = "Add a kW, kWh, or current (A) column to enable energy calculation."
                 method_detail  = ""
 
-            # Per-pattern (weekday/weekend) energy split — mirrors pattern aggregation in analyzer.py
-            _WD_INTS_E = {0, 1, 2, 3, 4}
-            _WE_INTS_E = {5, 6}
-            _pattern_costs = {}
-            if not _no_sched_defined and len(_df_off) > 0:
-                for _bucket, _dow_set in [("Weekday (Mon–Fri)", _WD_INTS_E),
-                                           ("Weekend (Sat–Sun)", _WE_INTS_E)]:
-                    _bucket_rows = _df_off[_df_off.index.dayofweek.isin(_dow_set)]
-                    if len(_bucket_rows) == 0:
-                        continue
-                    if kwh_col and kwh_col in _df_e.columns:
-                        _b_kwh = float(_bucket_rows[kwh_col].sum())
-                    elif power_col and power_col in _df_e.columns:
-                        _b_kwh = float((_bucket_rows[power_col].clip(lower=0) * interval_h).sum())
-                    elif current_col and current_col in _df_e.columns:
-                        _bV  = (_bucket_rows[voltage_col].clip(lower=0) if voltage_col and voltage_col in _df_e.columns
-                                else pd.Series(voltage_e, index=_bucket_rows.index))
-                        _bI  = _bucket_rows[current_col].clip(lower=0)
-                        _bPF = (_bucket_rows[pf_col].clip(lower=0, upper=1) if pf_col and pf_col in _df_e.columns
-                                else pd.Series(pf_e, index=_bucket_rows.index))
-                        _b_kwh = float(((1.732 * _bV * _bI * _bPF) / 1000 * interval_h).sum())
-                    else:
-                        _b_kwh = 0.0
-                    _pattern_costs[_bucket] = {
-                        "kwh":  round(_b_kwh, 3),
-                        "cost": round(_b_kwh * rate_kwh, 2),
-                        "currency": currency_sym,
-                    }
-            st.session_state["_pattern_costs"] = _pattern_costs
-
             # Zero out energy metrics when no schedule is defined
             if _no_sched_defined:
                 off_kwh    = 0.0
@@ -804,14 +774,26 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                         None
                     )
                 if _pc and _pc.get("kwh", 0) > 0:
-                    _cur     = _pc["currency"]
-                    _cost    = _pc["cost"]
-                    _kwh     = _pc["kwh"]
-                    _rate_pc = st.session_state.get("_last_schedule", {}).get("rate_per_kwh", 0.15)
+                    _cur      = _pc["currency"]
+                    _cost     = _pc["cost"]
+                    _kwh      = _pc["kwh"]
+                    _rate_pc  = _pc.get("rate", st.session_state.get("_last_schedule", {}).get("rate_per_kwh", 0.15))
+                    # Pro-rata annualisation from data period
+                    _data_wks = st.session_state.get("last_multi_results", {})
+                    _sched_ss2 = st.session_state.get("_last_schedule", {})
+                    _last_data2 = st.session_state.get("last_data")
+                    if _last_data2 is not None and not _last_data2.empty:
+                        _period_days = max(1, (_last_data2.index.max() - _last_data2.index.min()).days)
+                    else:
+                        _period_days = 90
+                    _annual_kwh  = round(_kwh  * 365 / _period_days, 1)
+                    _annual_cost = round(_cost * 365 / _period_days, 2)
                     _impact = (
-                        f"Energy saving: **{_kwh:,.1f} kWh**  ·  "
-                        f"Cost saving: **{_cur}{_cost:,.2f}**  "
-                        f"(at {_cur}{_rate_pc}/kWh, from measured power data)"
+                        f"Data period ({_period_days} days): **{_kwh:,.1f} kWh** · **{_cur}{_cost:,.2f}**\n"
+
+                        f"Annualised (pro-rata): **{_annual_kwh:,.1f} kWh/year** · **{_cur}{_annual_cost:,.2f}/year**\n"
+
+                        f"Rate: {_cur}{_rate_pc}/kWh · calculated from measured power data"
                     )
 
                 # Fallback: if Claude merged content into description, extract it
@@ -2734,7 +2716,98 @@ def _run_analysis(meta, dq_ctx, db, selected_id, override_data=None):
     _progress.empty()
     st.session_state["last_multi_results"] = _all_results
     st.session_state["last_multi_alerts"]  = _all_alerts
-    st.session_state["last_data"]          = override_data if override_data is not None else meta["filtered_data"]
+    _final_data = override_data if override_data is not None else meta["filtered_data"]
+    st.session_state["last_data"] = _final_data
+
+    # Pre-compute per-pattern energy costs for Schedule Compliance anomaly cards
+    if "Operational Schedule Compliance" in _sel and _final_data is not None:
+        _sched_pc  = meta.get("schedule") or {}
+        _rate_pc   = _sched_pc.get("rate_per_kwh", 0.15)
+        _cur_pc    = _sched_pc.get("currency_symbol", "$")
+        _spd_pc    = _sched_pc.get("sched_per_day", {})
+        _wdays_pc  = _sched_pc.get("work_days", list(range(5)))
+        _hs_pc     = _sched_pc.get("work_hour_start", 8)
+        _he_pc     = _sched_pc.get("work_hour_end", 18)
+        _ind_pc    = _sched_pc.get("indicator_col", "")
+        _thr_pc    = _sched_pc.get("running_threshold", 0)
+        _volt_pc   = _sched_pc.get("voltage", 415.0)
+        _pf_pc     = _sched_pc.get("power_factor", 0.85)
+
+        _df_pc = _final_data.copy()
+        _df_pc.index = pd.to_datetime(_df_pc.index)
+        _DAYS_PC = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+        _DI_PC   = {d: i for i, d in enumerate(_DAYS_PC)}
+        _any_spd_pc = any(v.get("enabled") for v in _spd_pc.values()) if _spd_pc else False
+
+        # Build in-schedule mask (same logic as _compute_schedule_stats)
+        if _any_spd_pc:
+            _in_s_pc = pd.Series(False, index=_df_pc.index)
+            for _dn, _di in _DI_PC.items():
+                _dcfg = _spd_pc.get(_dn, {})
+                if not _dcfg.get("enabled", False):
+                    continue
+                _dr = _df_pc.index.dayofweek == _di
+                _wins = _dcfg.get("windows", [{"start": _hs_pc, "end": _he_pc}])
+                _hw = pd.Series(
+                    [any(w["start"] <= h + n/60 < w["end"] for w in _wins)
+                     for h, n in zip(_df_pc.index.hour, _df_pc.index.minute)],
+                    index=_df_pc.index,
+                )
+                _in_s_pc |= (_dr & _hw)
+        elif _wdays_pc:
+            _dm = _df_pc.index.dayofweek.isin(_wdays_pc)
+            _hm = pd.Series(
+                [_hs_pc <= h + n/60 < _he_pc
+                 for h, n in zip(_df_pc.index.hour, _df_pc.index.minute)],
+                index=_df_pc.index,
+            )
+            _in_s_pc = _dm & _hm
+        else:
+            _in_s_pc = pd.Series(True, index=_df_pc.index)
+
+        # Running mask
+        _num_pc = _df_pc.select_dtypes(include="number").columns
+        if _ind_pc and _ind_pc in _df_pc.columns:
+            _run_pc = _df_pc[_ind_pc] > _thr_pc
+        elif len(_num_pc):
+            _run_pc = _df_pc[_num_pc[0]] > _df_pc[_num_pc[0]].quantile(0.10)
+        else:
+            _run_pc = pd.Series(True, index=_df_pc.index)
+
+        _off_run_pc = (~_in_s_pc) & _run_pc
+        _df_off_pc  = _df_pc[_off_run_pc]
+
+        # Detect power column
+        _pow_col_pc = next((c for c in _df_pc.columns if any(k in c.lower() for k in ["power_kw","power_k"," kw","_kw"])), None)
+        if _pow_col_pc is None:
+            _pow_col_pc = next((c for c in _df_pc.columns if "power" in c.lower()), None)
+        _cur_col_pc = next((c for c in _df_pc.columns if any(k in c.lower() for k in ["current","amp"])), None)
+        _kwh_col_pc = next((c for c in _df_pc.columns if any(k in c.lower() for k in ["kwh","kw_h","energy"])), None)
+        _ivl_pc = 0.25  # default 15-min
+        if len(_df_pc) > 1:
+            _ivl_pc = (_df_pc.index[1] - _df_pc.index[0]).total_seconds() / 3600
+
+        _pattern_costs_pc = {}
+        for _bkt, _dow_set in [("Weekday (Mon–Fri)", {0,1,2,3,4}), ("Weekend (Sat–Sun)", {5,6})]:
+            _brows = _df_off_pc[_df_off_pc.index.dayofweek.isin(_dow_set)]
+            if len(_brows) == 0:
+                continue
+            if _kwh_col_pc and _kwh_col_pc in _df_pc.columns:
+                _bkwh = float(_brows[_kwh_col_pc].sum())
+            elif _pow_col_pc and _pow_col_pc in _df_pc.columns:
+                _bkwh = float((_brows[_pow_col_pc].clip(lower=0) * _ivl_pc).sum())
+            elif _cur_col_pc and _cur_col_pc in _df_pc.columns:
+                _bkwh = float(((1.732 * _volt_pc * _brows[_cur_col_pc].clip(lower=0) * _pf_pc) / 1000 * _ivl_pc).sum())
+            else:
+                _bkwh = 0.0
+            _pattern_costs_pc[_bkt] = {
+                "kwh":      round(_bkwh, 3),
+                "cost":     round(_bkwh * _rate_pc, 2),
+                "currency": _cur_pc,
+                "rate":     _rate_pc,
+            }
+        st.session_state["_pattern_costs"] = _pattern_costs_pc
+
     st.rerun()
 
 tab_data, tab_analysis, tab_history, tab_logs = st.tabs(["Data", " Analysis", "History", "Maintenance Logs"])
