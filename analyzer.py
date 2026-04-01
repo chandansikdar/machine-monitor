@@ -104,20 +104,17 @@ Rules:
     "After-Hours" — value like "41.9%"
   Never use words like "of total", "runtime", "running" in the value field. Percentage only.
   Never use raw reading counts like "5,985 readings" in KPI values.
-  ANOMALIES RULE: Never list individual off-schedule events as separate anomalies.
-  Group repeated events into behavioural patterns.
-  Only report patterns that are clearly and repeatedly evidenced in the data.
-  If only one pattern exists, return one entry. If none exist, return [].
-  Do NOT invent patterns to fill a quota. Zero anomalies is a valid result.
-  CRITICAL: Each sub-field must contain ONLY its own content — never merge them:
+  ANOMALIES RULE FOR SCHEDULE COMPLIANCE:
+  The prompt contains an "off_schedule_patterns" list. You MUST create EXACTLY ONE anomaly
+  entry per item in that list. If the list has 2 items, return exactly 2 anomalies.
+  If it has 1 item, return 1. If it is empty, return []. Never merge two entries into one.
+  CRITICAL: Each sub-field must contain ONLY its own content:
     "description"       — ONLY the pattern observation (what, when, frequency, cumulative hours).
-                          Never include corrective action or impact text here.
-    "corrective_action" — ONLY the specific fix recommendation. Never include description or impact.
+    "corrective_action" — ONLY the specific fix recommendation.
     "potential_impact"  — ONLY the quantified benefit (hours, kWh, cost saving with numbers).
-                          Never include description or corrective action text here.
-  Order anomalies from highest to lowest potential_impact (most impactful pattern first).
+  Set "parameter" to the "pattern" value from off_schedule_patterns (e.g. "Weekday (Mon-Fri)").
+  Order anomalies by total_hours descending (highest hours first).
   INSIGHTS RULE: For Schedule Compliance, return an empty insights array [].
-  All actionable information belongs in the anomaly corrective_action and potential_impact fields.
 """
 
 ANALYSIS_DESCRIPTIONS = {
@@ -531,6 +528,7 @@ class Analyzer:
             "off_schedule_compliance_pct":   off_sched_compliance,
             "off_schedule_blocks":           off_blocks,
             "off_schedule_patterns":         _patterns_sorted,
+            "data_weeks":                    max(1, round((df.index.max() - df.index.min()).days / 7, 1)),
         }
 
     # ------------------------------------------------------------------ #
@@ -672,6 +670,36 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
 
         # For Schedule Compliance — only send schedule data, no sensor stats
         if analysis_type == "Operational Schedule Compliance":
+            # Pre-build anomaly scaffold from off_schedule_patterns so Claude cannot skip entries
+            _patterns = (schedule_stats or {}).get("off_schedule_patterns", [])
+            _rate     = (schedule_stats or {}).get("off_schedule_compliance_pct", "N/A")
+            _currency = (schedule or {}).get("currency_symbol", "$")
+            _kwh_rate = (schedule or {}).get("rate_per_kwh", 0.15)
+            if _patterns:
+                _scaffold_lines = [
+                    f"You MUST return EXACTLY {len(_patterns)} anomaly entries — one per pattern below.",
+                    f"For each anomaly fill in corrective_action and potential_impact.",
+                    f"Do NOT skip any entry. Do NOT merge entries.",
+                    "",
+                ]
+                for _i, _p in enumerate(_patterns):
+                    _hrs    = _p.get("total_hours", 0)
+                    _occ    = _p.get("occurrences", 0)
+                    _pname  = _p.get("pattern", "Unknown")
+                    _wk_hrs = round(_hrs / max((schedule_stats or {}).get("data_weeks", 13), 1), 1)
+                    _kwh    = round(_hrs * 5 * _kwh_rate, 0)  # assume 5kW avg; rate from config
+                    _scaffold_lines += [
+                        f"ANOMALY {_i+1} OF {len(_patterns)}:",
+                        f'  "parameter": "{_pname}"',
+                        f'  "description": "{_pname} off-schedule running: {_hrs} hrs total across {_occ} days (~{_wk_hrs} hrs/week). Machine ran outside its permitted schedule during this period."',
+                        f'  "corrective_action": "<YOU MUST FILL THIS IN — specific action to prevent {_pname} off-schedule running>"',
+                        f'  "potential_impact":  "<YOU MUST FILL THIS IN — quantify: ~{_hrs} hrs saved, ~{_kwh:.0f} {_currency} saving at {_kwh_rate} {_currency}/kWh>"',
+                        "",
+                    ]
+                _anomaly_scaffold = "\n".join(_scaffold_lines)
+            else:
+                _anomaly_scaffold = "No off-schedule patterns detected. Return anomalies: []."
+
             prompt = f"""
 === MACHINE PROFILE ===
 Type        : {machine_info.get('machine_type', 'Unknown')}
@@ -696,44 +724,10 @@ IMPORTANT: Report ONLY off-schedule compliance findings. Do NOT report on sensor
 vibration, temperature, pressure, or any other parameter conditions.
 KPIs must cover only: off-schedule compliance %, off-schedule running %, weekend running %, after-hours running %.
 
-ANOMALIES — PATTERN RULE (strictly enforced):
-- Use the "off_schedule_patterns" field in the schedule data as your PRIMARY evidence.
-  Each entry in off_schedule_patterns is a pre-grouped pattern (day + start hour + occurrences
-  + total hours). These are the ONLY patterns that exist in the data.
-- Report one anomaly entry per pattern in off_schedule_patterns. Do not invent additional
-  patterns not present in that list.
-- If off_schedule_patterns is empty, return anomalies: []. Zero anomalies is a valid result.
-- Each anomaly entry must describe the pattern from off_schedule_patterns, not individual events.
-- You MUST populate EXACTLY THREE SEPARATE FIELDS per anomaly. Do NOT merge them.
-  Do NOT put corrective_action or potential_impact text inside the description field.
-
-  "description"       : ONLY the pattern observation — what runs when, how often,
-                        cumulative off-schedule hours over the analysis period.
-                        No corrective action text here.
-
-  "corrective_action" : ONLY the recommended fix — one specific, actionable instruction
-                        (e.g. "Configure auto-stop at 18:00 in PLC/SCADA with restart
-                        inhibit until 08:00 next permitted workday").
-                        No description or impact text here.
-
-  "potential_impact"  : ONLY the quantified benefit of fixing this pattern.
-                        Must include at least one number — hours saved per week or month,
-                        estimated kWh saving, or estimated cost saving using the electricity
-                        rate from context. Format: "Eliminating this pattern saves approx
-                        X hours/week (Y kWh/month) — estimated CHF Z/year at current rates."
-                        No description or corrective action text here.
-
-- Order anomalies from HIGHEST to LOWEST potential_impact value.
-
-EXAMPLE of correct field separation:
-  "parameter": "Systematic weekday after-hours running",
-  "description": "Pump runs 18:00–08:00 every Mon–Fri, a 14-hour window. Observed on all 65 weekdays in the 90-day period. Total: ~910 off-schedule hours.",
-  "corrective_action": "Configure a hard stop command at 18:00 in the PLC/SCADA system with auto-restart inhibit until 08:00 the following permitted workday.",
-  "potential_impact": "Eliminating this pattern saves ~910 hours/90 days (70 hrs/week). At 5 kW average load and CHF 0.15/kWh, estimated saving: CHF 4,550/year."
+{_anomaly_scaffold}
 
 INSIGHTS — EMPTY FOR SCHEDULE COMPLIANCE:
 - Return "insights": [] (empty array).
-- All actionable content belongs in corrective_action and potential_impact fields above.
 
 Return your analysis as a single JSON object following the schema in the system prompt.
 """
