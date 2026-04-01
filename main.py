@@ -688,6 +688,36 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 assumptions    = "Add a kW, kWh, or current (A) column to enable energy calculation."
                 method_detail  = ""
 
+            # Per-pattern (weekday/weekend) energy split — mirrors pattern aggregation in analyzer.py
+            _WD_INTS_E = {0, 1, 2, 3, 4}
+            _WE_INTS_E = {5, 6}
+            _pattern_costs = {}
+            if not _no_sched_defined and len(_df_off) > 0:
+                for _bucket, _dow_set in [("Weekday (Mon–Fri)", _WD_INTS_E),
+                                           ("Weekend (Sat–Sun)", _WE_INTS_E)]:
+                    _bucket_rows = _df_off[_df_off.index.dayofweek.isin(_dow_set)]
+                    if len(_bucket_rows) == 0:
+                        continue
+                    if kwh_col and kwh_col in _df_e.columns:
+                        _b_kwh = float(_bucket_rows[kwh_col].sum())
+                    elif power_col and power_col in _df_e.columns:
+                        _b_kwh = float((_bucket_rows[power_col].clip(lower=0) * interval_h).sum())
+                    elif current_col and current_col in _df_e.columns:
+                        _bV  = (_bucket_rows[voltage_col].clip(lower=0) if voltage_col and voltage_col in _df_e.columns
+                                else pd.Series(voltage_e, index=_bucket_rows.index))
+                        _bI  = _bucket_rows[current_col].clip(lower=0)
+                        _bPF = (_bucket_rows[pf_col].clip(lower=0, upper=1) if pf_col and pf_col in _df_e.columns
+                                else pd.Series(pf_e, index=_bucket_rows.index))
+                        _b_kwh = float(((1.732 * _bV * _bI * _bPF) / 1000 * interval_h).sum())
+                    else:
+                        _b_kwh = 0.0
+                    _pattern_costs[_bucket] = {
+                        "kwh":  round(_b_kwh, 3),
+                        "cost": round(_b_kwh * rate_kwh, 2),
+                        "currency": currency_sym,
+                    }
+            st.session_state["_pattern_costs"] = _pattern_costs
+
             # Zero out energy metrics when no schedule is defined
             if _no_sched_defined:
                 off_kwh    = 0.0
@@ -748,6 +778,8 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
     if anomalies:
         st.subheader("Anomalies detected")
         if analysis_type == "Operational Schedule Compliance":
+            # Retrieve pre-computed per-pattern energy costs
+            _pcosts = st.session_state.get("_pattern_costs", {})
             # Structured anomaly cards: description / corrective action / potential impact
             for _idx, _a in enumerate(anomalies):
                 _param  = _a.get("parameter", "—")
@@ -755,6 +787,32 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
                 _action = _a.get("corrective_action", "")
                 _impact = _a.get("potential_impact", "")
                 _rank   = f"#{_idx + 1}"
+                # Override potential_impact with actual measured data if available
+                # Fuzzy match: normalise dashes and case so hyphen vs en-dash doesn't matter
+                _param_norm = _param.lower().replace("–", "-").replace("—", "-")
+                _pc = next(
+                    (v for k, v in _pcosts.items()
+                     if k.lower().replace("–", "-").replace("—", "-") == _param_norm),
+                    None
+                )
+                if not _pc:
+                    # Fallback: weekday/weekend keyword match
+                    _pc = next(
+                        (v for k, v in _pcosts.items()
+                         if ("weekday" in _param_norm and "weekday" in k.lower()) or
+                            ("weekend" in _param_norm and "weekend" in k.lower())),
+                        None
+                    )
+                if _pc and _pc.get("kwh", 0) > 0:
+                    _cur     = _pc["currency"]
+                    _cost    = _pc["cost"]
+                    _kwh     = _pc["kwh"]
+                    _rate_pc = st.session_state.get("_last_schedule", {}).get("rate_per_kwh", 0.15)
+                    _impact = (
+                        f"Energy saving: **{_kwh:,.1f} kWh**  ·  "
+                        f"Cost saving: **{_cur}{_cost:,.2f}**  "
+                        f"(at {_cur}{_rate_pc}/kWh, from measured power data)"
+                    )
 
                 # Fallback: if Claude merged content into description, extract it
                 import re as _re
