@@ -889,6 +889,56 @@ def render_insights(insights: dict, data: pd.DataFrame, viz: Visualizer,
         for point in key_points:
             st.markdown(f"- {point}")
 
+    # ── Trend Analysis — per-parameter status dashboard ──────────────────
+    if analysis_type == "Trend & Drift Analysis":
+        _dvb = insights.get("_drift_vs_baseline", {})
+        if _dvb:
+            st.subheader("Parameter status")
+            _SEV_CFG = {
+                "Critical": ("🔴", "#A32D2D", "#FFF0F0", "4px solid #A32D2D"),
+                "Warning":  ("🟡", "#BA7517", "#FFFBF0", "4px solid #BA7517"),
+                "Advisory": ("🔵", "#185FA5", "#EAF4FF", "4px solid #185FA5"),
+                "Normal":   ("🟢", "#177E40", "#F0FFF4", "4px solid #177E40"),
+            }
+            _ACTION = {
+                "Critical": "Immediate investigation required. Parameter in persistent violation of baseline limits.",
+                "Warning":  "Schedule maintenance review. Parameter showing sustained elevated breach rate.",
+                "Advisory": "Monitor closely. Early drift signal detected — trend worth tracking.",
+                "Normal":   "No action required. Parameter operating within baseline bounds.",
+            }
+            for _param, _d in sorted(_dvb.items(), key=lambda x: {"Critical":0,"Warning":1,"Advisory":2,"Normal":3}.get(x[1].get("severity","Normal"),4)):
+                _sev   = _d.get("severity", "Normal")
+                _score = _d.get("trend_score", 100)
+                _icon, _fc, _bg, _border = _SEV_CFG.get(_sev, _SEV_CFG["Normal"])
+                _limit = _d.get("driving_limit", "")
+                _rate  = _d.get("driving_breach_rate_pct", 0)
+                _drift = _d.get("drift_pct", 0)
+                _dir   = _d.get("direction", "")
+                _bl    = _d.get("baseline_mean", 0)
+                _cur   = _d.get("current_mean", 0)
+                _drift_str = f"{'+' if _drift >= 0 else ''}{_drift:.1f}% {'above' if _drift >= 0 else 'below'} baseline"
+                _action = _ACTION[_sev]
+                st.markdown(
+                    f'<div style="background:{_bg};border-left:{_border};'
+                    f'padding:10px 14px;margin-bottom:8px;border-radius:3px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
+                    f'<span style="font-weight:700;font-size:0.95em;color:{_fc}">'
+                    f'{_icon} {_param.replace("_"," ").title()}</span>'
+                    f'<span style="font-size:0.82em;color:#888">Trend score: <b>{_score}</b> / 100</span>'
+                    f'</div>'
+                    f'<div style="font-size:0.82em;color:#555;margin-top:4px">'
+                    f'<b>{_sev}</b>'
+                    + (f' · {_limit} breach rate: <b>{_rate:.1f}%</b>' if _limit and _rate > 0 else '') +
+                    f' · Mean shift: <b>{_drift_str}</b>'
+                    f' · Baseline mean: {_bl:.3g} → Current mean: {_cur:.3g}'
+                    f'</div>'
+                    f'<div style="font-size:0.82em;color:{_fc};margin-top:5px;font-style:italic">'
+                    f'{_action}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
     recs = insights.get("chart_recommendations", [])
     if data is not None:
         st.subheader("Charts")
