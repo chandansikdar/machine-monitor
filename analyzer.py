@@ -380,12 +380,18 @@ class Analyzer:
                     # Mean shift — contextual, not severity driver
                     _drift_pct = round(100 * (_cur_mean - _bl_mean) / _bl_mean, 2) if _bl_mean != 0 else 0.0
 
+                    # Trend severity score (0-100) — mirrors threshold violation rate scale
+                    # Used as the Trend Score component in the Overall Health Score formula
+                    _SEV_SCORE = {"Normal": 100, "Advisory": 70, "Warning": 40, "Critical": 0}
+                    _trend_score = _SEV_SCORE[_worst_sev]
+
                     _drift_summary[_c] = {
                         "baseline_mean":   round(_bl_mean, 4),
                         "current_mean":    round(_cur_mean, 4),
                         "drift_pct":       _drift_pct,
                         "direction":       "rising" if _drift_pct > 0 else "falling",
                         "severity":        _worst_sev,
+                        "trend_score":     _trend_score,
                         "driving_limit":   _worst_limit,
                         "driving_limit_value": round(_worst_val, 4),
                         "driving_breach_rate_pct": _worst_rate,
