@@ -517,7 +517,7 @@ class Analyzer:
         return {
             "permitted_schedule": {
                 "work_days": [_DAY_NAMES_ALL[d] for d in work_days],
-                "hours": "00:00 – 23:59 (full day)",
+                "hours": f"{int(hour_start):02d}:00 – {int(hour_end):02d}:00",
             },
             "total_readings":                len(df),
             "running_readings":              running_rows,
@@ -691,8 +691,6 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
                 _perm = (schedule_stats or {}).get("permitted_schedule", {})
                 _perm_days = ", ".join(_perm.get("work_days", []))
                 _perm_hrs  = _perm.get("hours", "defined hours")
-                # Strip "full day" suffix if present — we want just the time window
-                _perm_hrs  = _perm_hrs.replace(" (full day)", "").strip()
 
                 for _i, _p in enumerate(_patterns):
                     _hrs    = _p.get("total_hours", 0)
