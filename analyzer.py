@@ -514,10 +514,36 @@ class Analyzer:
         _patterns_sorted = sorted(_pattern_agg.values(), key=lambda x: x["total_hours"], reverse=True)
 
         _DAY_NAMES_ALL = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+
+        # Build a per-day-group schedule description that captures all distinct windows
+        # e.g. "Mon, Tue: 08:00–18:00; Wed, Thu: 10:00–22:00"
+        def _fmt_h(v):
+            return f"{int(v):02d}:{int(round((v - int(v)) * 60)):02d}"
+
+        if sched_per_day and any(v.get("enabled") for v in sched_per_day.values()):
+            # Group days by their windows signature
+            _win_groups = {}
+            for _dn in _DAY_NAMES_ALL:
+                _dcfg = sched_per_day.get(_dn, {})
+                if not _dcfg.get("enabled"):
+                    continue
+                _wins = _dcfg.get("windows", [{"start": hour_start, "end": hour_end}])
+                _sig  = "; ".join(f"{_fmt_h(w['start'])}–{_fmt_h(w['end'])}" for w in _wins)
+                if _sig not in _win_groups:
+                    _win_groups[_sig] = []
+                _win_groups[_sig].append(_dn)
+            _schedule_desc = "  |  ".join(
+                f"{', '.join(days)}: {sig}" for sig, days in _win_groups.items()
+            )
+        else:
+            _schedule_desc = f"{', '.join([_DAY_NAMES_ALL[d] for d in work_days])}: {_fmt_h(hour_start)}–{_fmt_h(hour_end)}"
+
         return {
             "permitted_schedule": {
-                "work_days": [_DAY_NAMES_ALL[d] for d in work_days],
-                "hours": f"{int(hour_start):02d}:00 – {int(hour_end):02d}:00",
+                "work_days":    [_DAY_NAMES_ALL[d] for d in work_days],
+                "hours":        _schedule_desc,
+                "per_day":      {_dn: sched_per_day[_dn] for _dn in _DAY_NAMES_ALL
+                                 if sched_per_day.get(_dn, {}).get("enabled")},
             },
             "total_readings":                len(df),
             "running_readings":              running_rows,
@@ -687,10 +713,10 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
                     f"- Do NOT skip any entry. Do NOT merge entries.",
                     "",
                 ]
-                # Derive permitted window label from schedule_stats
-                _perm = (schedule_stats or {}).get("permitted_schedule", {})
-                _perm_days = ", ".join(_perm.get("work_days", []))
+                # Derive permitted window label — now a full grouped description
+                _perm      = (schedule_stats or {}).get("permitted_schedule", {})
                 _perm_hrs  = _perm.get("hours", "defined hours")
+                # _perm_hrs already contains full description e.g. "Mon, Tue: 08:00–18:00  |  Wed, Thu: 10:00–22:00"
 
                 for _i, _p in enumerate(_patterns):
                     _hrs    = _p.get("total_hours", 0)
@@ -701,7 +727,7 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
                     _desc = (
                         f"{_pname}: {_hrs} hrs of off-schedule running across {_occ} days "
                         f"(~{_wk_hrs} hrs/week), outside the defined operating boundary "
-                        f"of {_perm_hrs} ({_perm_days})."
+                        f"of {_perm_hrs}."
                     )
                     _scaffold_lines += [
                         f"ANOMALY {_i+1} OF {len(_patterns)} — copy fields EXACTLY as shown, only fill the two marked fields:",
