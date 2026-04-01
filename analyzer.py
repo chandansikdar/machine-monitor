@@ -677,9 +677,12 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
             _kwh_rate = (schedule or {}).get("rate_per_kwh", 0.15)
             if _patterns:
                 _scaffold_lines = [
-                    f"You MUST return EXACTLY {len(_patterns)} anomaly entries — one per pattern below.",
-                    f"For each anomaly fill in corrective_action and potential_impact.",
-                    f"Do NOT skip any entry. Do NOT merge entries.",
+                    f"ANOMALY INSTRUCTIONS (strictly enforced):",
+                    f"- Return EXACTLY {len(_patterns)} anomaly entries — one per numbered pattern below.",
+                    f"- The 'parameter' and 'description' fields are PRE-WRITTEN. Copy them VERBATIM into your JSON.",
+                    f"- Only write your own text in 'corrective_action' and 'potential_impact'.",
+                    f"- Do NOT paraphrase, rewrite, or add to the description field.",
+                    f"- Do NOT skip any entry. Do NOT merge entries.",
                     "",
                 ]
                 # Derive permitted window label from schedule_stats
@@ -695,12 +698,17 @@ Use these values as the PRIMARY drift metric. Do not recalculate from the raw st
                     _pname  = _p.get("pattern", "Unknown")
                     _wk_hrs = round(_hrs / max((schedule_stats or {}).get("data_weeks", 13), 1), 1)
                     _kwh    = round(_hrs * 5 * _kwh_rate, 0)  # assume 5kW avg; rate from config
+                    _desc = (
+                        f"{_pname}: {_hrs} hrs of off-schedule running across {_occ} days "
+                        f"(~{_wk_hrs} hrs/week), outside the defined operating boundary "
+                        f"of {_perm_hrs} ({_perm_days})."
+                    )
                     _scaffold_lines += [
-                        f"ANOMALY {_i+1} OF {len(_patterns)}:",
+                        f"ANOMALY {_i+1} OF {len(_patterns)} — copy fields EXACTLY as shown, only fill the two marked fields:",
                         f'  "parameter": "{_pname}"',
-                        f'  "description": "{_pname} off-schedule running: {_hrs} hrs total across {_occ} days (~{_wk_hrs} hrs/week). Machine ran outside the defined operating boundary of {_perm_hrs} ({_perm_days})."',
-                        f'  "corrective_action": "<YOU MUST FILL THIS IN — specific action to prevent {_pname} off-schedule running>"',
-                        f'  "potential_impact":  "<YOU MUST FILL THIS IN — quantify: ~{_hrs} hrs saved, ~{_kwh:.0f} {_currency} saving at {_kwh_rate} {_currency}/kWh>"',
+                        f'  "description": "{_desc}"   ← COPY THIS VERBATIM. Do NOT rewrite.',
+                        f'  "corrective_action": "FILL IN: specific action to stop {_pname} off-schedule running"',
+                        f'  "potential_impact":  "FILL IN: ~{_hrs} hrs saved, ~{_kwh:.0f} {_currency}/period at {_kwh_rate} {_currency}/kWh — add operational risk context"',
                         "",
                     ]
                 _anomaly_scaffold = "\n".join(_scaffold_lines)
