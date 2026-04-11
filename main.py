@@ -236,21 +236,44 @@ def _tier_badge(tier: str | None) -> str:
     return f"{icon} **{label}**"
 
 
-def render_cleaning_report(report: CleaningReport):
-    st.markdown("**Data cleaning**")
+def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning"):
+    st.markdown(f"**{title}**")
     steps = [
-        ("Raw samples",         report.n_raw),
-        ("After integrity gate",report.n_after_integrity),
-        ("After running mask",  report.n_after_running_mask),
-        ("After user filter",   report.n_after_user_filter),
-        ("After load \u226540%",     report.n_after_load_precondition),
-        ("After IQR rejection", report.n_cleaned),
+        ("Raw samples",              report.n_raw),
+        ("After integrity gate",     report.n_after_integrity),
+        ("After running mask",       report.n_after_running_mask),
+        ("After user filter",        report.n_after_user_filter),
+        ("After load \u226540% rated", report.n_after_load_precondition),
+        ("After IQR rejection",      report.n_cleaned),
     ]
-    cols = st.columns(len(steps))
-    for col, (label, count) in zip(cols, steps):
-        col.metric(label, f"{count:,}")
+    # Show as a compact two-column table: label | count | dropped
+    rows_html = ""
+    prev = None
+    for label, count in steps:
+        dropped = f"\u2212{prev - count:,}" if prev is not None and prev > count else ""
+        dropped_colour = "#A32D2D" if (prev and prev - count > 0) else "#888"
+        rows_html += (
+            f'<tr>'
+            f'<td style="padding:4px 12px;font-size:0.88em;color:#444">{label}</td>'
+            f'<td style="padding:4px 12px;font-size:0.95em;font-weight:600;text-align:right">{count:,}</td>'
+            f'<td style="padding:4px 12px;font-size:0.82em;color:{dropped_colour};text-align:right">{dropped}</td>'
+            f'</tr>'
+        )
+        prev = count
+
     retained_pct = report.fraction_retained * 100
     colour = "green" if retained_pct >= 70 else "orange" if retained_pct >= 40 else "red"
+    st.markdown(
+        f'<table style="border-collapse:collapse;width:100%">'
+        f'<thead><tr style="background:#f0f4f8">'
+        f'<th style="padding:4px 12px;font-size:0.82em;text-align:left">Step</th>'
+        f'<th style="padding:4px 12px;font-size:0.82em;text-align:right">Samples</th>'
+        f'<th style="padding:4px 12px;font-size:0.82em;text-align:right">Removed</th>'
+        f'</tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table>',
+        unsafe_allow_html=True,
+    )
     st.caption(f":{colour}[{retained_pct:.0f}% of raw samples retained for analysis]")
 
 
@@ -496,7 +519,7 @@ def render_assessment(record: AssessmentRecord):
 
     # Cleaning report
     if record.cleaning_report:
-        render_cleaning_report(record.cleaning_report)
+        render_cleaning_report(record.cleaning_report, title="Assessment data cleaning")
     st.markdown("---")
 
     # Zone 1
@@ -1163,7 +1186,7 @@ with tab_analysis:
                     if _bl_cr:
                         with st.expander("Baseline data cleaning", expanded=False):
                             _cr = CleaningReport(**_bl_cr)
-                            render_cleaning_report(_cr)
+                            render_cleaning_report(_cr, title="Baseline data cleaning")
 
                     if st.button("Delete baseline", key="del_baseline_btn",
                                  type="secondary", use_container_width=True):
