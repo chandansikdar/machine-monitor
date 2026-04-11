@@ -239,12 +239,12 @@ def _tier_badge(tier: str | None) -> str:
 def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning"):
     st.markdown(f"**{title}**")
     steps = [
-        ("Raw samples",              report.n_raw),
-        ("After integrity gate",     report.n_after_integrity),
-        ("After running mask",       report.n_after_running_mask),
-        ("After user filter",        report.n_after_user_filter),
+        ("Raw samples",                report.n_raw),
         ("After load \u226540% rated", report.n_after_load_precondition),
-        ("After IQR rejection",      report.n_cleaned),
+        ("After IQR rejection",        report.n_after_iqr),
+        ("After running mask",         report.n_after_running_mask),
+        ("After integrity gate",       report.n_after_integrity),
+        ("After user filter",          report.n_after_user_filter),
     ]
     # Show as a compact two-column table: label | count | dropped
     rows_html = ""
