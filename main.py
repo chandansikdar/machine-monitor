@@ -1060,8 +1060,8 @@ with tab_analysis:
                         f"\u2705 Baseline ingested {_stored_at}  \n"
                         f"Period: {_bl_start} \u2192 {_bl_end}  \n"
                         f"PF bands: {_n_bands}  \u00b7  "
-                        f"P\u209a\u2090\u209b\u2091\u2090\u2c7c\u2091: "
-                        f"{_bl_p_avg:.1f} kW" if _bl_p_avg else
+                        f"Baseline avg power: {_bl_p_avg:.1f} kW"
+                        if _bl_p_avg else
                         f"\u2705 Baseline ingested {_stored_at} \u2014 {_n_bands} PF band(s)"
                     )
                     for _w in _bl_warns:
