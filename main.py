@@ -168,6 +168,7 @@ def serialise_meta_block(
     v_nominal: float, p_rated: float, pf_rated: float,
     eta_rated: float, i_rated: float,
     four_wire: bool, at_panel: bool, app_type: str,
+    power_unit: str = "W",
 ) -> str:
     return (
         f"{_META_SENTINEL}\n"
@@ -179,6 +180,7 @@ def serialise_meta_block(
         f"four_wire: {str(four_wire).lower()}\n"
         f"measurement_at_panel: {str(at_panel).lower()}\n"
         f"application_type: {app_type}\n"
+        f"power_unit: {power_unit}\n"
     )
 
 
@@ -206,6 +208,18 @@ def replace_meta_block(description: str, new_block: str) -> str:
 def check_required_columns(df: pd.DataFrame) -> list[str]:
     """Return list of required columns that are missing from df."""
     return [c for c in REQUIRED_COLS if c not in df.columns]
+
+
+def scale_power_to_watts(df: pd.DataFrame, power_unit: str) -> pd.DataFrame:
+    """If power columns are in kW, multiply by 1000 to convert to Watts.
+    The electrical_diagnostics module always works internally in Watts.
+    """
+    if power_unit.lower() == "kw":
+        df = df.copy()
+        for col in ["phase_1_active_power", "phase_2_active_power", "phase_3_active_power"]:
+            if col in df.columns:
+                df[col] = df[col] * 1000.0
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -764,11 +778,20 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         value=bool(_em.get("four_wire", True)),
         key="ep_four_wire",
     )
+    _power_unit = st.radio(
+        "Active power column unit",
+        options=["W", "kW"],
+        index=0 if _em.get("power_unit", "W").upper() == "W" else 1,
+        horizontal=True,
+        key="ep_power_unit",
+        help="Select whether your phase_X_active_power columns are in Watts or kilowatts.",
+    )
 
     if st.button("Save electrical parameters", key="save_ep_btn", use_container_width=True):
         _app_type = APP_TYPE_MAP.get(machine_info["machine_type"], "compressed_air")
         _new_block = serialise_meta_block(
-            _v_nom, _p_rated, _pf_rated, _eta_rated, _i_rated, _fw, _at_panel, _app_type
+            _v_nom, _p_rated, _pf_rated, _eta_rated, _i_rated,
+            _fw, _at_panel, _app_type, _power_unit,
         )
         _non_meta = _desc.split(_META_SENTINEL)[0].rstrip() if _META_SENTINEL in _desc else _desc
         # Preserve any === NOTES === block that may follow
@@ -1084,6 +1107,7 @@ with tab_analysis:
                         else:
                             with st.spinner("Ingesting baseline\u2026"):
                                 _raw_bl_reset = _raw_bl.reset_index()
+                                _raw_bl_reset = scale_power_to_watts(_raw_bl_reset, meta.get("power_unit", "W"))
                                 _bm = ingest_baseline(_raw_bl_reset, meta)
                             if len(_bm.bands) < 3:
                                 st.warning(
@@ -1124,6 +1148,7 @@ with tab_analysis:
                             _bm_loaded = baseline_from_dict(db.get_baseline(selected_id))
                             with st.spinner("Running electrical diagnostics\u2026"):
                                 _raw_reset = _recent.reset_index()
+                                _raw_reset = scale_power_to_watts(_raw_reset, meta.get("power_unit", "W"))
                                 _record = run_assessment(_raw_reset, _bm_loaded, meta)
 
                             # Serialise and store in history
@@ -1169,9 +1194,10 @@ with tab_analysis:
                     # Control charts
                     _chart_data = st.session_state.get("last_data") or data
                     if _chart_data is not None:
+                        _chart_data_w = scale_power_to_watts(_chart_data.reset_index(), meta.get("power_unit", "W")).set_index("timestamp")
                         st.markdown("---")
                         st.subheader("Charts")
-                        for fig in build_assessment_charts(_chart_data, record):
+                        for fig in build_assessment_charts(_chart_data_w, record):
                             st.plotly_chart(fig, use_container_width=True)
 
 
