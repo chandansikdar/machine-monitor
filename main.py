@@ -1157,6 +1157,14 @@ with tab_analysis:
                     )
                     for _w in _bl_warns:
                         st.caption(f"\u26a0\ufe0f {_w}")
+
+                    # Baseline cleaning report
+                    _bl_cr = _stored_bl_dict.get("cleaning_report")
+                    if _bl_cr:
+                        with st.expander("Baseline data cleaning", expanded=False):
+                            _cr = CleaningReport(**_bl_cr)
+                            render_cleaning_report(_cr)
+
                     if st.button("Delete baseline", key="del_baseline_btn",
                                  type="secondary", use_container_width=True):
                         db.delete_baseline(selected_id)
