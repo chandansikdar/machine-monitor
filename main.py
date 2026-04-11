@@ -1281,7 +1281,9 @@ with tab_analysis:
                     render_assessment(record)
 
                     # Control charts
-                    _chart_data = st.session_state.get("last_data") or data
+                    _chart_data = st.session_state.get("last_data")
+                    if _chart_data is None:
+                        _chart_data = data
                     if _chart_data is not None:
                         _chart_data_w = scale_power_to_watts(_chart_data.reset_index(), meta.get("power_unit", "W")).set_index("timestamp")
                         st.markdown("---")
