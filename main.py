@@ -395,8 +395,9 @@ def render_motor_side(m: MotorSideResult):
                 x=centres, y=drift_vals,
                 name="PF drift",
                 marker_color=bar_colours,
-                opacity=0.35,
+                opacity=0.5,
                 yaxis="y2",
+                width=[centres[1] - centres[0]] * len(centres) if len(centres) > 1 else [1],
             ))
             # Threshold lines on drift axis
             for val, colour, label in [
@@ -416,8 +417,9 @@ def render_motor_side(m: MotorSideResult):
                 yaxis2=dict(
                     title="PF drift",
                     overlaying="y", side="right",
-                    range=[min(drift_vals) * 1.5 - 0.01, 0.02],
+                    range=[min(min(drift_vals) * 1.2, PF_DRIFT_ACTION * 1.2), 0.02],
                     showgrid=False,
+                    tickformat=".3f",
                 ),
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
