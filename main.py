@@ -331,7 +331,7 @@ def render_motor_side(m: MotorSideResult):
     # Per-band breakdown (collapsible)
     active_bands = [b for b in m.bands if not b.suppressed and b.pf_drift is not None]
     if active_bands:
-        with st.expander(f"PF bands \u2014 {len(active_bands)} active band(s)", expanded=False):
+        with st.expander(f"PF Drift \u2014 {len(active_bands)} active band(s)", expanded=False):
             st.caption(
                 "Each band is a narrow operating-point window (2% of rated power). "
                 "**Baseline PF** = mean PF during the ingested baseline period. "
