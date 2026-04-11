@@ -352,13 +352,13 @@ class Database:
         """Persist a serialised BaselineMetadata dict for a machine.
         Overwrites any previously stored baseline for this machine.
         """
-        self.conn.execute("""
-            INSERT INTO electrical_baselines (machine_id, baseline_json, created_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT (machine_id) DO UPDATE SET
-                baseline_json = excluded.baseline_json,
-                created_at    = CURRENT_TIMESTAMP
-        """, [machine_id, json.dumps(baseline_dict, default=str)])
+        self.conn.execute(
+            "DELETE FROM electrical_baselines WHERE machine_id = ?", [machine_id]
+        )
+        self.conn.execute(
+            "INSERT INTO electrical_baselines (machine_id, baseline_json) VALUES (?, ?)",
+            [machine_id, json.dumps(baseline_dict, default=str)],
+        )
         self.conn.commit()
 
     def get_baseline(self, machine_id: str) -> dict | None:
