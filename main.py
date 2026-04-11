@@ -332,7 +332,7 @@ def render_motor_side(m: MotorSideResult):
     active_bands = [b for b in m.bands if not b.suppressed and b.pf_drift is not None]
     if active_bands:
         with st.expander(f"PF bands \u2014 {len(active_bands)} active band(s)", expanded=False):
-            # Table
+            # Table — convert band centres from W to kW for display
             rows = []
             for b in active_bands:
                 drift = b.pf_drift if b.pf_drift is not None else 0.0
@@ -345,7 +345,7 @@ def render_motor_side(m: MotorSideResult):
                 else:
                     status = "\U0001f7e2 Normal"
                 rows.append({
-                    "Band centre (kW)":  f"{b.centre_kw:.1f}",
+                    "Band centre (kW)":  f"{b.centre_kw / 1000:.1f}",
                     "Baseline PF":       f"{b.mean_pf_baseline:.4f}",
                     "Recent PF":         f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent else "\u2014",
                     "Drift":             f"{b.pf_drift:+.4f}" if b.pf_drift is not None else "\u2014",
@@ -355,8 +355,8 @@ def render_motor_side(m: MotorSideResult):
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            # Visual — baseline PF vs recent PF per band
-            centres     = [b.centre_kw for b in active_bands]
+            # Visual — use kW for x-axis
+            centres     = [b.centre_kw / 1000 for b in active_bands]
             bl_pf_vals  = [b.mean_pf_baseline for b in active_bands]
             rec_pf_vals = [b.mean_pf_recent if b.mean_pf_recent else None for b in active_bands]
             drift_vals  = [b.pf_drift if b.pf_drift is not None else 0.0 for b in active_bands]
