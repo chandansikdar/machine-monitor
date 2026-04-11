@@ -331,18 +331,96 @@ def render_motor_side(m: MotorSideResult):
     # Per-band breakdown (collapsible)
     active_bands = [b for b in m.bands if not b.suppressed and b.pf_drift is not None]
     if active_bands:
-        with st.expander(f"PF drift \u2014 {len(active_bands)} band(s) active", expanded=False):
+        with st.expander(f"PF bands \u2014 {len(active_bands)} active band(s)", expanded=False):
+            # Table
             rows = []
             for b in active_bands:
+                drift = b.pf_drift if b.pf_drift is not None else 0.0
+                if drift <= PF_DRIFT_ACTION:
+                    status = "\U0001f534 Action"
+                elif drift <= PF_DRIFT_ALERT:
+                    status = "\U0001f7e0 Alert"
+                elif drift <= PF_DRIFT_WATCH:
+                    status = "\U0001f7e1 Watch"
+                else:
+                    status = "\U0001f7e2 Normal"
                 rows.append({
                     "Band centre (kW)":  f"{b.centre_kw:.1f}",
                     "Baseline PF":       f"{b.mean_pf_baseline:.4f}",
                     "Recent PF":         f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent else "\u2014",
                     "Drift":             f"{b.pf_drift:+.4f}" if b.pf_drift is not None else "\u2014",
+                    "Status":            status,
                     "n baseline":        b.n_baseline,
                     "n recent":          b.n_recent,
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            # Visual — baseline PF vs recent PF per band
+            centres     = [b.centre_kw for b in active_bands]
+            bl_pf_vals  = [b.mean_pf_baseline for b in active_bands]
+            rec_pf_vals = [b.mean_pf_recent if b.mean_pf_recent else None for b in active_bands]
+            drift_vals  = [b.pf_drift if b.pf_drift is not None else 0.0 for b in active_bands]
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=centres, y=bl_pf_vals,
+                mode="lines+markers",
+                name="Baseline PF",
+                line=dict(color="#054D5F", width=2),
+                marker=dict(size=6),
+            ))
+            if any(v is not None for v in rec_pf_vals):
+                fig.add_trace(go.Scatter(
+                    x=centres, y=rec_pf_vals,
+                    mode="lines+markers",
+                    name="Recent PF",
+                    line=dict(color="#C8A84B", width=2, dash="dash"),
+                    marker=dict(size=6),
+                ))
+            # Drift bar (secondary y)
+            bar_colours = [
+                "#A32D2D" if d <= PF_DRIFT_ACTION
+                else "#E67E22" if d <= PF_DRIFT_ALERT
+                else "#F1C40F" if d <= PF_DRIFT_WATCH
+                else "#177E40"
+                for d in drift_vals
+            ]
+            fig.add_trace(go.Bar(
+                x=centres, y=drift_vals,
+                name="PF drift",
+                marker_color=bar_colours,
+                opacity=0.35,
+                yaxis="y2",
+            ))
+            # Threshold lines on drift axis
+            for val, colour, label in [
+                (PF_DRIFT_WATCH,  "#F1C40F", f"Watch {PF_DRIFT_WATCH}"),
+                (PF_DRIFT_ALERT,  "#E67E22", f"Alert {PF_DRIFT_ALERT}"),
+                (PF_DRIFT_ACTION, "#A32D2D", f"Action {PF_DRIFT_ACTION}"),
+            ]:
+                fig.add_hline(
+                    y=val, line_color=colour, line_dash="dot", line_width=1,
+                    annotation_text=label, annotation_position="bottom right",
+                    annotation_font_size=9, yref="y2",
+                )
+            fig.update_layout(
+                title=dict(text="PF by operating-point band", font=dict(size=13)),
+                xaxis_title="Band centre (kW)",
+                yaxis=dict(title="Power Factor", range=[0, 1.05]),
+                yaxis2=dict(
+                    title="PF drift",
+                    overlaying="y", side="right",
+                    range=[min(drift_vals) * 1.5 - 0.01, 0.02],
+                    showgrid=False,
+                ),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=40, r=60, t=45, b=50),
+                legend=dict(orientation="h", yanchor="top", y=-0.18,
+                            xanchor="left", x=0, bgcolor="rgba(0,0,0,0)"),
+                hovermode="x unified", font=dict(size=11), height=320,
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
     suppressed_bands = [b for b in m.bands if b.suppressed]
     if suppressed_bands:
