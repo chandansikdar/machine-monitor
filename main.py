@@ -332,6 +332,12 @@ def render_motor_side(m: MotorSideResult):
     active_bands = [b for b in m.bands if not b.suppressed and b.pf_drift is not None]
     if active_bands:
         with st.expander(f"PF bands \u2014 {len(active_bands)} active band(s)", expanded=False):
+            st.caption(
+                "Each band is a narrow operating-point window (2% of rated power). "
+                "**Baseline PF** = mean PF during the ingested baseline period. "
+                "**Recent PF** = mean PF during the selected assessment date range. "
+                "**Drift** = Recent \u2212 Baseline (negative = degradation)."
+            )
             # Table — convert band centres from W to kW for display
             rows = []
             for b in active_bands:
@@ -1109,7 +1115,12 @@ with tab_analysis:
             left, right = st.columns([1, 3])
 
             with left:
-                st.markdown("**Date range**")
+                st.markdown("**Assessment period**")
+                st.caption(
+                    "The window of recent data to evaluate. "
+                    "Should be **after** the baseline period. "
+                    "PF drift, IUF, VUF and Zone 4 are all computed over this window."
+                )
                 min_d, max_d = data.index.min().date(), data.index.max().date()
                 if min_d < max_d:
                     date_range = st.date_input(
