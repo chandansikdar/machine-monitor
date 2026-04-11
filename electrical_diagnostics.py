@@ -120,15 +120,15 @@ class IntegrityResult:
 @dataclass
 class CleaningReport:
     n_raw: int = 0
-    n_after_integrity: int = 0
-    n_after_running_mask: int = 0
-    n_after_user_filter: int = 0
     n_after_load_precondition: int = 0
     n_after_iqr: int = 0
+    n_after_running_mask: int = 0
+    n_after_integrity: int = 0
+    n_after_user_filter: int = 0
 
     @property
     def n_cleaned(self) -> int:
-        return self.n_after_iqr
+        return self.n_after_user_filter
 
     @property
     def fraction_retained(self) -> float:
@@ -402,60 +402,43 @@ def clean_samples(
     meta: dict,
     user_filter: str | None = None,
 ) -> tuple[pd.DataFrame, CleaningReport]:
-    """Five-step data cleaning procedure (\u00a74.1).
+    """Five-step data cleaning procedure (\u00a74.1) \u2014 reordered for physical sense.
+
+    Step order
+    ----------
+    1. Load precondition (\u226540% rated) \u2014 discard low-load / shutdown samples first
+    2. Running mask          \u2014 exclude transient start/stop periods
+    3. Integrity gate        \u2014 validate measurement quality on loaded running samples
+    4. User filter           \u2014 apply any operating-condition filter
+    5. IQR outlier rejection \u2014 remove statistical outliers from the clean working set
 
     Parameters
     ----------
     raw         : raw measurement DataFrame
     meta        : machine metadata dict
-    user_filter : optional pandas query string applied at step 3
-
-    Returns
-    -------
-    cleaned     : DataFrame of samples surviving all five steps
-    report      : CleaningReport with counts at each step
+    user_filter : optional pandas query string applied at step 4
     """
     report = CleaningReport(n_raw=len(raw))
     p_rated_elec = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
 
-    # -- Step 1: Integrity gate --
-    integrity_mask = raw.apply(
-        lambda row: integrity_gate(row, meta).passed, axis=1
-    )
-    df = raw[integrity_mask].copy()
-    report.n_after_integrity = len(df)
-
-    # -- Step 2: Running mask --
+    # -- Step 1: Load precondition (>= 40% of rated electrical input) --
+    df = raw.copy()
     if len(df) > 0:
-        running = _running_mask(df, p_rated_elec)
-        df = df[running].copy()
-    report.n_after_running_mask = len(df)
-
-    # -- Step 3: User operating-condition filter --
-    if user_filter and len(df) > 0:
-        try:
-            df = df.query(user_filter).copy()
-        except Exception as exc:  # noqa: BLE001
-            warnings.warn(
-                f"User filter \u2018{user_filter}\u2019 could not be applied: {exc}. "
-                f"Filter step skipped.",
-                UserWarning,
-                stacklevel=2,
-            )
-    report.n_after_user_filter = len(df)
-
-    # -- Step 4: Load precondition (>= 40% of rated electrical input) --
-    if len(df) > 0:
-        p_total = df["phase_1_active_power"] + df["phase_2_active_power"] + df["phase_3_active_power"]
+        p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
+                   + df["phase_3_active_power"])
         load_min_w = LOAD_PRECONDITION_FRACTION * p_rated_elec * 1000.0
         df = df[(p_total >= load_min_w)].copy()
     report.n_after_load_precondition = len(df)
 
-    # -- Step 5: IQR outlier rejection --
+    # -- Step 2: IQR outlier rejection --
     if len(df) >= 4:
-        p_total = df["phase_1_active_power"] + df["phase_2_active_power"] + df["phase_3_active_power"]
-        i_avg = (df["phase_1_current"] + df["phase_2_current"] + df["phase_3_current"]) / 3.0
-        s_sum = df["phase_1_voltage"] * df["phase_1_current"] + df["phase_2_voltage"] * df["phase_2_current"] + df["phase_3_voltage"] * df["phase_3_current"]
+        p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
+                   + df["phase_3_active_power"])
+        i_avg = (df["phase_1_current"] + df["phase_2_current"]
+                 + df["phase_3_current"]) / 3.0
+        s_sum = (df["phase_1_voltage"] * df["phase_1_current"]
+                 + df["phase_2_voltage"] * df["phase_2_current"]
+                 + df["phase_3_voltage"] * df["phase_3_current"])
         pf_machine = p_total / s_sum.replace(0, np.nan)
 
         keep = pd.Series(True, index=df.index)
@@ -468,6 +451,33 @@ def clean_samples(
             keep &= signal.between(lo, hi, inclusive="both")
         df = df[keep].copy()
     report.n_after_iqr = len(df)
+
+    # -- Step 3: Running mask --
+    if len(df) > 0:
+        running = _running_mask(df, p_rated_elec)
+        df = df[running].copy()
+    report.n_after_running_mask = len(df)
+
+    # -- Step 4: Integrity gate --
+    if len(df) > 0:
+        integrity_mask = df.apply(
+            lambda row: integrity_gate(row, meta).passed, axis=1
+        )
+        df = df[integrity_mask].copy()
+    report.n_after_integrity = len(df)
+
+    # -- Step 5: User operating-condition filter --
+    if user_filter and len(df) > 0:
+        try:
+            df = df.query(user_filter).copy()
+        except Exception as exc:  # noqa: BLE001
+            warnings.warn(
+                f"User filter \u2018{user_filter}\u2019 could not be applied: {exc}. "
+                f"Filter step skipped.",
+                UserWarning,
+                stacklevel=2,
+            )
+    report.n_after_user_filter = len(df)
 
     return df, report
 
