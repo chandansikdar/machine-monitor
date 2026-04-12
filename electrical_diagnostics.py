@@ -105,6 +105,11 @@ HVAC_CHILLER_APP_TYPE: str = "hvac_chiller"
 # Running mask: sample is "running" when P_total exceeds this fraction of rated
 RUNNING_THRESHOLD_FRACTION: float = 0.05
 
+# Start transient exclusion: cold start defined when P_total crosses from
+# below this fraction of P_rated_elec to above it (§4.1 Step 2)
+COLD_START_THRESHOLD_FRACTION: float = 0.01   # 1 % of rated electrical input
+COLD_START_TRANSIENT_SAMPLES: int = 2          # samples to drop after cold start
+
 
 # ---------------------------------------------------------------------------
 # Data classes for structured outputs
@@ -119,16 +124,22 @@ class IntegrityResult:
 
 @dataclass
 class CleaningReport:
+    """Sample counts at each of the four cleaning steps (§4.1).
+
+    Step 1 – Load precondition  : n_after_load_precondition
+    Step 2 – Start transient    : n_after_start_transient
+    Step 3 – User filter        : n_after_user_filter
+    Step 4 – IQR rejection      : n_after_iqr  (= n_cleaned)
+    """
     n_raw: int = 0
-    n_after_load_precondition: int = 0
-    n_after_iqr: int = 0
-    n_after_running_mask: int = 0
-    n_after_integrity: int = 0
-    n_after_user_filter: int = 0
+    n_after_load_precondition: int = 0   # Step 1
+    n_after_start_transient: int = 0     # Step 2
+    n_after_user_filter: int = 0         # Step 3
+    n_after_iqr: int = 0                 # Step 4
 
     @property
     def n_cleaned(self) -> int:
-        return self.n_after_user_filter
+        return self.n_after_iqr
 
     @property
     def fraction_retained(self) -> float:
@@ -402,35 +413,96 @@ def clean_samples(
     meta: dict,
     user_filter: str | None = None,
 ) -> tuple[pd.DataFrame, CleaningReport]:
-    """Five-step data cleaning procedure (\u00a74.1) \u2014 reordered for physical sense.
+    """Four-step data cleaning procedure (§4.1).
+
+    Integrity checks (§3.1) are applied at data upload in the Data tab and
+    are NOT repeated here.  By the time data reaches this function all samples
+    have already been screened for wiring errors, CT faults, and physically
+    impossible values.
 
     Step order
     ----------
-    1. Load precondition (\u226540% rated) \u2014 discard low-load / shutdown samples first
-    2. Running mask          \u2014 exclude transient start/stop periods
-    3. Integrity gate        \u2014 validate measurement quality on loaded running samples
-    4. User filter           \u2014 apply any operating-condition filter
-    5. IQR outlier rejection \u2014 remove statistical outliers from the clean working set
+    1. Load precondition (≥40 % of P_rated_elec)
+       Removes shutdown / stopped samples AND low-load samples where CT class
+       tolerance errors become significant relative to the small active current
+       component, producing apparent IUF on a healthy motor.
+
+    2. Start transient exclusion
+       Removes the first COLD_START_TRANSIENT_SAMPLES (2) samples immediately
+       following any cold start from shutdown.  A cold start is identified when
+       P_total in sample n is below COLD_START_THRESHOLD_FRACTION (1 %) of
+       P_rated_elec and P_total in sample n+1 is at or above that threshold.
+       The removal is unconditional — no check on the peak value reached is
+       required.  Only cold starts from below 1 % are excluded; normal
+       load/unload cycling (~15 % floor) does not trigger this step.
+
+    3. User operating-condition filter (optional)
+       If a pandas query string was stored at baseline ingestion it is applied
+       here identically at assessment time.
+
+    4. IQR outlier rejection
+       Removes samples where P_total, I_avg, or PF_machine fall outside
+       IQR_MULTIPLIER × IQR beyond the 25th / 75th percentile.
 
     Parameters
     ----------
-    raw         : raw measurement DataFrame
+    raw         : raw measurement DataFrame (must contain timestamp column)
     meta        : machine metadata dict
-    user_filter : optional pandas query string applied at step 4
+    user_filter : optional pandas query string applied at step 3
     """
     report = CleaningReport(n_raw=len(raw))
     p_rated_elec = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
+    load_min_w   = LOAD_PRECONDITION_FRACTION * p_rated_elec * 1000.0
+    cold_min_w   = COLD_START_THRESHOLD_FRACTION * p_rated_elec * 1000.0
 
-    # -- Step 1: Load precondition (>= 40% of rated electrical input) --
+    # ── Step 1: Load precondition (≥ 40 % of rated electrical input) ────────
     df = raw.copy()
     if len(df) > 0:
         p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
                    + df["phase_3_active_power"])
-        load_min_w = LOAD_PRECONDITION_FRACTION * p_rated_elec * 1000.0
-        df = df[(p_total >= load_min_w)].copy()
+        df = df[p_total >= load_min_w].copy()
     report.n_after_load_precondition = len(df)
 
-    # -- Step 2: IQR outlier rejection --
+    # ── Step 2: Start transient exclusion ───────────────────────────────────
+    # Detect cold starts on the ORIGINAL (pre-step-1) data so we can identify
+    # the crossing point even though those near-zero rows were already removed.
+    if len(df) > 0 and "timestamp" in raw.columns:
+        raw_p = (raw["phase_1_active_power"] + raw["phase_2_active_power"]
+                 + raw["phase_3_active_power"])
+        # Boolean: was previous sample below cold-start threshold?
+        prev_below = raw_p.shift(1, fill_value=0.0) < cold_min_w
+        # Boolean: current sample is at or above cold-start threshold?
+        curr_above = raw_p >= cold_min_w
+        # Crossing rows (first sample after cold start) — index in raw
+        crossing_idx = raw.index[prev_below & curr_above]
+
+        # Build set of timestamps to exclude: crossing + next N-1 rows in raw
+        transient_ts: set = set()
+        for ci in crossing_idx:
+            loc = raw.index.get_loc(ci)
+            for offset in range(COLD_START_TRANSIENT_SAMPLES):
+                if loc + offset < len(raw):
+                    transient_ts.add(raw.iloc[loc + offset]["timestamp"])
+
+        if transient_ts:
+            df = df[~df["timestamp"].isin(transient_ts)].copy()
+
+    report.n_after_start_transient = len(df)
+
+    # ── Step 3: User operating-condition filter ──────────────────────────────
+    if user_filter and len(df) > 0:
+        try:
+            df = df.query(user_filter).copy()
+        except Exception as exc:  # noqa: BLE001
+            warnings.warn(
+                f"User filter \u2018{user_filter}\u2019 could not be applied: {exc}. "
+                f"Filter step skipped.",
+                UserWarning,
+                stacklevel=2,
+            )
+    report.n_after_user_filter = len(df)
+
+    # ── Step 4: IQR outlier rejection ────────────────────────────────────────
     if len(df) >= 4:
         p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
                    + df["phase_3_active_power"])
@@ -446,38 +518,11 @@ def clean_samples(
             q25 = signal.quantile(0.25)
             q75 = signal.quantile(0.75)
             iqr = q75 - q25
-            lo = q25 - IQR_MULTIPLIER * iqr
-            hi = q75 + IQR_MULTIPLIER * iqr
+            lo  = q25 - IQR_MULTIPLIER * iqr
+            hi  = q75 + IQR_MULTIPLIER * iqr
             keep &= signal.between(lo, hi, inclusive="both")
         df = df[keep].copy()
     report.n_after_iqr = len(df)
-
-    # -- Step 3: Running mask --
-    if len(df) > 0:
-        running = _running_mask(df, p_rated_elec)
-        df = df[running].copy()
-    report.n_after_running_mask = len(df)
-
-    # -- Step 4: Integrity gate --
-    if len(df) > 0:
-        integrity_mask = df.apply(
-            lambda row: integrity_gate(row, meta).passed, axis=1
-        )
-        df = df[integrity_mask].copy()
-    report.n_after_integrity = len(df)
-
-    # -- Step 5: User operating-condition filter --
-    if user_filter and len(df) > 0:
-        try:
-            df = df.query(user_filter).copy()
-        except Exception as exc:  # noqa: BLE001
-            warnings.warn(
-                f"User filter \u2018{user_filter}\u2019 could not be applied: {exc}. "
-                f"Filter step skipped.",
-                UserWarning,
-                stacklevel=2,
-            )
-    report.n_after_user_filter = len(df)
 
     return df, report
 
@@ -1296,10 +1341,12 @@ def assessment_summary(record: AssessmentRecord) -> str:
     r = record.cleaning_report
     if r:
         lines.append(
-            f"Data cleaning: {r.n_raw} raw \u2192 {r.n_after_integrity} integrity "
-            f"\u2192 {r.n_after_running_mask} running \u2192 {r.n_after_user_filter} filtered "
-            f"\u2192 {r.n_after_load_precondition} load \u2192 {r.n_cleaned} cleaned "
-            f"({r.fraction_retained*100:.0f}% retained)"
+            f"Data cleaning: {r.n_raw} raw"
+            f" \u2192 {r.n_after_load_precondition} load \u226540%"
+            f" \u2192 {r.n_after_start_transient} start-transient"
+            f" \u2192 {r.n_after_user_filter} user-filter"
+            f" \u2192 {r.n_cleaned} IQR-cleaned"
+            f" ({r.fraction_retained*100:.0f}% retained)"
         )
 
     s = record.supply_alarm
