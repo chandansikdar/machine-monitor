@@ -160,19 +160,24 @@ def parse_electrical_meta(description: str) -> dict:
 
 def build_meta(machine_info: dict) -> dict | None:
     """Build the metadata dict required by electrical_diagnostics functions.
-    Returns None if required fields are missing.
-    v_nominal_phase is the only hard requirement for integrity checks.
-    p_rated_shaft_kw may be 0 — the integrity check will estimate from data.
+    Returns None if the minimum set of fields is unavailable.
+
+    Hard requirements: pf_rated, eta_rated (both dimensionless and stable defaults exist).
+    Soft defaults: v_nominal_phase=230, p_rated_shaft_kw=0, i_rated=0.
+    When p_rated=0 or i_rated=0, integrity checks fall back to data-derived estimates
+    and skip checks that require nameplate current bounds respectively.
     """
     desc = machine_info.get("description", "")
-    em = parse_electrical_meta(desc)
-    # Hard requirements — cannot run at all without voltage nominal
-    hard_required = ["v_nominal_phase", "pf_rated", "eta_rated", "i_rated"]
+    em   = parse_electrical_meta(desc)
+    # Minimum hard requirements — platform cannot compute anything meaningful without these
+    hard_required = ["pf_rated", "eta_rated"]
     missing = [r for r in hard_required if r not in em]
     if missing:
         return None
-    # p_rated_shaft_kw is optional — default to 0 (triggers estimation in checks)
-    em.setdefault("p_rated_shaft_kw", 0.0)
+    # Soft defaults for optional fields
+    em.setdefault("v_nominal_phase",  230.0)   # standard Swiss/EU L-N voltage
+    em.setdefault("p_rated_shaft_kw",   0.0)   # 0 triggers data-derived estimation
+    em.setdefault("i_rated",            0.0)   # 0 skips current plausibility check
     if "application_type" not in em:
         em["application_type"] = APP_TYPE_MAP.get(
             machine_info.get("machine_type", ""), "compressed_air"
@@ -290,19 +295,41 @@ def run_integrity_checks(df_json: str, meta_json: str):
     fail_check  = pd.Series("", index=df.index)
     fail_reason = pd.Series("", index=df.index)
 
-    # Check 1 — Voltage plausibility (skip V=0 & I=0 simultaneously = powered down)
+    # Check 1 — Voltage plausibility (skip V=0/NaN & I=0 simultaneously = powered down)
     v_lo = 0.85 * v_nom;  v_hi = 1.15 * v_nom;  v_max = 1.5 * v_nom
     for ph, v, i_x in [("1", v1, i1), ("2", v2, i2), ("3", v3, i3)]:
-        powered = ~((v == 0) & (i_x == 0))
-        c1_floor = powered & (v < 50.0)  & (fail_check == "")
-        c1_high  = powered & (v > v_max) & (fail_check == "")
-        c1_range = powered & ~v.between(v_lo, v_hi) & (fail_check == "") & ~c1_floor & ~c1_high
-        fail_check  = fail_check.where(~c1_floor,  "check_1_voltage_plausibility")
-        fail_reason = fail_reason.where(~c1_floor,  f"Phase {ph} voltage below 50 V floor")
-        fail_check  = fail_check.where(~c1_high,   "check_1_voltage_plausibility")
-        fail_reason = fail_reason.where(~c1_high,   f"Phase {ph} voltage above 1.5×V_nominal")
-        fail_check  = fail_check.where(~c1_range,  "check_1_voltage_plausibility")
-        fail_reason = fail_reason.where(~c1_range,  f"Phase {ph} voltage outside ±15% band")
+        v_missing = v.isna() | (v == 0)       # NaN or zero voltage
+        powered   = ~(v_missing & (i_x == 0)) # powered-down = missing V AND zero I → skip
+
+        # Missing voltage while current is flowing (sensor dropout / logging gap)
+        c1_missing = powered & v_missing & (fail_check == "")
+        fail_check  = fail_check.where(~c1_missing, "check_1_voltage_plausibility")
+        fail_reason = fail_reason.where(~c1_missing,
+            f"Phase {ph} voltage missing (null/zero) while current is flowing "
+            f"— possible voltage sensor dropout or data logging gap")
+
+        # Voltage present but below 50 V floor (channel failure or short)
+        c1_floor = powered & ~v_missing & (v < 50.0) & (fail_check == "")
+        fail_check  = fail_check.where(~c1_floor, "check_1_voltage_plausibility")
+        fail_reason = fail_reason.where(~c1_floor,
+            f"Phase {ph} voltage below 50 V floor (channel failure or short suspected)")
+
+        # Voltage present but above 1.5× nominal (reference lead on phase conductor)
+        c1_high = powered & ~v_missing & (v > v_max) & (fail_check == "")
+        fail_check  = fail_check.where(~c1_high, "check_1_voltage_plausibility")
+        fail_reason = fail_reason.where(~c1_high,
+            f"Phase {ph} voltage above 1.5\u00d7V_nominal ({v_max:.0f} V) "
+            f"— reference lead may be on phase conductor")
+
+        # Voltage outside ±15% nominal band
+        c1_range = (powered & ~v_missing
+                    & ~v.between(v_lo, v_hi)
+                    & (fail_check == "")
+                    & ~c1_floor & ~c1_high)
+        fail_check  = fail_check.where(~c1_range, "check_1_voltage_plausibility")
+        fail_reason = fail_reason.where(~c1_range,
+            f"Phase {ph} voltage outside \u00b115% nominal band "
+            f"[{v_lo:.0f}, {v_hi:.0f}] V")
 
     # Check 2 — Current plausibility (running samples only)
     # Skip entirely if i_rated is 0 or missing — cannot compute meaningful bounds
@@ -878,39 +905,68 @@ with st.sidebar:
             min_value=0.0, value=0.0, step=1.0, format="%.1f",
             key="reg_p_rated",
             help=(
-                "Motor nameplate rated shaft power in kW. Optional at registration "
-                "but recommended \u2014 used to set load thresholds for integrity checks. "
-                "If left as 0, the platform will estimate from your data with a warning."
+                "Motor nameplate rated shaft power in kW. "
+                "If left as 0, the platform estimates from your data with a warning."
             ),
         )
 
+        _reg_cols = st.columns(2)
+        reg_v_nom = _reg_cols[0].number_input(
+            "Rated voltage L-N (V)  \u2014 optional",
+            min_value=0.0, value=0.0, step=1.0, format="%.0f",
+            key="reg_v_nom",
+            help=(
+                "Phase-to-neutral voltage (V). "
+                "For 400 V three-phase systems enter 230 V. "
+                "Used for voltage plausibility checks."
+            ),
+        )
+        reg_i_rated = _reg_cols[1].number_input(
+            "Full-load current (A)  \u2014 optional",
+            min_value=0.0, value=0.0, step=0.5, format="%.1f",
+            key="reg_i_rated",
+            help=(
+                "Motor nameplate full-load current (FLA) in Amperes. "
+                "Used for current plausibility checks."
+            ),
+        )
+
+        _any_nameplate = reg_p_rated > 0 or reg_v_nom > 0 or reg_i_rated > 0
+
         if st.button("Register", type="primary", use_container_width=True,
                      disabled=not (machine_id and machine_type)):
-            # If rated power entered at registration, store a minimal metadata block
             _reg_desc = ""
-            if reg_p_rated > 0:
+            if _any_nameplate:
                 _reg_app = APP_TYPE_MAP.get(machine_type.strip(), "compressed_air")
                 _reg_desc = serialise_meta_block(
-                    v_nominal=230.0,     # defaults — user fills rest in ⚡ parameters
-                    p_rated=reg_p_rated,
-                    pf_rated=0.88,
-                    eta_rated=0.90,
-                    i_rated=0.0,
-                    four_wire=True,
-                    at_panel=True,
-                    app_type=_reg_app,
-                    power_unit="W",
+                    v_nominal = reg_v_nom  if reg_v_nom   > 0 else 230.0,
+                    p_rated   = reg_p_rated,
+                    pf_rated  = 0.88,
+                    eta_rated = 0.90,
+                    i_rated   = reg_i_rated,
+                    four_wire = True,
+                    at_panel  = True,
+                    app_type  = _reg_app,
+                    power_unit = "W",
                 )
             db.register_machine(machine_id.strip(), machine_type.strip(), _reg_desc)
-            if reg_p_rated > 0:
+
+            _saved = []
+            if reg_p_rated > 0: _saved.append(f"{reg_p_rated:.0f} kW")
+            if reg_v_nom   > 0: _saved.append(f"{reg_v_nom:.0f} V L-N")
+            if reg_i_rated > 0: _saved.append(f"{reg_i_rated:.1f} A FLA")
+
+            if _saved:
                 st.success(
-                    f"**{machine_id}** registered with rated power {reg_p_rated:.0f} kW. "
-                    "Complete nameplate values in the ⚡ Electrical parameters expander."
+                    f"**{machine_id}** registered \u2014 saved: {', '.join(_saved)}. "
+                    "Complete remaining nameplate values in the "
+                    "\u26a1 **Electrical parameters** expander."
                 )
             else:
                 st.success(
                     f"**{machine_id}** registered. "
-                    "Enter electrical specs in the ⚡ Electrical parameters expander."
+                    "Enter nameplate values in the "
+                    "\u26a1 **Electrical parameters** expander."
                 )
             st.rerun()
 
@@ -1097,6 +1153,15 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
     )
     _desc = machine_info.get("description", "")
     _em   = parse_electrical_meta(_desc)
+
+    # Show which fields were already saved (e.g. from registration)
+    _pre_filled = []
+    if _em.get("v_nominal_phase", 0) > 0:    _pre_filled.append(f"V_nom={_em['v_nominal_phase']:.0f} V")
+    if _em.get("p_rated_shaft_kw", 0) > 0:   _pre_filled.append(f"P_rated={_em['p_rated_shaft_kw']:.0f} kW")
+    if _em.get("i_rated", 0) > 0:            _pre_filled.append(f"FLA={_em['i_rated']:.0f} A")
+    if _pre_filled:
+        st.info(f"\u2139\ufe0f Pre-filled from registration: {', '.join(_pre_filled)}. "
+                "Confirm or update below, then save.")
 
     _c1, _c2, _c3 = st.columns(3)
     _v_nom = _c1.number_input(
