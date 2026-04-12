@@ -161,14 +161,18 @@ def parse_electrical_meta(description: str) -> dict:
 def build_meta(machine_info: dict) -> dict | None:
     """Build the metadata dict required by electrical_diagnostics functions.
     Returns None if required fields are missing.
+    v_nominal_phase is the only hard requirement for integrity checks.
+    p_rated_shaft_kw may be 0 — the integrity check will estimate from data.
     """
     desc = machine_info.get("description", "")
     em = parse_electrical_meta(desc)
-    required = ["v_nominal_phase", "p_rated_shaft_kw", "pf_rated", "eta_rated", "i_rated"]
-    missing = [r for r in required if r not in em]
+    # Hard requirements — cannot run at all without voltage nominal
+    hard_required = ["v_nominal_phase", "pf_rated", "eta_rated", "i_rated"]
+    missing = [r for r in hard_required if r not in em]
     if missing:
         return None
-    # Derive application_type from machine type if not explicitly set
+    # p_rated_shaft_kw is optional — default to 0 (triggers estimation in checks)
+    em.setdefault("p_rated_shaft_kw", 0.0)
     if "application_type" not in em:
         em["application_type"] = APP_TYPE_MAP.get(
             machine_info.get("machine_type", ""), "compressed_air"
@@ -261,14 +265,26 @@ def run_integrity_checks(df_json: str, meta_json: str):
     df    = pd.read_json(_io.StringIO(df_json), orient="split")
     meta  = _json.loads(meta_json)
 
-    v_nom    = float(meta["v_nominal_phase"])
-    p_rated  = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
-    run_thr  = 0.05 * p_rated * 1000.0   # 5% of rated electrical input (W)
+    v_nom       = float(meta.get("v_nominal_phase", 230))
+    p_shaft_kw  = float(meta.get("p_rated_shaft_kw", 0))
+    eta         = float(meta.get("eta_rated", 0.90))
 
     v1 = df["phase_1_voltage"]; v2 = df["phase_2_voltage"]; v3 = df["phase_3_voltage"]
     i1 = df["phase_1_current"]; i2 = df["phase_2_current"]; i3 = df["phase_3_current"]
     p1 = df["phase_1_active_power"]; p2 = df["phase_2_active_power"]; p3 = df["phase_3_active_power"]
     p_total = p1 + p2 + p3
+
+    # Determine rated electrical input — fall back to data estimate if not saved
+    p_rated_estimated = False
+    if p_shaft_kw > 0 and eta > 0:
+        p_rated = p_shaft_kw / eta            # kW electrical
+    else:
+        # Estimate: 95th percentile of p_total ÷ 0.95 (assume machine reaches ~95% rated)
+        p95 = float(p_total[p_total > 0].quantile(0.95)) / 1000.0   # kW
+        p_rated = p95 / 0.95 if p95 > 0 else 0.0
+        p_rated_estimated = True
+
+    run_thr = 0.05 * p_rated * 1000.0   # 5% of rated electrical input (W)
     running = p_total > run_thr
 
     fail_check  = pd.Series("", index=df.index)
@@ -314,23 +330,30 @@ def run_integrity_checks(df_json: str, meta_json: str):
     fail_check  = fail_check.where(~c3, "check_3_power_sign_coherence")
     fail_reason = fail_reason.where(~c3, "V-I pairing error suspected: |P_sum|/mag_sum < 0.30")
 
-    # Check 4 — Per-phase PF plausibility (running only)
-    for ph, p_x, v_x, i_x in [("1",p1,v1,i1),("2",p2,v2,i2),("3",p3,v3,i3)]:
-        s_x  = v_x * i_x
-        pf_x = p_x / s_x.replace(0, np.nan)
-        c4   = running & ((pf_x < 0.30) | (pf_x > 1.00)) & (fail_check == "")
-        fail_check  = fail_check.where(~c4, "check_4_pf_plausibility")
-        fail_reason = fail_reason.where(~c4, f"Phase {ph} PF outside [0.30, 1.00]")
+    # Checks 4 & 5 — PF plausibility and spread (only when meaningfully loaded)
+    # Use 10% of rated as minimum for PF to be interpretable.
+    # If p_rated is 0 (electrical params not saved), skip both PF checks.
+    if p_rated > 0:
+        pf_run_thr = 0.10 * p_rated * 1000.0   # 10% of rated electrical input (W)
+        pf_running = p_total > pf_run_thr
 
-    # Check 5 — Per-phase PF spread (running only)
-    pf_list = []
-    for p_x, v_x, i_x in [(p1,v1,i1),(p2,v2,i2),(p3,v3,i3)]:
-        s_x = v_x * i_x
-        pf_list.append(p_x / s_x.replace(0, np.nan))
-    pf_spread = pd.concat(pf_list, axis=1).max(axis=1) - pd.concat(pf_list, axis=1).min(axis=1)
-    c5 = running & (pf_spread > 0.15) & (fail_check == "")
-    fail_check  = fail_check.where(~c5, "check_5_pf_consistency")
-    fail_reason = fail_reason.where(~c5, f"Per-phase PF spread {pf_spread.round(3)} > 0.15")
+        # Check 4 — Per-phase PF plausibility
+        for ph, p_x, v_x, i_x in [("1",p1,v1,i1),("2",p2,v2,i2),("3",p3,v3,i3)]:
+            s_x  = v_x * i_x
+            pf_x = p_x / s_x.replace(0, np.nan)
+            c4   = pf_running & ((pf_x < 0.30) | (pf_x > 1.00)) & (fail_check == "")
+            fail_check  = fail_check.where(~c4, "check_4_pf_plausibility")
+            fail_reason = fail_reason.where(~c4, f"Phase {ph} PF outside [0.30, 1.00]")
+
+        # Check 5 — Per-phase PF spread
+        pf_list = []
+        for p_x, v_x, i_x in [(p1,v1,i1),(p2,v2,i2),(p3,v3,i3)]:
+            s_x = v_x * i_x
+            pf_list.append(p_x / s_x.replace(0, np.nan))
+        pf_spread = pd.concat(pf_list, axis=1).max(axis=1) - pd.concat(pf_list, axis=1).min(axis=1)
+        c5 = pf_running & (pf_spread > 0.15) & (fail_check == "")
+        fail_check  = fail_check.where(~c5, "check_5_pf_consistency")
+        fail_reason = fail_reason.where(~c5, "Per-phase PF spread > 0.15 (channel pairing error suspected)")
 
     failed_mask = fail_check != ""
     failed_df   = df[failed_mask].copy()
@@ -338,11 +361,13 @@ def run_integrity_checks(df_json: str, meta_json: str):
     failed_df["failure_reason"] = fail_reason[failed_mask].values
 
     return {
-        "failed_json":   failed_df.to_json(orient="split", date_format="iso"),
-        "fail_checks":   fail_check[failed_mask].tolist(),
-        "fail_reasons":  fail_reason[failed_mask].tolist(),
-        "n_total":       len(df),
-        "n_failed":      int(failed_mask.sum()),
+        "failed_json":        failed_df.to_json(orient="split", date_format="iso"),
+        "fail_checks":        fail_check[failed_mask].tolist(),
+        "fail_reasons":       fail_reason[failed_mask].tolist(),
+        "n_total":            len(df),
+        "n_failed":           int(failed_mask.sum()),
+        "p_rated_kw":         round(p_rated, 1),
+        "p_rated_estimated":  p_rated_estimated,
     }
 
 
@@ -848,10 +873,45 @@ with st.sidebar:
             )
             st.caption(zone4_note)
 
+        reg_p_rated = st.number_input(
+            "Rated shaft power (kW)  \u2014 optional",
+            min_value=0.0, value=0.0, step=1.0, format="%.1f",
+            key="reg_p_rated",
+            help=(
+                "Motor nameplate rated shaft power in kW. Optional at registration "
+                "but recommended \u2014 used to set load thresholds for integrity checks. "
+                "If left as 0, the platform will estimate from your data with a warning."
+            ),
+        )
+
         if st.button("Register", type="primary", use_container_width=True,
                      disabled=not (machine_id and machine_type)):
-            db.register_machine(machine_id.strip(), machine_type.strip(), "")
-            st.success(f"**{machine_id}** registered. Enter electrical specs in the main area.")
+            # If rated power entered at registration, store a minimal metadata block
+            _reg_desc = ""
+            if reg_p_rated > 0:
+                _reg_app = APP_TYPE_MAP.get(machine_type.strip(), "compressed_air")
+                _reg_desc = serialise_meta_block(
+                    v_nominal=230.0,     # defaults — user fills rest in ⚡ parameters
+                    p_rated=reg_p_rated,
+                    pf_rated=0.88,
+                    eta_rated=0.90,
+                    i_rated=0.0,
+                    four_wire=True,
+                    at_panel=True,
+                    app_type=_reg_app,
+                    power_unit="W",
+                )
+            db.register_machine(machine_id.strip(), machine_type.strip(), _reg_desc)
+            if reg_p_rated > 0:
+                st.success(
+                    f"**{machine_id}** registered with rated power {reg_p_rated:.0f} kW. "
+                    "Complete nameplate values in the ⚡ Electrical parameters expander."
+                )
+            else:
+                st.success(
+                    f"**{machine_id}** registered. "
+                    "Enter electrical specs in the ⚡ Electrical parameters expander."
+                )
             st.rerun()
 
     st.markdown("---")
@@ -1245,6 +1305,16 @@ with tab_data:
                 _fail_reasons = _ig["fail_reasons"]
                 import io as _io
                 _failed = pd.read_json(_io.StringIO(_ig["failed_json"]), orient="split")
+
+                # Show estimated power warning if nameplate not saved
+                if _ig.get("p_rated_estimated"):
+                    st.warning(
+                        f"\u26a0\ufe0f **Rated power not saved.** "
+                        f"Load thresholds estimated from data "
+                        f"(95th percentile \u2192 ~**{_ig['p_rated_kw']:.0f} kW** electrical). "
+                        f"Enter the motor nameplate rated shaft power in the "
+                        f"\u26a1 **Electrical parameters** expander for accurate checks."
+                    )
 
                 ic1, ic2, ic3 = st.columns(3)
                 ic1.metric("Total samples",  f"{_n_total:,}")
