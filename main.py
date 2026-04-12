@@ -235,8 +235,8 @@ def run_integrity_checks(df_json: str, meta_json: str):
     Parameters are JSON strings so st.cache_data can hash them.
     Returns a dict with failed DataFrame (JSON), fail_checks list, fail_reasons list.
     """
-    import json as _json
-    df    = pd.read_json(df_json, orient="split")
+    import json as _json, io as _io
+    df    = pd.read_json(_io.StringIO(df_json), orient="split")
     meta  = _json.loads(meta_json)
 
     v_nom    = float(meta["v_nominal_phase"])
@@ -1204,7 +1204,8 @@ with tab_data:
                 _fail_pct = _n_failed / _n_total * 100 if _n_total > 0 else 0
                 _fail_checks  = _ig["fail_checks"]
                 _fail_reasons = _ig["fail_reasons"]
-                _failed = pd.read_json(_ig["failed_json"], orient="split")
+                import io as _io
+                _failed = pd.read_json(_io.StringIO(_ig["failed_json"]), orient="split")
 
                 ic1, ic2, ic3 = st.columns(3)
                 ic1.metric("Total samples",  f"{_n_total:,}")
