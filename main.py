@@ -801,7 +801,7 @@ with st.sidebar:
             _detected_unit = "W"
 
     _current_saved_unit = parse_electrical_meta(
-        machine_info.get("description", "") if machine_info else ""
+        db.get_machine_info(selected_id).get("description", "") if selected_id else ""
     ).get("power_unit", _detected_unit).upper()
 
     _upload_unit = st.radio(
@@ -838,11 +838,10 @@ with st.sidebar:
                 result = db.ingest_file(uploaded_file, selected_id)
             if result["success"]:
                 # Save the confirmed power unit into machine metadata
-                _meta_now = parse_electrical_meta(
-                    machine_info.get("description", "") if machine_info else ""
-                )
-                if machine_info and _meta_now.get("power_unit", "").upper() != _upload_unit:
-                    _app_type = APP_TYPE_MAP.get(machine_info.get("machine_type", ""), "compressed_air")
+                _mi_now   = db.get_machine_info(selected_id) or {}
+                _meta_now = parse_electrical_meta(_mi_now.get("description", ""))
+                if _meta_now.get("power_unit", "").upper() != _upload_unit:
+                    _app_type = APP_TYPE_MAP.get(_mi_now.get("machine_type", ""), "compressed_air")
                     _new_block = serialise_meta_block(
                         float(_meta_now.get("v_nominal_phase", 230)),
                         float(_meta_now.get("p_rated_shaft_kw", 0)),
@@ -855,11 +854,11 @@ with st.sidebar:
                         _upload_unit,
                     )
                     _updated_desc = replace_meta_block(
-                        machine_info.get("description", "") if machine_info else "", _new_block
+                        _mi_now.get("description", ""), _new_block
                     )
                     db.register_machine(
                         selected_id,
-                        machine_info.get("machine_type", "screw_compressor"),
+                        _mi_now.get("machine_type", "screw_compressor"),
                         _updated_desc,
                     )
                 st.success(
