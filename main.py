@@ -773,6 +773,55 @@ with st.sidebar:
     )
     uploaded_file = st.file_uploader("CSV or Excel", type=["csv", "xlsx", "xls"])
 
+    # ── Power unit selector — required before ingest ──────────────────────
+    # Auto-detect from file, let user confirm. Unit is a property of the file,
+    # not the machine nameplate — different exports may use W or kW.
+    _detected_unit = "W"
+    if uploaded_file is not None:
+        try:
+            import io
+            _peek = uploaded_file.read(262144)  # read first 256 KB
+            uploaded_file.seek(0)               # reset for actual ingest
+            if uploaded_file.name.lower().endswith((".xlsx", ".xls")):
+                _df_peek = pd.read_excel(io.BytesIO(_peek), nrows=200)
+            else:
+                _df_peek = pd.read_csv(io.BytesIO(_peek), nrows=200, on_bad_lines="skip")
+            _power_cols = [c for c in _df_peek.columns if "active_power" in c.lower()]
+            if _power_cols:
+                # Pool all power columns so stopped-period zeros don't mask the signal
+                _all_vals = pd.concat(
+                    [_df_peek[c] for c in _power_cols]
+                ).dropna()
+                _nonzero = _all_vals[_all_vals > 0]
+                if len(_nonzero) > 0:
+                    _median_val = float(_nonzero.median())
+                    # Values > 500 are almost certainly W; <= 500 are almost certainly kW
+                    _detected_unit = "W" if _median_val > 500 else "kW"
+        except Exception:
+            _detected_unit = "W"
+
+    _current_saved_unit = parse_electrical_meta(
+        machine_info.get("description", "")
+    ).get("power_unit", _detected_unit).upper()
+
+    _upload_unit = st.radio(
+        "Active power unit in this file",
+        options=["W", "kW"],
+        index=0 if _current_saved_unit == "W" else 1,
+        horizontal=True,
+        key="upload_power_unit",
+        help=(
+            "\u26a1 Auto-detected from first rows of file. "
+            "Confirm before ingesting. "
+            "W = raw Watts (e.g. 31,000); kW = kilowatts (e.g. 31.0)."
+        ),
+    )
+    if uploaded_file is not None and _upload_unit != _detected_unit:
+        st.caption(
+            f"\u26a0\ufe0f Auto-detected **{_detected_unit}** but you selected **{_upload_unit}**. "
+            "Make sure this matches your file."
+        )
+
     _existing = db.get_file_info(selected_id)
     _dup = bool(
         uploaded_file and any(
@@ -788,8 +837,29 @@ with st.sidebar:
             with st.spinner("Reading and storing data\u2026"):
                 result = db.ingest_file(uploaded_file, selected_id)
             if result["success"]:
-                st.success(f"\u2713 {result['rows']:,} rows ingested")
-                # Reset session data
+                # Save the confirmed power unit into machine metadata
+                _meta_now = parse_electrical_meta(machine_info.get("description", ""))
+                if _meta_now.get("power_unit", "").upper() != _upload_unit:
+                    _app_type = APP_TYPE_MAP.get(machine_info["machine_type"], "compressed_air")
+                    _new_block = serialise_meta_block(
+                        float(_meta_now.get("v_nominal_phase", 230)),
+                        float(_meta_now.get("p_rated_shaft_kw", 0)),
+                        float(_meta_now.get("pf_rated", 0.88)),
+                        float(_meta_now.get("eta_rated", 0.90)),
+                        float(_meta_now.get("i_rated", 0)),
+                        bool(_meta_now.get("four_wire", True)),
+                        bool(_meta_now.get("measurement_at_panel", True)),
+                        _app_type,
+                        _upload_unit,
+                    )
+                    _updated_desc = replace_meta_block(
+                        machine_info.get("description", ""), _new_block
+                    )
+                    db.register_machine(selected_id, machine_info["machine_type"], _updated_desc)
+                st.success(
+                    f"\u2713 {result['rows']:,} rows ingested  \u00b7  "
+                    f"Power unit: **{_upload_unit}**"
+                )
                 st.session_state["last_assessment"] = None
                 st.session_state["last_data"]       = None
                 st.rerun()
@@ -874,14 +944,9 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         value=bool(_em.get("four_wire", True)),
         key="ep_four_wire",
     )
-    _power_unit = st.radio(
-        "Active power column unit",
-        options=["W", "kW"],
-        index=0 if _em.get("power_unit", "W").upper() == "W" else 1,
-        horizontal=True,
-        key="ep_power_unit",
-        help="Select whether your phase_X_active_power columns are in Watts or kilowatts.",
-    )
+    # Power unit is set at upload time (sidebar), not here.
+    # Read current saved value for round-trip when user clicks Save.
+    _power_unit = _em.get("power_unit", "W").upper()
 
     if st.button("Save electrical parameters", key="save_ep_btn", use_container_width=True):
         _app_type = APP_TYPE_MAP.get(machine_info["machine_type"], "compressed_air")
