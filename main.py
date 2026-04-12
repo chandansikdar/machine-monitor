@@ -36,6 +36,7 @@ from electrical_diagnostics import (
     VUF_CRITICAL,
     VUF_WATCH,
     ZONE4_SIGNIFICANCE_PCT,
+    integrity_gate,
     ingest_baseline,
     run_assessment,
     assessment_summary,
@@ -239,14 +240,12 @@ def _tier_badge(tier: str | None) -> str:
 def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning"):
     st.markdown(f"**{title}**")
     steps = [
-        ("Raw samples",                report.n_raw),
-        ("After load \u226540% rated", report.n_after_load_precondition),
-        ("After IQR rejection",        report.n_after_iqr),
-        ("After running mask",         report.n_after_running_mask),
-        ("After integrity gate",       report.n_after_integrity),
-        ("After user filter",          report.n_after_user_filter),
+        ("Raw samples",                    report.n_raw),
+        ("Step 1 \u2014 Load \u226540% rated",   report.n_after_load_precondition),
+        ("Step 2 \u2014 Start transient",        report.n_after_start_transient),
+        ("Step 3 \u2014 User filter",            report.n_after_user_filter),
+        ("Step 4 \u2014 IQR rejection",          report.n_cleaned),
     ]
-    # Show as a compact two-column table: label | count | dropped
     rows_html = ""
     prev = None
     for label, count in steps:
@@ -1032,6 +1031,79 @@ with tab_data:
             )
         else:
             st.success("\u2705 All required electrical measurement columns present.")
+
+        # ── Integrity checks §3.1 ─────────────────────────────────────────
+        # Applied to every row at upload time. Flags gross wiring/CT/scaling errors.
+        meta_for_check = build_meta(machine_info)
+        if not missing_cols and meta_for_check:
+            with st.expander("\U0001f50d Integrity checks (§3.1) \u2014 Data tab", expanded=False):
+                st.caption(
+                    "Five integrity checks per §3.1 of the methodology. "
+                    "These run once at upload to catch wiring errors, CT faults, "
+                    "channel pairing errors, and physically impossible values. "
+                    "Failed samples are flagged below — they will not enter the analysis pipeline."
+                )
+                _raw_reset = data.reset_index()
+                _scaled = scale_power_to_watts(_raw_reset, meta_for_check.get("power_unit", "W"))
+                # Run integrity gate on each row
+                _ig_results = _scaled.apply(
+                    lambda row: integrity_gate(row, meta_for_check), axis=1
+                )
+                _failed = _scaled[[not r.passed for r in _ig_results]].copy()
+                _fail_reasons = [r.reason for r in _ig_results if not r.passed]
+                _fail_checks  = [r.failing_check for r in _ig_results if not r.passed]
+
+                _n_total  = len(_scaled)
+                _n_failed = len(_failed)
+                _n_passed = _n_total - _n_failed
+                _fail_pct = _n_failed / _n_total * 100 if _n_total > 0 else 0
+
+                ic1, ic2, ic3 = st.columns(3)
+                ic1.metric("Total samples",  f"{_n_total:,}")
+                ic2.metric("Passed ✅",       f"{_n_passed:,}")
+                ic3.metric("Failed ❌",        f"{_n_failed:,}",
+                           delta=f"{_fail_pct:.1f}% of total" if _n_failed else None,
+                           delta_color="inverse")
+
+                if _n_failed == 0:
+                    st.success("\u2705 All samples passed all five integrity checks.")
+                else:
+                    # Summary by check type
+                    from collections import Counter
+                    _check_counts = Counter(_fail_checks)
+                    _check_labels = {
+                        "check_1_voltage_plausibility":  "Check 1 \u2014 Voltage plausibility",
+                        "check_2_current_plausibility":  "Check 2 \u2014 Current plausibility",
+                        "check_3_power_sign_coherence":  "Check 3 \u2014 Power sign / sum coherence",
+                        "check_4_pf_plausibility":       "Check 4 \u2014 Per-phase PF plausibility",
+                        "check_5_pf_consistency":        "Check 5 \u2014 Per-phase PF spread consistency",
+                    }
+                    st.warning(
+                        f"\u26a0\ufe0f **{_n_failed:,} samples ({_fail_pct:.1f}%) failed one or more integrity checks.** "
+                        "These samples will not be used in the analysis pipeline."
+                    )
+                    for _chk, _cnt in _check_counts.items():
+                        _lbl = _check_labels.get(_chk, _chk)
+                        st.markdown(
+                            f'<div style="background:#FFF0F0;border-left:4px solid #A32D2D;'
+                            f'padding:8px 12px;margin-bottom:4px;border-radius:3px;font-size:0.88em">'
+                            f'\u274c <b>{_lbl}</b>: {_cnt:,} sample(s) failed</div>',
+                            unsafe_allow_html=True,
+                        )
+                    # Show first 10 failed rows
+                    with st.expander(f"First {min(10, _n_failed)} failed rows", expanded=False):
+                        _failed_display = _failed.head(10).copy()
+                        _failed_display["failure_reason"] = _fail_reasons[:10]
+                        st.dataframe(_failed_display[
+                            ["timestamp"] +
+                            [c for c in REQUIRED_COLS if c in _failed_display.columns] +
+                            ["failure_reason"]
+                        ], use_container_width=True, hide_index=True)
+        elif not missing_cols and meta_for_check is None:
+            st.info(
+                "\u2139\ufe0f Integrity checks require electrical parameters (nameplate values). "
+                "Fill in the \u26a1 Electrical parameters expander above to enable them."
+            )
 
         # Data quality (auto-run)
         if DQ_AVAILABLE and st.session_state.get("last_dq_report") is None:
