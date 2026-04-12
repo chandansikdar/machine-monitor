@@ -81,10 +81,32 @@ def baseline_to_dict(bm: BaselineMetadata) -> dict:
     return dataclasses.asdict(bm)
 
 
+def _migrate_cleaning_report(cr_d: dict) -> CleaningReport:
+    """Reconstruct CleaningReport from a dict, tolerating old field names.
+
+    Old schema had:  n_after_running_mask, n_after_integrity, n_after_iqr (wrong position)
+    New schema has:  n_after_load_precondition, n_after_start_transient,
+                     n_after_user_filter, n_after_iqr  (n_cleaned = n_after_iqr)
+    """
+    valid_fields = {f.name for f in CleaningReport.__dataclass_fields__.values()}
+    # Keep only fields that exist in the current dataclass
+    filtered = {k: v for k, v in cr_d.items() if k in valid_fields}
+    # Back-fill missing fields with best available value
+    if "n_after_start_transient" not in filtered:
+        # Old records had no start transient step — use load precondition count as proxy
+        filtered["n_after_start_transient"] = filtered.get(
+            "n_after_load_precondition", filtered.get("n_raw", 0)
+        )
+    if "n_after_iqr" not in filtered:
+        # Old records stored final cleaned count as n_after_user_filter
+        filtered["n_after_iqr"] = filtered.get("n_after_user_filter", 0)
+    return CleaningReport(**filtered)
+
+
 def baseline_from_dict(d: dict) -> BaselineMetadata:
     """Reconstruct BaselineMetadata from a plain dict (loaded from JSON)."""
     cr_d = d.get("cleaning_report")
-    cleaning = CleaningReport(**cr_d) if cr_d else None
+    cleaning = _migrate_cleaning_report(cr_d) if cr_d else None
 
     bands = [BandRecord(**b) for b in (d.get("bands") or [])]
 
@@ -1386,7 +1408,7 @@ with tab_analysis:
                     _bl_cr = _stored_bl_dict.get("cleaning_report")
                     if _bl_cr:
                         with st.expander("Baseline data cleaning", expanded=False):
-                            _cr = CleaningReport(**_bl_cr)
+                            _cr = _migrate_cleaning_report(_bl_cr)
                             render_cleaning_report(_cr, title="Baseline data cleaning")
 
                     if st.button("Delete baseline", key="del_baseline_btn",
