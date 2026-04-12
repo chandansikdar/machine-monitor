@@ -37,6 +37,7 @@ from electrical_diagnostics import (
     VUF_WATCH,
     ZONE4_SIGNIFICANCE_PCT,
     integrity_gate,
+    clean_samples,
     ingest_baseline,
     run_assessment,
     assessment_summary,
@@ -844,8 +845,9 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 
 for _k, _v in [
-    ("last_assessment", None),
-    ("last_data",       None),
+    ("last_assessment",   None),
+    ("last_data",         None),
+    ("last_cleaned_data", None),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -992,6 +994,7 @@ with st.sidebar:
     # Clear session data when machine changes
     if st.session_state.get("_last_machine") != selected_id:
         st.session_state["last_assessment"] = None
+        st.session_state["last_cleaned_data"] = None
         st.session_state["last_data"]       = None
         st.session_state["_last_machine"]   = selected_id
 
@@ -1112,6 +1115,7 @@ with st.sidebar:
                     f"Power unit: **{_upload_unit}**"
                 )
                 st.session_state["last_assessment"] = None
+                st.session_state["last_cleaned_data"] = None
                 st.session_state["last_data"]       = None
                 st.rerun()
             else:
@@ -1306,6 +1310,7 @@ _data_fp = (
 if st.session_state.get("_data_fp") != _data_fp:
     st.session_state["_data_fp"]       = _data_fp
     st.session_state["last_assessment"] = None
+    st.session_state["last_cleaned_data"] = None
     st.session_state["last_data"]       = None
 
 
@@ -1621,6 +1626,7 @@ with tab_analysis:
                                 f"{_bm.cleaning_report.n_cleaned:,} cleaned samples."
                             )
                             st.session_state["last_assessment"] = None
+                            st.session_state["last_cleaned_data"] = None
                             st.rerun()
 
                 st.markdown("---")
@@ -1647,6 +1653,9 @@ with tab_analysis:
                                 _raw_reset = _recent.reset_index()
                                 _raw_reset = scale_power_to_watts(_raw_reset, meta.get("power_unit", "W"))
                                 _record = run_assessment(_raw_reset, _bm_loaded, meta)
+                                # Also capture cleaned data for download
+                                _user_filter = _bm_loaded.user_filter_expr if _bm_loaded else None
+                                _cleaned_df, _ = clean_samples(_raw_reset, meta, _user_filter)
 
                             # Serialise and store in history
                             _record_dict = dataclasses.asdict(_record)
@@ -1659,8 +1668,9 @@ with tab_analysis:
                                     "summary": assessment_summary(_record),
                                 },
                             )
-                            st.session_state["last_assessment"] = _record
-                            st.session_state["last_data"]       = _recent
+                            st.session_state["last_assessment"]   = _record
+                            st.session_state["last_data"]         = _recent
+                            st.session_state["last_cleaned_data"] = _cleaned_df
                             st.rerun()
 
                 if _run_disabled:
@@ -1687,6 +1697,56 @@ with tab_analysis:
                         )
                 else:
                     render_assessment(record)
+
+                    # ── Cleaned data download ─────────────────────────────
+                    _cleaned = st.session_state.get("last_cleaned_data")
+                    if _cleaned is not None and not _cleaned.empty:
+                        _cr = record.cleaning_report
+                        _n_cleaned = _cr.n_cleaned if _cr else len(_cleaned)
+                        with st.expander(
+                            f"\u2b07\ufe0f Download cleaned assessment data "
+                            f"({_n_cleaned:,} samples)",
+                            expanded=False,
+                        ):
+                            st.caption(
+                                "The cleaned dataset used for this assessment — "
+                                "after load precondition (≥40%), start transient exclusion, "
+                                "user filter, and IQR rejection. "
+                                "Active power is in Watts."
+                            )
+                            # Convert power back to original unit if needed
+                            _dl_unit = meta.get("power_unit", "W").upper()
+                            _dl_df   = _cleaned.copy()
+                            if _dl_unit == "KW":
+                                for _pc in ["phase_1_active_power",
+                                            "phase_2_active_power",
+                                            "phase_3_active_power"]:
+                                    if _pc in _dl_df.columns:
+                                        _dl_df[_pc] = (_dl_df[_pc] / 1000.0).round(6)
+                                if "p_total_kw" not in _dl_df.columns:
+                                    _dl_df["p_total_kw"] = (
+                                        _dl_df["phase_1_active_power"] +
+                                        _dl_df["phase_2_active_power"] +
+                                        _dl_df["phase_3_active_power"]
+                                    ).round(6)
+
+                            # Preview
+                            st.dataframe(
+                                _dl_df.head(10),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                            st.download_button(
+                                label=f"\u2b07\ufe0f Download all {_n_cleaned:,} cleaned rows (CSV)",
+                                data=_dl_df.to_csv(index=False).encode("utf-8"),
+                                file_name=(
+                                    f"cleaned_{selected_id}_"
+                                    f"{str(date_range[0])}_to_"
+                                    f"{str(date_range[1])}.csv"
+                                ),
+                                mime="text/csv",
+                                use_container_width=True,
+                            )
 
                     # Control charts
                     _chart_data = st.session_state.get("last_data")
