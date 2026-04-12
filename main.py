@@ -342,42 +342,46 @@ def run_integrity_checks(df_json: str, meta_json: str):
 
 
 def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning"):
-    st.markdown(f"**{title}**")
-    steps = [
-        ("Raw samples",                    report.n_raw),
-        ("Step 1 \u2014 Load \u226540% rated",   report.n_after_load_precondition),
-        ("Step 2 \u2014 Start transient",        report.n_after_start_transient),
-        ("Step 3 \u2014 User filter",            report.n_after_user_filter),
-        ("Step 4 \u2014 IQR rejection",          report.n_cleaned),
-    ]
-    rows_html = ""
-    prev = None
-    for label, count in steps:
-        dropped = f"\u2212{prev - count:,}" if prev is not None and prev > count else ""
-        dropped_colour = "#A32D2D" if (prev and prev - count > 0) else "#888"
-        rows_html += (
-            f'<tr>'
-            f'<td style="padding:4px 12px;font-size:0.88em;color:#444">{label}</td>'
-            f'<td style="padding:4px 12px;font-size:0.95em;font-weight:600;text-align:right">{count:,}</td>'
-            f'<td style="padding:4px 12px;font-size:0.82em;color:{dropped_colour};text-align:right">{dropped}</td>'
-            f'</tr>'
-        )
-        prev = count
+    try:
+        st.markdown(f"**{title}**")
+        steps = [
+            ("Raw samples",                    report.n_raw),
+            ("Step 1 \u2014 Load \u226540% rated",   report.n_after_load_precondition),
+            ("Step 2 \u2014 Start transient",        getattr(report, "n_after_start_transient",
+                                                     report.n_after_load_precondition)),
+            ("Step 3 \u2014 User filter",            report.n_after_user_filter),
+            ("Step 4 \u2014 IQR rejection",          report.n_cleaned),
+        ]
+        rows_html = ""
+        prev = None
+        for label, count in steps:
+            dropped = f"\u2212{prev - count:,}" if prev is not None and prev > count else ""
+            dropped_colour = "#A32D2D" if (prev and prev - count > 0) else "#888"
+            rows_html += (
+                f'<tr>'
+                f'<td style="padding:4px 12px;font-size:0.88em;color:#444">{label}</td>'
+                f'<td style="padding:4px 12px;font-size:0.95em;font-weight:600;text-align:right">{count:,}</td>'
+                f'<td style="padding:4px 12px;font-size:0.82em;color:{dropped_colour};text-align:right">{dropped}</td>'
+                f'</tr>'
+            )
+            prev = count
 
-    retained_pct = report.fraction_retained * 100
-    colour = "green" if retained_pct >= 70 else "orange" if retained_pct >= 40 else "red"
-    st.markdown(
-        f'<table style="border-collapse:collapse;width:100%">'
-        f'<thead><tr style="background:#f0f4f8">'
-        f'<th style="padding:4px 12px;font-size:0.82em;text-align:left">Step</th>'
-        f'<th style="padding:4px 12px;font-size:0.82em;text-align:right">Samples</th>'
-        f'<th style="padding:4px 12px;font-size:0.82em;text-align:right">Removed</th>'
-        f'</tr></thead>'
-        f'<tbody>{rows_html}</tbody>'
-        f'</table>',
-        unsafe_allow_html=True,
-    )
-    st.caption(f":{colour}[{retained_pct:.0f}% of raw samples retained for analysis]")
+        retained_pct = report.fraction_retained * 100
+        colour = "green" if retained_pct >= 70 else "orange" if retained_pct >= 40 else "red"
+        st.markdown(
+            f'<table style="border-collapse:collapse;width:100%">'
+            f'<thead><tr style="background:#f0f4f8">'
+            f'<th style="padding:4px 12px;font-size:0.82em;text-align:left">Step</th>'
+            f'<th style="padding:4px 12px;font-size:0.82em;text-align:right">Samples</th>'
+            f'<th style="padding:4px 12px;font-size:0.82em;text-align:right">Removed</th>'
+            f'</tr></thead>'
+            f'<tbody>{rows_html}</tbody>'
+            f'</table>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f":{colour}[{retained_pct:.0f}% of raw samples retained for analysis]")
+    except Exception as _e:
+        st.warning(f"Could not render cleaning report: {_e}. Re-run the assessment to refresh.")
 
 
 def render_supply_zone(alarm: SupplyAlarm):
@@ -620,9 +624,17 @@ def render_assessment(record: AssessmentRecord):
         st.error(f"Assessment suppressed: {record.suppression_reason}")
         return
 
-    # Cleaning report
-    if record.cleaning_report:
-        render_cleaning_report(record.cleaning_report, title="Assessment data cleaning")
+    # Cleaning report — detect stale records from before the 4-step pipeline update
+    cr = record.cleaning_report
+    if cr:
+        _is_stale = not hasattr(cr, "n_after_start_transient")
+        if _is_stale:
+            st.info(
+                "\u2139\ufe0f This assessment was saved before the cleaning pipeline was updated. "
+                "**Re-run the assessment** to see the current four-step cleaning report."
+            )
+        else:
+            render_cleaning_report(cr, title="Assessment data cleaning")
     st.markdown("---")
 
     # Zone 1
