@@ -262,7 +262,6 @@ def run_integrity_checks(df_json: str, meta_json: str):
     meta  = _json.loads(meta_json)
 
     v_nom    = float(meta["v_nominal_phase"])
-    i_rated  = float(meta["i_rated"])
     p_rated  = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
     run_thr  = 0.05 * p_rated * 1000.0   # 5% of rated electrical input (W)
 
@@ -290,17 +289,23 @@ def run_integrity_checks(df_json: str, meta_json: str):
         fail_reason = fail_reason.where(~c1_range,  f"Phase {ph} voltage outside ±15% band")
 
     # Check 2 — Current plausibility (running samples only)
-    i_lo = 0.005 * i_rated;  i_hi = 1.5 * i_rated
-    for ph, i_x in [("1", i1), ("2", i2), ("3", i3)]:
-        c2 = running & ~i_x.between(i_lo, i_hi) & (fail_check == "")
-        fail_check  = fail_check.where(~c2, "check_2_current_plausibility")
-        fail_reason = fail_reason.where(~c2, f"Phase {ph} current {i_x.round(1)} A outside [{i_lo:.3f}, {i_hi:.1f}] A")
-    # 5% cross-phase check
-    for ph, i_x, ia, ib in [("1",i1,i2,i3),("2",i2,i1,i3),("3",i3,i1,i2)]:
-        avg_others = (ia + ib) / 2.0
-        c2x = running & (avg_others > 0) & (i_x < 0.05 * avg_others) & (fail_check == "")
-        fail_check  = fail_check.where(~c2x, "check_2_current_plausibility")
-        fail_reason = fail_reason.where(~c2x, f"Phase {ph} current < 5% of other phases (CT fault suspected)")
+    # Skip entirely if i_rated is 0 or missing — cannot compute meaningful bounds
+    i_rated = float(meta.get("i_rated", 0))
+    if i_rated > 0:
+        i_lo = 0.005 * i_rated;  i_hi = 1.5 * i_rated
+        for ph, i_x in [("1", i1), ("2", i2), ("3", i3)]:
+            c2 = running & ~i_x.between(i_lo, i_hi) & (fail_check == "")
+            fail_check  = fail_check.where(~c2, "check_2_current_plausibility")
+            fail_reason = fail_reason.where(~c2,
+                f"Phase {ph} current outside [{i_lo:.1f}, {i_hi:.1f}] A "
+                f"(i_rated={i_rated:.0f} A)")
+        # 5% cross-phase check
+        for ph, i_x, ia, ib in [("1",i1,i2,i3),("2",i2,i1,i3),("3",i3,i1,i2)]:
+            avg_others = (ia + ib) / 2.0
+            c2x = running & (avg_others > 0) & (i_x < 0.05 * avg_others) & (fail_check == "")
+            fail_check  = fail_check.where(~c2x, "check_2_current_plausibility")
+            fail_reason = fail_reason.where(~c2x,
+                f"Phase {ph} current < 5% of other phases (CT fault suspected)")
 
     # Check 3 — Power sign and sum coherence
     mag_sum    = p1.abs() + p2.abs() + p3.abs()
