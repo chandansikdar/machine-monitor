@@ -42,15 +42,6 @@ from electrical_diagnostics import (
     assessment_summary,
 )
 
-try:
-    from data_checker import run_data_quality_checks, format_quality_report_for_claude
-    DQ_AVAILABLE = True
-except ImportError:
-    DQ_AVAILABLE = False
-    def run_data_quality_checks(df, **kw):
-        return {"issues": [], "summary": {"total": 0, "critical": 0, "warning": 0}, "passed": True, "score": 100}
-    def format_quality_report_for_claude(r): return ""
-
 load_dotenv()
 
 # ---------------------------------------------------------------------------
@@ -673,7 +664,6 @@ st.markdown("""
 for _k, _v in [
     ("last_assessment", None),
     ("last_data",       None),
-    ("last_dq_report",  None),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -757,7 +747,6 @@ with st.sidebar:
     if st.session_state.get("_last_machine") != selected_id:
         st.session_state["last_assessment"] = None
         st.session_state["last_data"]       = None
-        st.session_state["last_dq_report"]  = None
         st.session_state["_last_machine"]   = selected_id
 
     # ── Delete machine ────────────────────────────────────────────────────
@@ -803,7 +792,6 @@ with st.sidebar:
                 # Reset session data
                 st.session_state["last_assessment"] = None
                 st.session_state["last_data"]       = None
-                st.session_state["last_dq_report"]  = None
                 st.rerun()
             else:
                 st.error(result["error"])
@@ -993,7 +981,6 @@ _data_fp = (
 if st.session_state.get("_data_fp") != _data_fp:
     st.session_state["_data_fp"]       = _data_fp
     st.session_state["last_assessment"] = None
-    st.session_state["last_dq_report"]  = None
     st.session_state["last_data"]       = None
 
 
@@ -1104,44 +1091,6 @@ with tab_data:
                 "\u2139\ufe0f Integrity checks require electrical parameters (nameplate values). "
                 "Fill in the \u26a1 Electrical parameters expander above to enable them."
             )
-
-        # Data quality (auto-run)
-        if DQ_AVAILABLE and st.session_state.get("last_dq_report") is None:
-            with st.spinner("Running data quality checks\u2026"):
-                _dq = run_data_quality_checks(data)
-                st.session_state["last_dq_report"] = _dq
-
-        _dq = st.session_state.get("last_dq_report") or {}
-        if _dq:
-            _score = _dq.get("score", 100)
-            _issues = _dq.get("issues", [])
-            _crits  = [x for x in _issues if x["severity"] == "critical"]
-            _warns  = [x for x in _issues if x["severity"] == "warning"]
-            _dq_label = (
-                (f"  \u00b7  {len(_crits)} critical" if _crits else "") +
-                (f"  \u00b7  {len(_warns)} warning(s)" if _warns else "") +
-                ("  \u00b7  All checks passed" if not _issues else "")
-            )
-            with st.expander(f"Data quality \u2014 score {_score}/100{_dq_label}",
-                             expanded=bool(_crits)):
-                if not _issues:
-                    st.success("All data quality checks passed.")
-                else:
-                    _sev_bc = {"critical": "#A32D2D", "warning": "#BA7517", "info": "#185FA5"}
-                    _sev_bg = {"critical": "#FFF0F0", "warning": "#FFFBF0", "info": "#EAF4FF"}
-                    for _iss in _issues:
-                        _sv = _iss["severity"]
-                        _icon = {"critical": "\u274c", "warning": "\u26a0\ufe0f", "info": "\u2139\ufe0f"}.get(_sv, "\u2022")
-                        st.markdown(
-                            f'<div style="background:{_sev_bg.get(_sv,"#f8f8f8")};'
-                            f'border-left:4px solid {_sev_bc.get(_sv,"#555")};'
-                            f'padding:8px 12px;margin-bottom:4px;border-radius:3px;">'
-                            f'<b>{_icon} {_iss["check"]}</b> \u00b7 <code>{_iss["col"]}</code>'
-                            f' \u00b7 <span style="color:#888;font-size:0.85em">'
-                            f'{_iss["affected_pct"]}% affected</span><br>'
-                            f'<span style="font-size:0.88em">{_iss["detail"]}</span></div>',
-                            unsafe_allow_html=True,
-                        )
 
         st.subheader("Recent readings")
         st.dataframe(data.tail(200), use_container_width=True, height=280)
