@@ -285,7 +285,10 @@ def integrity_gate(row: pd.Series, meta: dict) -> IntegrityResult:
     v_lo = 0.85 * v_nom
     v_hi = 1.15 * v_nom
     v_max_abs = 1.5 * v_nom
-    for ph, v in zip(("1", "2", "3"), (v1, v2, v3)):
+    for ph, v, i_x in zip(("1", "2", "3"), (v1, v2, v3), (i1, i2, i3)):
+        # V=0 with I=0 is a powered-down machine, not a sensor fault — skip
+        if v == 0.0 and i_x == 0.0:
+            continue
         if v < 50.0:
             return IntegrityResult(
                 passed=False,
