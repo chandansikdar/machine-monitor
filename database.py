@@ -207,8 +207,10 @@ class Database:
         """Coerce measurement columns to numeric, storing non-numeric cell info.
 
         Non-numeric cells (e.g. '12:00 AM', 'N/A', 'error') are coerced to NaN.
-        A sidecar column '_non_numeric_flags' records which columns had bad values
-        per row as a pipe-separated string, so the integrity check can surface them.
+        Two sidecar columns are added per affected measurement column:
+          _non_numeric_flags       : pipe-separated "col:value" strings per row
+          _orig_<col>              : original string value for rows with bad data
+        This allows the failure report to show the original bad value, not NaN.
         """
         import pandas as _pd
         MEAS = [
@@ -223,11 +225,13 @@ class Database:
                 coerced = _pd.to_numeric(orig, errors="coerce")
                 non_num = coerced.isna() & ~orig.isna()
                 if non_num.any():
-                    # Record: "col:original_value" for each bad row
                     bad_vals = orig[non_num].astype(str)
+                    # Store original bad values in a per-column sidecar
+                    df[f"_orig_{col}"] = _pd.Series("", index=df.index)
                     for idx in bad_vals.index:
                         entry = f"{col}:{bad_vals[idx]}"
                         flags[idx] = (flags[idx] + "|" + entry).lstrip("|")
+                        df.at[idx, f"_orig_{col}"] = bad_vals[idx]
                 df[col] = coerced
             else:
                 # Non-measurement columns — coerce quietly
