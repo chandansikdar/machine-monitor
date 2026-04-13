@@ -1256,37 +1256,48 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
     if _pre_filled:
         st.info(f"\u2139\ufe0f Pre-filled from registration: {', '.join(_pre_filled)}. "
                 "Confirm or update below, then save.")
+    st.caption("Leave any field blank if the value is unknown. Blank fields default to 0 (checks that require that value will be skipped or estimated from data).")
+
+    def _field_val(em_key, default):
+        """Return saved value as string for text_input, or empty string if 0/missing."""
+        v = _em.get(em_key, default)
+        return "" if (v == 0 or v is None) else str(v)
 
     _c1, _c2, _c3 = st.columns(3)
-    _v_nom = _c1.number_input(
+    _v_nom_txt = _c1.text_input(
         "Phase-to-neutral voltage (V)",
-        min_value=0.0, value=float(_em.get("v_nominal_phase", 230.0)),
-        step=1.0, format="%.1f", key="ep_v_nom",
-        help="e.g. 230 V for a 400/230 V system",
+        value=_field_val("v_nominal_phase", ""),
+        key="ep_v_nom",
+        help="e.g. 230 V for a 400/230 V system. Leave blank to use default 230 V.",
+        placeholder="e.g. 230",
     )
-    _p_rated = _c2.number_input(
+    _p_rated_txt = _c2.text_input(
         "Rated shaft power (kW)",
-        min_value=0.0, value=float(_em.get("p_rated_shaft_kw", 0.0)),
-        step=0.5, format="%.1f", key="ep_p_rated",
+        value=_field_val("p_rated_shaft_kw", ""),
+        key="ep_p_rated",
+        placeholder="e.g. 75",
+        help="Leave blank to estimate from data with a warning.",
     )
-    _i_rated = _c3.number_input(
+    _i_rated_txt = _c3.text_input(
         "Full-load current (A)",
-        min_value=0.0, value=float(_em.get("i_rated", 0.0)),
-        step=0.1, format="%.1f", key="ep_i_rated",
+        value=_field_val("i_rated", ""),
+        key="ep_i_rated",
+        placeholder="e.g. 140",
+        help="Nameplate FLA. Leave blank to skip current plausibility check.",
     )
     _c4, _c5, _c6 = st.columns(3)
-    _pf_rated = _c4.number_input(
+    _pf_rated_txt = _c4.text_input(
         "Rated full-load PF",
-        min_value=0.0, max_value=1.0,
-        value=float(_em.get("pf_rated", 0.87)),
-        step=0.01, format="%.2f", key="ep_pf_rated",
+        value=_field_val("pf_rated", ""),
+        key="ep_pf_rated",
+        placeholder="e.g. 0.87",
     )
-    _eta_rated = _c5.number_input(
-        "Rated efficiency (0\u20131)",
-        min_value=0.0, max_value=1.0,
-        value=float(_em.get("eta_rated", 0.90)),
-        step=0.01, format="%.2f", key="ep_eta_rated",
-        help="e.g. 0.93 for 93%",
+    _eta_rated_txt = _c5.text_input(
+        "Rated efficiency (0-1)",
+        value=_field_val("eta_rated", ""),
+        key="ep_eta_rated",
+        placeholder="e.g. 0.93",
+        help="e.g. 0.93 for 93% efficiency",
     )
     _at_panel = _c6.checkbox(
         "Voltage measured at panel",
@@ -1298,18 +1309,47 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         value=bool(_em.get("four_wire", True)),
         key="ep_four_wire",
     )
+
+    def _parse_field(txt, default=0.0, lo=None, hi=None):
+        """Parse a text field to float. Return default if blank or invalid."""
+        txt = txt.strip()
+        if not txt:
+            return default
+        try:
+            v = float(txt)
+            if lo is not None and v < lo:
+                return default
+            if hi is not None and v > hi:
+                return default
+            return v
+        except ValueError:
+            return default
+
+    _v_nom     = _parse_field(_v_nom_txt,    default=0.0, lo=0.0)
+    _p_rated   = _parse_field(_p_rated_txt,  default=0.0, lo=0.0)
+    _i_rated   = _parse_field(_i_rated_txt,  default=0.0, lo=0.0)
+    _pf_rated  = _parse_field(_pf_rated_txt, default=0.0, lo=0.0, hi=1.0)
+    _eta_rated = _parse_field(_eta_rated_txt,default=0.0, lo=0.0, hi=1.0)
+
+    # Validate and show field-level feedback
+    _ep_errors = []
+    if _v_nom_txt.strip()     and _v_nom     == 0.0: _ep_errors.append("Voltage: enter a positive number (e.g. 230)")
+    if _pf_rated_txt.strip()  and _pf_rated  == 0.0: _ep_errors.append("PF: must be between 0 and 1 (e.g. 0.87)")
+    if _eta_rated_txt.strip() and _eta_rated == 0.0: _ep_errors.append("Efficiency: must be between 0 and 1 (e.g. 0.93)")
+    for _ep_err in _ep_errors:
+        st.error(f"\u274c {_ep_err}")
+
     # Power unit is set at upload time (sidebar), not here.
     # Read current saved value for round-trip when user clicks Save.
     _power_unit = _em.get("power_unit", "W").upper()
 
-    if st.button("Save electrical parameters", key="save_ep_btn", use_container_width=True):
+    if st.button("Save electrical parameters", key="save_ep_btn",
+                 use_container_width=True, disabled=bool(_ep_errors)):
         _app_type = APP_TYPE_MAP.get(machine_info["machine_type"], "compressed_air")
         _new_block = serialise_meta_block(
             _v_nom, _p_rated, _pf_rated, _eta_rated, _i_rated,
             _fw, _at_panel, _app_type, _power_unit,
         )
-        _non_meta = _desc.split(_META_SENTINEL)[0].rstrip() if _META_SENTINEL in _desc else _desc
-        # Preserve any === NOTES === block that may follow
         _new_desc = replace_meta_block(_desc, _new_block)
         db.register_machine(selected_id, machine_info["machine_type"], _new_desc)
         st.success("\u2713 Electrical parameters saved.")
