@@ -204,6 +204,7 @@ class Database:
             """).df()
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.set_index("timestamp")
+            df = self._fix_swapped_month_day(df)
             df = self._coerce_numeric(df)
             return df
         except Exception:
@@ -224,10 +225,45 @@ class Database:
             """).df()
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.set_index("timestamp")
+            df = self._fix_swapped_month_day(df)
             df = self._coerce_numeric(df)
             return df
         except Exception:
             return None
+
+    def _fix_swapped_month_day(self, df: "pd.DataFrame") -> "pd.DataFrame":
+        """Detect and correct timestamps stored with MM-DD instead of DD-MM.
+
+        When pandas parses DD/MM/YYYY with format='mixed' and day <= 12, it may
+        silently parse as MM/DD, storing e.g. 01/04/2026 as 2026-01-04 instead
+        of 2026-04-01.
+
+        Detection: if >70% of rows share the same day-of-month value AND that
+        value is <= 12, it is very likely month and day were swapped.
+
+        Fix: swap month and day for all rows. Rows where the swap is invalid
+        (e.g. original day=31 which cannot be a month) are kept as-is.
+        """
+        import pandas as _pd
+        if not isinstance(df.index, _pd.DatetimeIndex):
+            return df
+        ts = _pd.Series(df.index)
+        day_vals = ts.dt.day
+        if len(day_vals) == 0:
+            return df
+        most_common_day = int(day_vals.mode()[0])
+        frac = float((day_vals == most_common_day).mean())
+        if not (frac > 0.70 and most_common_day <= 12):
+            return df   # Dates look correct — no fix needed
+        def _swap(t):
+            try:
+                return t.replace(month=t.day, day=t.month)
+            except ValueError:
+                return t   # Swap would produce invalid date — keep original
+        new_ts = ts.map(_swap)
+        df = df.copy()
+        df.index = _pd.DatetimeIndex(new_ts.values, name="timestamp")
+        return df
 
     def _coerce_numeric(self, df) -> "pd.DataFrame":
         """Coerce measurement columns to numeric, storing non-numeric cell info.
