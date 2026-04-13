@@ -287,12 +287,30 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
     """
     meta = dict(saved_meta)
 
+    # ── Backward-compatibility migration ────────────────────────────────────
+    # Old metadata blocks written before this fix don't have user_entered_* flags.
+    # Detect by checking absence of any user_entered key.
+    # Heuristic: pf_rated=0.87/0.88 and eta_rated=0.90 are registration defaults
+    # and were never explicitly typed — mark them as not user-entered.
+    # For voltage/power/current, treat any non-zero, non-default value as user-entered.
+    _has_flags = any(k.startswith("user_entered_") for k in meta)
+    if not _has_flags:
+        _pf_val  = float(meta.get("pf_rated",  0))
+        _eta_val = float(meta.get("eta_rated", 0))
+        _p_val   = float(meta.get("p_rated_shaft_kw", 0))
+        _v_val   = float(meta.get("v_nominal_phase",  0))
+        _i_val   = float(meta.get("i_rated", 0))
+        meta["user_entered_v_nominal"]  = str(_v_val > 0 and _v_val != 230.0).lower()
+        meta["user_entered_p_rated"]    = str(_p_val > 0).lower()
+        # pf 0.87/0.88 and eta 0.90 were registration defaults — not user-entered
+        meta["user_entered_pf"]         = str(_pf_val > 0 and _pf_val not in (0.87, 0.88)).lower()
+        meta["user_entered_eta"]        = str(_eta_val > 0 and _eta_val != 0.90).lower()
+        meta["user_entered_i_rated"]    = str(_i_val > 0).lower()
+
     # Read explicit user-entered flags — these distinguish values the user typed
     # from values the platform wrote as defaults during registration
     def _user_entered(key):
         flag_key = f"user_entered_{key.replace('_phase','').replace('_kw','').replace('_shaft','')}"
-        # normalise: user_entered_v_nominal, user_entered_p_rated, user_entered_pf,
-        #            user_entered_eta, user_entered_i_rated
         val = meta.get(flag_key, "false")
         return str(val).lower() == "true"
 
