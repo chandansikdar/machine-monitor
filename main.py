@@ -2104,55 +2104,130 @@ with tab_analysis:
                 else:
                     render_assessment(record)
 
-                    # ── Cleaned data download ─────────────────────────────
+                    # ── Cleaned data download + removed rows per step ────────
                     _cleaned = st.session_state.get("last_cleaned_data")
-                    if _cleaned is not None and not _cleaned.empty:
-                        _cr = record.cleaning_report
-                        _n_cleaned = _cr.n_cleaned if _cr else len(_cleaned)
-                        with st.expander(
-                            f"\u2b07\ufe0f Download cleaned assessment data "
-                            f"({_n_cleaned:,} samples)",
-                            expanded=False,
-                        ):
-                            st.caption(
-                                "The cleaned dataset used for this assessment — "
-                                "after load precondition (≥40%), start transient exclusion, "
-                                "user filter, and IQR rejection. "
-                                "Active power is in Watts."
-                            )
-                            # Convert power back to original unit if needed
-                            _dl_unit = meta.get("power_unit", "W").upper()
-                            _dl_df   = _cleaned.copy()
+                    _raw_for_dl = st.session_state.get("last_data")
+                    if _cleaned is not None and not _cleaned.empty and record.cleaning_report:
+                        _cr        = record.cleaning_report
+                        _n_cleaned = _cr.n_cleaned
+                        _dl_unit   = meta.get("power_unit", "W").upper()
+
+                        def _to_dl_unit(df):
+                            """Convert power columns to original unit for download."""
+                            df = df.copy()
                             if _dl_unit == "KW":
                                 for _pc in ["phase_1_active_power",
                                             "phase_2_active_power",
                                             "phase_3_active_power"]:
-                                    if _pc in _dl_df.columns:
-                                        _dl_df[_pc] = (_dl_df[_pc] / 1000.0).round(6)
-                                if "p_total_kw" not in _dl_df.columns:
-                                    _dl_df["p_total_kw"] = (
-                                        _dl_df["phase_1_active_power"] +
-                                        _dl_df["phase_2_active_power"] +
-                                        _dl_df["phase_3_active_power"]
-                                    ).round(6)
+                                    if _pc in df.columns:
+                                        df[_pc] = (df[_pc] / 1000.0).round(6)
+                            return df[[c for c in df.columns if not c.startswith("_")]]
 
-                            # Preview
-                            st.dataframe(
-                                _dl_df.head(10),
-                                use_container_width=True,
-                                hide_index=True,
+                        with st.expander(
+                            f"\U0001f4ca Assessment data — cleaned & removed rows",
+                            expanded=False,
+                        ):
+                            st.caption(
+                                "Download the cleaned dataset used for analysis, or the rows "
+                                "removed at each cleaning step."
                             )
-                            st.download_button(
-                                label=f"\u2b07\ufe0f Download all {_n_cleaned:,} cleaned rows (CSV)",
-                                data=_dl_df.to_csv(index=False).encode("utf-8"),
-                                file_name=(
-                                    f"cleaned_{selected_id}_"
-                                    f"{str(date_range[0])}_to_"
-                                    f"{str(date_range[1])}.csv"
-                                ),
-                                mime="text/csv",
-                                use_container_width=True,
+
+                            # Re-derive removed rows at each step using clean_samples
+                            _raw_w = scale_power_to_watts(
+                                (_raw_for_dl if _raw_for_dl is not None else
+                                 data.loc[(pd.Timestamp(date_range[0]) <= data.index) &
+                                          (data.index <= pd.Timestamp(date_range[1]) +
+                                           pd.Timedelta(days=1) - pd.Timedelta(seconds=1))]
+                                ).reset_index(), meta.get("power_unit", "W")
                             )
+
+                            # Derive step masks using same logic as clean_samples
+                            _p_rated_e = float(meta.get("p_rated_shaft_kw", 0)) / float(meta.get("eta_rated", 0.9))
+                            _load_min  = 0.40 * _p_rated_e * 1000.0
+                            _cold_min  = 0.01 * _p_rated_e * 1000.0
+                            _pt = (_raw_w["phase_1_active_power"] +
+                                   _raw_w["phase_2_active_power"] +
+                                   _raw_w["phase_3_active_power"])
+
+                            # Step 1 removed
+                            _s1_mask    = _pt >= _load_min
+                            _removed_s1 = _raw_w[~_s1_mask].copy()
+                            _after_s1   = _raw_w[_s1_mask].copy()
+
+                            # Step 2 removed (start transient)
+                            _cleaned_ts = set(_cleaned["timestamp"].astype(str)) \
+                                          if "timestamp" in _cleaned.columns \
+                                          else set(_cleaned.index.astype(str))
+                            _after_s1_ts = set(_after_s1["timestamp"].astype(str)) \
+                                           if "timestamp" in _after_s1.columns \
+                                           else set(_after_s1.index.astype(str))
+                            # Rows in after_s1 but not in after_s2 = start transient removed
+                            _after_s2_n   = _cr.n_after_start_transient
+                            # Use row counts from report to identify s2 removed
+                            # (exact rows need the same transient logic — approximate by
+                            #  rows present after s1 but absent in cleaned and not s3/s4)
+                            # Best approach: re-run clean_samples capturing each stage
+                            _bm_for_dl = baseline_from_dict(db.get_baseline(selected_id))
+                            _uf = _bm_for_dl.user_filter_expr if _bm_for_dl else None
+                            # Get full cleaned step-by-step via separate calls
+                            # Step 1 only
+                            _meta_s = meta.copy()
+                            _after_s1_full, _ = clean_samples(
+                                _raw_w, _meta_s, user_filter=None
+                            )
+                            # That gives us final; we need intermediate.
+                            # Simplest: mark removed = in raw but timestamp not in cleaned
+                            _cleaned_ts_set = set(
+                                (_cleaned["timestamp"] if "timestamp" in _cleaned.columns
+                                 else _cleaned.index).astype(str)
+                            )
+                            _raw_ts_set = set(_raw_w["timestamp"].astype(str))
+                            _removed_all = _raw_w[
+                                ~_raw_w["timestamp"].astype(str).isin(_cleaned_ts_set)
+                            ].copy()
+                            _removed_s1_ts = set(_removed_s1["timestamp"].astype(str))
+
+                            # Categorise removed rows
+                            _removed_s1_dl   = _removed_s1.copy()
+                            _removed_other   = _removed_all[
+                                ~_removed_all["timestamp"].astype(str).isin(_removed_s1_ts)
+                            ].copy()
+                            # Label removed_other by step (approximate — marks all as post-S1)
+                            _removed_s1_dl["removed_at_step"]   = "Step 1 - Load precondition (<40% rated)"
+                            _removed_other["removed_at_step"]    = "Step 2/3/4 - Transient / User filter / IQR"
+
+                            _removed_all_labelled = pd.concat(
+                                [_removed_s1_dl, _removed_other], ignore_index=True
+                            )
+                            _n_removed = len(_removed_all_labelled)
+
+                            # Two download columns
+                            _dc1, _dc2 = st.columns(2)
+
+                            with _dc1:
+                                st.markdown(f"**\u2705 Cleaned ({_n_cleaned:,} rows)**")
+                                _dl_cleaned = _to_dl_unit(_cleaned if "timestamp" in _cleaned.columns
+                                                          else _cleaned.reset_index())
+                                st.download_button(
+                                    label=f"\u2b07\ufe0f Download {_n_cleaned:,} cleaned rows (CSV)",
+                                    data=_dl_cleaned.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"cleaned_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
+                                    mime="text/csv", use_container_width=True,
+                                )
+                                st.dataframe(_dl_cleaned.head(10), use_container_width=True,
+                                             hide_index=True)
+
+                            with _dc2:
+                                st.markdown(f"**\u274c Removed ({_n_removed:,} rows)**")
+                                _dl_removed = _to_dl_unit(_removed_all_labelled)
+                                st.download_button(
+                                    label=f"\u2b07\ufe0f Download {_n_removed:,} removed rows (CSV)",
+                                    data=_dl_removed.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"removed_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
+                                    mime="text/csv", use_container_width=True,
+                                )
+                                st.dataframe(_dl_removed.head(10), use_container_width=True,
+                                             hide_index=True)
 
                     # Control charts
                     _chart_data = st.session_state.get("last_data")
