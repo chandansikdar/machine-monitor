@@ -124,7 +124,30 @@ class Database:
                  if any(kw in c.lower() for kw in ["time", "date", "timestamp", "ts"])),
                 df.columns[0],
             )
-            df[ts_col] = pd.to_datetime(df[ts_col], dayfirst=True, format="mixed", errors="coerce")
+
+            # Detect day-first vs month-first from the raw string values.
+            # pandas format="mixed" with dayfirst=True is unreliable when day <= 12:
+            # it infers format per-row and may silently flip DD/MM to MM/DD.
+            # Strategy: scan for an unambiguous row where the first numeric token > 12
+            # (must be a day) or the second numeric token > 12 (must be a day, so
+            # first is the month). Default to day-first (European standard) if all
+            # values are ambiguous.
+            import re as _re
+            _dayfirst = True  # default
+            for _val in df[ts_col].dropna().astype(str):
+                _m = _re.match(r"(\d{1,2})[\/\-\.\s](\d{1,2})", _val.strip())
+                if _m:
+                    _first, _second = int(_m.group(1)), int(_m.group(2))
+                    if _first > 12:
+                        _dayfirst = True
+                        break
+                    if _second > 12:
+                        _dayfirst = False
+                        break
+
+            df[ts_col] = pd.to_datetime(
+                df[ts_col], dayfirst=_dayfirst, format="mixed", errors="coerce"
+            )
             df = df.rename(columns={ts_col: "timestamp"})
             # Drop empty rows — null timestamp means a blank/trailing row in the CSV
             df = df[df["timestamp"].notna()].copy()
