@@ -1609,6 +1609,22 @@ with tab_data:
                 "Fill in the \u26a1 Electrical parameters expander above to enable them."
             )
 
+        # ── Download raw data as seen by platform ─────────────────────────
+        _dl_raw = data.reset_index()
+        # Drop sidecar columns before download
+        _dl_raw = _dl_raw[[c for c in _dl_raw.columns if not c.startswith("_")]]
+        st.download_button(
+            label=f"\u2b07\ufe0f Download full dataset as seen by platform ({len(_dl_raw):,} rows)",
+            data=_dl_raw.to_csv(index=False).encode("utf-8"),
+            file_name=f"platform_data_{selected_id}.csv",
+            mime="text/csv",
+            help=(
+                "Downloads the data exactly as the platform has loaded and processed it "
+                "(timestamps parsed, power scaled, non-numeric values coerced to blank). "
+                "Use this to verify what the platform sees before running analysis."
+            ),
+        )
+
         st.subheader("Recent readings")
         st.dataframe(data.tail(200), use_container_width=True, height=280)
 
@@ -1802,9 +1818,22 @@ with tab_analysis:
                         # Filter data to selected date range
                         _start_ts = pd.Timestamp(date_range[0])
                         _end_ts   = pd.Timestamp(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-                        _recent = data.loc[(_start_ts <= data.index) & (data.index <= _end_ts)]
+                        # Strip timezone from index if present to avoid comparison errors
+                        _data_idx = data.index
+                        if hasattr(_data_idx, "tz") and _data_idx.tz is not None:
+                            _data_idx = _data_idx.tz_localize(None)
+                            _recent = data.copy()
+                            _recent.index = _data_idx
+                        else:
+                            _recent = data
+                        _recent = _recent.loc[(_start_ts <= _recent.index) & (_recent.index <= _end_ts)]
                         if _recent.empty:
-                            st.error("No data in selected date range.")
+                            st.error(
+                                f"No data in selected date range "
+                                f"({date_range[0]} to {date_range[1]}). "
+                                f"Data available: {data.index.min().date()} "
+                                f"to {data.index.max().date()}."
+                            )
                         else:
                             _bm_loaded = baseline_from_dict(db.get_baseline(selected_id))
                             with st.spinner("Running electrical diagnostics\u2026"):
