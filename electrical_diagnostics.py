@@ -87,11 +87,11 @@ IQR_MULTIPLIER: float = 1.5               # standard Tukey fence
 
 # Multi-band PF comparison
 PF_BAND_BIN_WIDTH_FRACTION: float = 0.02  # 2% of p_rated_elec per bin
-PF_BAND_MIN_SAMPLES: int = 20             # minimum samples per band
+PF_BAND_MIN_SAMPLES: int = 5              # minimum samples per band (baseline and assessment)
 PF_BAND_MIN_COUNT: int = 3               # minimum qualifying bands
 
 # Cleaning sufficiency
-CLEANING_MIN_SAMPLES: int = 100
+CLEANING_MIN_SAMPLES: int = 50
 
 # Zone 4 driven equipment
 ZONE4_SIGNIFICANCE_PCT: float = 3.0
