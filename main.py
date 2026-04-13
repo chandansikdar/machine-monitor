@@ -246,6 +246,31 @@ def scale_power_to_watts(df: pd.DataFrame, power_unit: str) -> pd.DataFrame:
     return df
 
 
+def apply_integrity_filter(
+    df: pd.DataFrame,
+    passed_ts: set | None,
+) -> tuple[pd.DataFrame, int]:
+    """Filter a DataFrame to only rows whose timestamp passed integrity checks.
+
+    Parameters
+    ----------
+    df          : DataFrame with DatetimeIndex (timestamp as index)
+    passed_ts   : set of ISO timestamp strings that passed all checks,
+                  or None if the integrity check has not been run yet
+
+    Returns
+    -------
+    (filtered_df, n_excluded)
+    If passed_ts is None (check not run), returns df unchanged with n_excluded=0.
+    """
+    if passed_ts is None or len(passed_ts) == 0:
+        return df, 0
+    ts_strs  = df.index.astype(str)
+    mask     = ts_strs.isin(passed_ts)
+    excluded = int((~mask).sum())
+    return df[mask], excluded
+
+
 # ---------------------------------------------------------------------------
 # Assessment rendering
 # ---------------------------------------------------------------------------
@@ -905,9 +930,10 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 
 for _k, _v in [
-    ("last_assessment",   None),
-    ("last_data",         None),
-    ("last_cleaned_data", None),
+    ("last_assessment",         None),
+    ("last_data",               None),
+    ("last_cleaned_data",       None),
+    ("last_integrity_passed_ts", None),  # set of timestamps that passed all integrity checks
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -1055,6 +1081,7 @@ with st.sidebar:
     if st.session_state.get("_last_machine") != selected_id:
         st.session_state["last_assessment"] = None
         st.session_state["last_cleaned_data"] = None
+        st.session_state["last_integrity_passed_ts"] = None
         st.session_state["last_data"]       = None
         st.session_state["_last_machine"]   = selected_id
 
@@ -1176,6 +1203,7 @@ with st.sidebar:
                 )
                 st.session_state["last_assessment"] = None
                 st.session_state["last_cleaned_data"] = None
+                st.session_state["last_integrity_passed_ts"] = None
                 st.session_state["last_data"]       = None
                 st.rerun()
             else:
@@ -1371,6 +1399,7 @@ if st.session_state.get("_data_fp") != _data_fp:
     st.session_state["_data_fp"]       = _data_fp
     st.session_state["last_assessment"] = None
     st.session_state["last_cleaned_data"] = None
+    st.session_state["last_integrity_passed_ts"] = None
     st.session_state["last_data"]       = None
 
 
@@ -1560,12 +1589,16 @@ with tab_data:
 
                 if _n_failed == 0:
                     st.success("\u2705 All samples passed all five integrity checks.")
-                    # Download passed data
+                    # Store all timestamps as passed
                     _passed_df = _scaled_clean.copy()
                     _passed_df = _passed_df[[c for c in _passed_df.columns
                                              if not c.startswith("_")]]
                     if "timestamp" not in _passed_df.columns and _passed_df.index.name == "timestamp":
                         _passed_df = _passed_df.reset_index()
+                    # Save passed timestamps to session state for baseline/assessment filtering
+                    st.session_state["last_integrity_passed_ts"] = set(
+                        _passed_df["timestamp"].astype(str).tolist()
+                    )
                     st.download_button(
                         label=f"\u2b07\ufe0f Download all {_n_total:,} passed rows (CSV)",
                         data=_passed_df.to_csv(index=False).encode("utf-8"),
@@ -1644,6 +1677,10 @@ with tab_data:
                         _passed_df  = _passed_df[
                             ~_passed_df["timestamp"].astype(str).isin(_failed_ts)
                         ].reset_index(drop=True)
+                        # Save passed timestamps to session state for baseline/assessment filtering
+                        st.session_state["last_integrity_passed_ts"] = set(
+                            _passed_df["timestamp"].astype(str).tolist()
+                        )
                         st.download_button(
                             label=f"\u2b07\ufe0f Download {_n_passed:,} passed rows (CSV)",
                             data=_passed_df.to_csv(index=False).encode("utf-8"),
@@ -1880,8 +1917,23 @@ with tab_analysis:
                         _bl_start_ts = pd.Timestamp(_bl_start_in)
                         _bl_end_ts   = pd.Timestamp(_bl_end_in) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
                         _raw_bl = data.loc[(_bl_start_ts <= data.index) & (data.index <= _bl_end_ts)]
+                        # Apply integrity filter — exclude rows that failed checks
+                        _ic_passed_ts = st.session_state.get("last_integrity_passed_ts")
+                        _raw_bl, _bl_excluded = apply_integrity_filter(_raw_bl, _ic_passed_ts)
+                        if _ic_passed_ts is None:
+                            st.info(
+                                "\u2139\ufe0f Integrity checks have not been run yet. "
+                                "Open the \U0001f50d Integrity checks expander in the Data tab "
+                                "to screen for wiring faults before ingesting baseline."
+                            )
+                        elif _bl_excluded > 0:
+                            st.warning(
+                                f"\u26a0\ufe0f {_bl_excluded:,} rows excluded from baseline "
+                                f"— failed integrity checks (wiring/CT faults). "
+                                f"{len(_raw_bl):,} rows used."
+                            )
                         if _raw_bl.empty:
-                            st.error("No data in selected baseline period.")
+                            st.error("No data in selected baseline period after integrity filtering.")
                         else:
                             with st.spinner("Ingesting baseline\u2026"):
                                 _raw_bl_reset = _raw_bl.reset_index()
@@ -1903,6 +1955,7 @@ with tab_analysis:
                             )
                             st.session_state["last_assessment"] = None
                             st.session_state["last_cleaned_data"] = None
+                            st.session_state["last_integrity_passed_ts"] = None
                             st.rerun()
 
                 st.markdown("---")
@@ -1929,6 +1982,21 @@ with tab_analysis:
                         else:
                             _recent = data
                         _recent = _recent.loc[(_start_ts <= _recent.index) & (_recent.index <= _end_ts)]
+                        # Apply integrity filter — exclude rows that failed checks
+                        _ic_passed_ts_assess = st.session_state.get("last_integrity_passed_ts")
+                        _recent, _ic_excluded_assess = apply_integrity_filter(_recent, _ic_passed_ts_assess)
+                        if _ic_passed_ts_assess is None:
+                            st.info(
+                                "\u2139\ufe0f Integrity checks have not been run. "
+                                "Open the \U0001f50d Integrity checks expander in the Data tab "
+                                "to screen for wiring faults before running assessment."
+                            )
+                        elif _ic_excluded_assess > 0:
+                            st.warning(
+                                f"\u26a0\ufe0f {_ic_excluded_assess:,} rows excluded from assessment "
+                                f"— failed integrity checks. "
+                                f"{len(_recent):,} rows used."
+                            )
                         if _recent.empty:
                             st.error(
                                 f"No data in selected date range "
