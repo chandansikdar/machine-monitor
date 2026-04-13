@@ -1887,27 +1887,7 @@ with tab_analysis:
                                 _bl_view_data, _ic_ts_view
                             )
                             if _bl_view_excluded > 0:
-                                _fail_summ_view = st.session_state.get(
-                                    "last_integrity_failure_summary", {}
-                                )
-                                if _fail_summ_view:
-                                    _rsn_lines = "\n".join(
-                                        f"- {r}: {c:,} row(s)"
-                                        for r, c in sorted(
-                                            _fail_summ_view.items(), key=lambda x: -x[1]
-                                        )
-                                    )
-                                    st.warning(
-                                        f"\u26a0\ufe0f {_bl_view_excluded:,} rows excluded by integrity checks. "
-                                        f"{len(_bl_view_data):,} rows shown below are what was actually used.\n\n"
-                                        f"{_rsn_lines}"
-                                    )
-                                else:
-                                    st.warning(
-                                        f"\u26a0\ufe0f {_bl_view_excluded:,} rows removed by integrity checks "
-                                        f"and excluded from this baseline. "
-                                        f"{len(_bl_view_data):,} rows shown below are what was actually used."
-                                    )
+                                pass  # Warning already shown in the baseline info card above
                             elif _ic_ts_view is None:
                                 st.info(
                                     "\u2139\ufe0f Integrity checks have not been run for this session. "
