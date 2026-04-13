@@ -1414,33 +1414,27 @@ with tab_data:
                 _raw_reset = data.reset_index()
                 _scaled    = scale_power_to_watts(_raw_reset, meta_for_check.get("power_unit", "W"))
 
-                # ── Check 0: Non-numeric scan BEFORE JSON round-trip ─────────
-                # JSON serialisation silently drops non-numeric strings (e.g. "12:00 AM")
-                # converting them to NaN, so this must run on the raw DataFrame.
-                MEAS_COLS = [
-                    "phase_1_voltage", "phase_2_voltage", "phase_3_voltage",
-                    "phase_1_current", "phase_2_current", "phase_3_current",
-                    "phase_1_active_power", "phase_2_active_power", "phase_3_active_power",
-                ]
+                # ── Check 0: Non-numeric — read from sidecar column set at load time ──
+                # database._coerce_numeric() records non-numeric cells before coercion.
+                # By the time data arrives here all measurement values are already NaN.
                 _pre_fail_check  = pd.Series("", index=_scaled.index)
                 _pre_fail_reason = pd.Series("", index=_scaled.index)
 
-                for _col in MEAS_COLS:
-                    if _col not in _scaled.columns:
-                        continue
-                    _orig    = _scaled[_col]
-                    _coerced = pd.to_numeric(_orig, errors="coerce")
-                    # Non-numeric = was not NaN before but became NaN after coercion
-                    _non_num = _coerced.isna() & ~_orig.isna()
-                    if _non_num.any():
-                        _first_bad = str(_orig[_non_num].iloc[0])
-                        _c0 = _non_num & (_pre_fail_check == "")
-                        _pre_fail_check  = _pre_fail_check.where(~_c0, "check_0_non_numeric")
-                        _pre_fail_reason = _pre_fail_reason.where(~_c0,
-                            f"{_col} contains non-numeric value "
-                            f"'{_first_bad}' — cannot be used for diagnostics")
-                    # Replace with coerced so downstream JSON round-trip is clean
-                    _scaled[_col] = _coerced
+                _flags_col = "_non_numeric_flags"
+                if _flags_col in _scaled.columns:
+                    _flag_series = _scaled[_flags_col].fillna("")
+                    _has_flag    = _flag_series != ""
+                    if _has_flag.any():
+                        for _idx in _flag_series[_has_flag].index:
+                            _entries = _flag_series[_idx].split("|")
+                            for _entry in _entries:
+                                if ":" in _entry:
+                                    _col_name, _bad_val = _entry.split(":", 1)
+                                    _c0 = (_has_flag) & (_scaled.index == _idx) & (_pre_fail_check == "")
+                                    _pre_fail_check  = _pre_fail_check.where(~_c0, "check_0_non_numeric")
+                                    _pre_fail_reason = _pre_fail_reason.where(~_c0,
+                                        f"{_col_name} contains non-numeric value "
+                                        f"'{_bad_val}' — cannot be used for diagnostics")
 
                 _pre_failed_mask = _pre_fail_check != ""
                 _pre_failed_df   = _scaled[_pre_failed_mask].copy()
@@ -1448,8 +1442,10 @@ with tab_data:
                 _pre_failed_df["failure_reason"] = _pre_fail_reason[_pre_failed_mask].values
 
                 import json as _json
+                # Drop sidecar before sending to run_integrity_checks
+                _scaled_clean = _scaled.drop(columns=[_flags_col], errors="ignore")
                 _ig = run_integrity_checks(
-                    _scaled.to_json(orient="split", date_format="iso"),
+                    _scaled_clean.to_json(orient="split", date_format="iso"),
                     _json.dumps(meta_for_check),
                 )
                 _n_total  = _ig["n_total"]
@@ -1460,11 +1456,13 @@ with tab_data:
                 _phys_failed["failure_check"]  = _ig["fail_checks"]
                 _phys_failed["failure_reason"] = _ig["fail_reasons"]
 
-                # Combine: Check 0 rows + physical check rows (dedup by index)
-                _all_failed = pd.concat(
-                    [_pre_failed_df, _phys_failed], ignore_index=True
-                ).drop_duplicates(subset=["timestamp", "failure_check"]) \
-                 .reset_index(drop=True) if "timestamp" in _pre_failed_df.columns else _phys_failed
+                # Combine: Check 0 rows + physical check rows
+                if len(_pre_failed_df) > 0 and "timestamp" in _pre_failed_df.columns:
+                    _all_failed = pd.concat(
+                        [_pre_failed_df, _phys_failed], ignore_index=True
+                    ).drop_duplicates(subset=["timestamp", "failure_check"]).reset_index(drop=True)
+                else:
+                    _all_failed = _phys_failed
 
                 _n_failed     = len(_all_failed)
                 _n_passed     = _n_total - _n_failed
