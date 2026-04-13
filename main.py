@@ -739,19 +739,22 @@ def build_assessment_charts(
         vuf = (pd.concat([(v1-v_avg).abs(),(v2-v_avg).abs(),(v3-v_avg).abs()],
                          axis=1).max(axis=1) / v_avg.replace(0, np.nan) * 100.0)
         i1=df["phase_1_current"]; i2=df["phase_2_current"]; i3=df["phase_3_current"]
+        i_avg = (i1+i2+i3) / 3.0
+        iuf = (pd.concat([(i1-i_avg).abs(),(i2-i_avg).abs(),(i3-i_avg).abs()],
+                         axis=1).max(axis=1) / i_avg.replace(0, np.nan) * 100.0)
         p_w = df["phase_1_active_power"]+df["phase_2_active_power"]+df["phase_3_active_power"]
         p_kw = p_w / 1000.0
         s_sum = v1*i1 + v2*i2 + v3*i3
         pf = (p_w / s_sum.replace(0, np.nan)).clip(0, 1)
-        return vuf, p_kw, pf
+        return vuf, iuf, p_kw, pf
 
     # Raw (full window) — used as faded background
-    raw_vuf, raw_p_kw, raw_pf = _derive(data)
+    raw_vuf, raw_iuf, raw_p_kw, raw_pf = _derive(data)
 
     # Cleaned (analysis samples) — primary series
     if cleaned_data is not None and not cleaned_data.empty:
         cln_idx = cleaned_data.index if hasattr(cleaned_data.index, "name") else cleaned_data.index
-        cl_vuf, cl_p_kw, cl_pf = _derive(cleaned_data)
+        cl_vuf, cl_iuf, cl_p_kw, cl_pf = _derive(cleaned_data)
         has_cleaned = True
     else:
         has_cleaned = False
@@ -811,6 +814,19 @@ def build_assessment_charts(
             (VUF_WATCH,    "#E67E22", "dash",   f"Watch {VUF_WATCH:.1f}%"),
         ],
         y_range=[0, max(float(raw_vuf.max()) * 1.3, VUF_CRITICAL * 1.5)],
+    ))
+
+    # IUF chart — only on cleaned data (IUF is meaningless at low / zero load)
+    iuf_max = float(cl_iuf.max()) if has_cleaned else float(raw_iuf.max())
+    figs.append(_chart(
+        data.index, raw_iuf,
+        cl_idx, cl_iuf if has_cleaned else None,
+        "Zone 2 \u2014 Current Imbalance Factor (IUF)", "IUF (%)",
+        h_lines=[
+            (IUF_CRITICAL, "#C0392B", "solid",  f"Critical {IUF_CRITICAL:.0f}%"),
+            (IUF_WATCH,    "#E67E22", "dash",   f"Watch {IUF_WATCH:.0f}%"),
+        ],
+        y_range=[0, max(iuf_max * 1.3, IUF_CRITICAL * 1.5)],
     ))
 
     # P_total chart
