@@ -196,7 +196,15 @@ def serialise_meta_block(
     eta_rated: float, i_rated: float,
     four_wire: bool, at_panel: bool, app_type: str,
     power_unit: str = "W",
+    user_entered: dict | None = None,
 ) -> str:
+    """Serialise electrical metadata to a text block.
+
+    user_entered: optional dict of {field: bool} indicating which values
+    were explicitly typed by the user vs filled in as platform defaults.
+    E.g. {"v_nominal_phase": True, "pf_rated": False}
+    """
+    ue = user_entered or {}
     return (
         f"{_META_SENTINEL}\n"
         f"v_nominal_phase: {v_nominal}\n"
@@ -208,6 +216,11 @@ def serialise_meta_block(
         f"measurement_at_panel: {str(at_panel).lower()}\n"
         f"application_type: {app_type}\n"
         f"power_unit: {power_unit}\n"
+        f"user_entered_v_nominal: {str(ue.get('v_nominal_phase', False)).lower()}\n"
+        f"user_entered_p_rated: {str(ue.get('p_rated_shaft_kw', False)).lower()}\n"
+        f"user_entered_pf: {str(ue.get('pf_rated', False)).lower()}\n"
+        f"user_entered_eta: {str(ue.get('eta_rated', False)).lower()}\n"
+        f"user_entered_i_rated: {str(ue.get('i_rated', False)).lower()}\n"
     )
 
 
@@ -274,7 +287,19 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
     """
     meta = dict(saved_meta)
 
-    # Unpack data columns once
+    # Read explicit user-entered flags — these distinguish values the user typed
+    # from values the platform wrote as defaults during registration
+    def _user_entered(key):
+        flag_key = f"user_entered_{key.replace('_phase','').replace('_kw','').replace('_shaft','')}"
+        # normalise: user_entered_v_nominal, user_entered_p_rated, user_entered_pf,
+        #            user_entered_eta, user_entered_i_rated
+        val = meta.get(flag_key, "false")
+        return str(val).lower() == "true"
+
+    # Convenience: True only if user typed the value AND it is non-zero
+    def _is_nameplate(key):
+        v = float(meta.get(key, 0))
+        return v != 0 and _user_entered(key)
     power_cols   = ["phase_1_active_power", "phase_2_active_power", "phase_3_active_power"]
     voltage_cols = ["phase_1_voltage",      "phase_2_voltage",      "phase_3_voltage"]
     current_cols = ["phase_1_current",      "phase_2_current",      "phase_3_current"]
@@ -290,7 +315,7 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
     # ── Rated electrical input ───────────────────────────────────────────────
     p_shaft = float(meta.get("p_rated_shaft_kw", 0))
     eta_cur = float(meta.get("eta_rated", 0.90))
-    if p_shaft > 0 and eta_cur > 0:
+    if _is_nameplate("p_rated_shaft_kw") and eta_cur > 0:
         p_rated_elec = p_shaft / eta_cur
         meta["p_rated_source"] = "nameplate"
     else:
@@ -301,14 +326,10 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
     meta["p_rated_elec_kw"] = round(p_rated_elec, 3)
 
     # ── Nominal voltage ──────────────────────────────────────────────────────
-    v_nom = float(meta.get("v_nominal_phase", 0))
-    if v_nom > 0:
+    if _is_nameplate("v_nominal_phase"):
         meta["v_nominal_source"] = "nameplate"
     elif has_voltage and _running.any():
-        # Median of all phase voltages when machine is running
-        _v_all = pd.concat([
-            data_w.loc[_running, c] for c in voltage_cols
-        ])
+        _v_all = pd.concat([data_w.loc[_running, c] for c in voltage_cols])
         _v_median = float(_v_all[_v_all > 10].median())
         meta["v_nominal_phase"] = round(_v_median)
         meta["v_nominal_source"] = "estimated_from_data"
@@ -317,11 +338,9 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
         meta["v_nominal_source"] = "estimated_from_data"
 
     # ── Full-load current ────────────────────────────────────────────────────
-    i_rated = float(meta.get("i_rated", 0))
-    if i_rated > 0:
+    if _is_nameplate("i_rated"):
         meta["i_rated_source"] = "nameplate"
     elif has_current and _running.any():
-        # 95th percentile of I_avg when running
         _i_avg = (data_w.loc[_running, current_cols[0]] +
                   data_w.loc[_running, current_cols[1]] +
                   data_w.loc[_running, current_cols[2]]) / 3.0
@@ -332,16 +351,14 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
         meta["i_rated_source"] = "estimated_from_data"
 
     # ── Rated PF ─────────────────────────────────────────────────────────────
-    pf_rated = float(meta.get("pf_rated", 0))
-    if pf_rated > 0:
+    if _is_nameplate("pf_rated"):
         meta["pf_rated_source"] = "nameplate"
     else:
         meta["pf_rated"] = 0.87
         meta["pf_rated_source"] = "assumed_default"
 
     # ── Rated efficiency ─────────────────────────────────────────────────────
-    eta = float(meta.get("eta_rated", 0))
-    if eta > 0:
+    if _is_nameplate("eta_rated"):
         meta["eta_rated_source"] = "nameplate"
     else:
         meta["eta_rated"] = 0.90
@@ -1152,15 +1169,23 @@ with st.sidebar:
             if _any_nameplate:
                 _reg_app = APP_TYPE_MAP.get(machine_type.strip(), "compressed_air")
                 _reg_desc = serialise_meta_block(
-                    v_nominal = reg_v_nom  if reg_v_nom   > 0 else 230.0,
-                    p_rated   = reg_p_rated,
-                    pf_rated  = 0.88,
-                    eta_rated = 0.90,
-                    i_rated   = reg_i_rated,
-                    four_wire = True,
-                    at_panel  = True,
-                    app_type  = _reg_app,
+                    v_nominal  = reg_v_nom   if reg_v_nom   > 0 else 230.0,
+                    p_rated    = reg_p_rated,
+                    pf_rated   = 0.88,
+                    eta_rated  = 0.90,
+                    i_rated    = reg_i_rated,
+                    four_wire  = True,
+                    at_panel   = True,
+                    app_type   = _reg_app,
                     power_unit = "W",
+                    # Only mark fields the user actually typed as entered
+                    user_entered = {
+                        "v_nominal_phase":  reg_v_nom   > 0,
+                        "p_rated_shaft_kw": reg_p_rated > 0,
+                        "pf_rated":         False,   # not asked at registration
+                        "eta_rated":        False,   # not asked at registration
+                        "i_rated":          reg_i_rated > 0,
+                    },
                 )
             db.register_machine(machine_id.strip(), machine_type.strip(), _reg_desc)
 
@@ -1313,6 +1338,14 @@ with st.sidebar:
                         bool(_meta_now.get("measurement_at_panel", True)),
                         _app_type,
                         _upload_unit,
+                        # Preserve existing user_entered flags
+                        user_entered={
+                            "v_nominal_phase":  str(_meta_now.get("user_entered_v_nominal", "false")).lower() == "true",
+                            "p_rated_shaft_kw": str(_meta_now.get("user_entered_p_rated",   "false")).lower() == "true",
+                            "pf_rated":         str(_meta_now.get("user_entered_pf",        "false")).lower() == "true",
+                            "eta_rated":        str(_meta_now.get("user_entered_eta",       "false")).lower() == "true",
+                            "i_rated":          str(_meta_now.get("user_entered_i_rated",   "false")).lower() == "true",
+                        },
                     )
                     _updated_desc = replace_meta_block(
                         _mi_now.get("description", ""), _new_block
@@ -1505,12 +1538,22 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
     if st.button("Save electrical parameters", key="save_ep_btn",
                  use_container_width=True, disabled=bool(_ep_errors)):
         _app_type = APP_TYPE_MAP.get(machine_info["machine_type"], "compressed_air")
+        # Track which fields the user explicitly typed vs left blank
+        _user_entered_flags = {
+            "v_nominal_phase":  bool(_v_nom_txt.strip()),
+            "p_rated_shaft_kw": bool(_p_rated_txt.strip()),
+            "pf_rated":         bool(_pf_rated_txt.strip()),
+            "eta_rated":        bool(_eta_rated_txt.strip()),
+            "i_rated":          bool(_i_rated_txt.strip()),
+        }
         _new_block = serialise_meta_block(
             _v_nom, _p_rated, _pf_rated, _eta_rated, _i_rated,
             _fw, _at_panel, _app_type, _power_unit,
+            user_entered=_user_entered_flags,
         )
         _new_desc = replace_meta_block(_desc, _new_block)
         db.register_machine(selected_id, machine_info["machine_type"], _new_desc)
+        st.session_state["effective_meta"] = None  # force re-resolution with new values
         st.success("\u2713 Electrical parameters saved.")
         st.rerun()
 
