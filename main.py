@@ -1414,14 +1414,23 @@ with tab_data:
                 _raw_reset = data.reset_index()
                 _scaled    = scale_power_to_watts(_raw_reset, meta_for_check.get("power_unit", "W"))
 
-                # ── Check 0: Non-numeric — read from sidecar column set at load time ──
-                # database._coerce_numeric() records non-numeric cells before coercion.
-                # By the time data arrives here all measurement values are already NaN.
+                # ── Check 0: Non-numeric — scan BEFORE any coercion ──────────
+                # Must use the raw source data (data.reset_index()) because
+                # _coerce_numeric already replaced strings with NaN in `data`.
+                # Re-read the stored CSV directly to get original string values.
                 _pre_fail_check  = pd.Series("", index=_scaled.index)
                 _pre_fail_reason = pd.Series("", index=_scaled.index)
 
+                _MEAS = [
+                    "phase_1_voltage","phase_2_voltage","phase_3_voltage",
+                    "phase_1_current","phase_2_current","phase_3_current",
+                    "phase_1_active_power","phase_2_active_power","phase_3_active_power",
+                ]
+
+                # Primary: read from _orig_* sidecar columns set by _coerce_numeric
                 _flags_col = "_non_numeric_flags"
-                if _flags_col in _scaled.columns:
+                _has_sidecar = _flags_col in _scaled.columns
+                if _has_sidecar:
                     _flag_series = _scaled[_flags_col].fillna("")
                     _has_flag    = _flag_series != ""
                     if _has_flag.any():
@@ -1430,35 +1439,65 @@ with tab_data:
                             for _entry in _entries:
                                 if ":" in _entry:
                                     _col_name, _bad_val = _entry.split(":", 1)
-                                    _c0 = (_has_flag) & (_scaled.index == _idx) & (_pre_fail_check == "")
+                                    _c0 = (_scaled.index == _idx) & (_pre_fail_check == "")
                                     _pre_fail_check  = _pre_fail_check.where(~_c0, "check_0_non_numeric")
                                     _pre_fail_reason = _pre_fail_reason.where(~_c0,
                                         f"{_col_name} contains non-numeric value "
-                                        f"'{_bad_val}' — cannot be used for diagnostics")
+                                        f"'{_bad_val}' \u2014 cannot be used for diagnostics")
 
+                # Fallback: re-read stored CSV to scan for strings that survived to disk
+                if not _has_sidecar or (_pre_fail_check == "").all():
+                    try:
+                        _file_info_now = db.get_file_info(selected_id)
+                        if _file_info_now:
+                            import pathlib as _pl
+                            _csv_path = _pl.Path(_file_info_now[-1]["file"])
+                            if _csv_path.exists():
+                                _raw_str = pd.read_csv(_csv_path, dtype=str)
+                                # Align index with _scaled by timestamp
+                                _ts_col = next(
+                                    (c for c in _raw_str.columns
+                                     if any(k in c.lower() for k in ["time","date","timestamp"])),
+                                    _raw_str.columns[0]
+                                )
+                                _raw_str[_ts_col] = pd.to_datetime(
+                                    _raw_str[_ts_col], dayfirst=True, errors="coerce"
+                                )
+                                _raw_str = _raw_str.set_index(_ts_col).sort_index()
+                                for _mc in _MEAS:
+                                    if _mc not in _raw_str.columns:
+                                        continue
+                                    _col_orig = _raw_str[_mc]
+                                    _col_num  = pd.to_numeric(_col_orig, errors="coerce")
+                                    _bad      = _col_num.isna() & ~_col_orig.isna()
+                                    if _bad.any():
+                                        for _ts, _bv in _col_orig[_bad].items():
+                                            if _ts in _pre_fail_check.index:
+                                                _c0 = (_scaled.index == _ts) & (_pre_fail_check == "")
+                                                _pre_fail_check  = _pre_fail_check.where(~_c0, "check_0_non_numeric")
+                                                _pre_fail_reason = _pre_fail_reason.where(~_c0,
+                                                    f"{_mc} contains non-numeric value "
+                                                    f"'{_bv}' \u2014 cannot be used for diagnostics")
+                    except Exception:
+                        pass  # Fallback failed silently — Check 0 proceeds without it
+
+                # Build pre-failed DataFrame and restore original bad values
                 _pre_failed_mask = _pre_fail_check != ""
                 _pre_failed_df   = _scaled[_pre_failed_mask].copy()
                 _pre_failed_df["failure_check"]  = _pre_fail_check[_pre_failed_mask].values
                 _pre_failed_df["failure_reason"] = _pre_fail_reason[_pre_failed_mask].values
 
-                # Restore original bad string values from _orig_<col> sidecar columns
-                # so the downloaded failure report shows "12:00 AM" not NaN
-                _MEAS = [
-                    "phase_1_voltage","phase_2_voltage","phase_3_voltage",
-                    "phase_1_current","phase_2_current","phase_3_current",
-                    "phase_1_active_power","phase_2_active_power","phase_3_active_power",
-                ]
+                # Restore original string values from _orig_* sidecar columns if present
                 for _mc in _MEAS:
                     _orig_col = f"_orig_{_mc}"
                     if _orig_col in _pre_failed_df.columns:
-                        # Where the original sidecar has a non-empty string, use it
                         _orig_vals = _pre_failed_df[_orig_col]
-                        _has_orig  = _orig_vals != ""
+                        _has_orig  = _orig_vals.astype(str) != ""
                         _pre_failed_df.loc[_has_orig, _mc] = _orig_vals[_has_orig]
                         _pre_failed_df = _pre_failed_df.drop(columns=[_orig_col])
 
                 import json as _json
-                # Drop all sidecar columns before sending to run_integrity_checks
+                # Drop all sidecar columns before passing to run_integrity_checks
                 _sidecar_cols = [c for c in _scaled.columns
                                  if c.startswith("_orig_") or c == _flags_col]
                 _scaled_clean = _scaled.drop(columns=_sidecar_cols, errors="ignore")
