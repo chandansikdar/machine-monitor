@@ -124,8 +124,11 @@ class Database:
                  if any(kw in c.lower() for kw in ["time", "date", "timestamp", "ts"])),
                 df.columns[0],
             )
-            df[ts_col] = pd.to_datetime(df[ts_col], dayfirst=True, format="mixed")
-            df = df.rename(columns={ts_col: "timestamp"}).sort_values("timestamp")
+            df[ts_col] = pd.to_datetime(df[ts_col], dayfirst=True, format="mixed", errors="coerce")
+            df = df.rename(columns={ts_col: "timestamp"})
+            # Drop empty rows — null timestamp means a blank/trailing row in the CSV
+            df = df[df["timestamp"].notna()].copy()
+            df = df.sort_values("timestamp")
 
             # Persist to disk
             machine_dir = self.data_dir / machine_id
