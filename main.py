@@ -253,74 +253,99 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
     """Resolve effective nameplate values per §2.5, using data estimates as fallback.
 
     Called once after data loads. Returns a complete meta dict where every
-    parameter used by integrity checks and the analysis pipeline has a
-    concrete value. No estimation logic should exist anywhere else.
+    parameter has a concrete value. No estimation logic exists anywhere else.
 
-    Parameters
-    ----------
-    saved_meta : raw meta dict from build_meta() — may have zeros for unknown fields
-    data_w     : full dataset scaled to Watts, with DatetimeIndex
+    When no rated conditions are entered, the process is:
+      Power      → estimated from data   (95th percentile of P_total ÷ 0.95)
+      Voltage    → estimated from data   (median of phase voltages when running)
+      Current    → estimated from data   (95th percentile of I_avg when running)
+      Efficiency → assumed default       (0.90 — typical induction motor)
+      Power factor → assumed default     (0.87 — typical induction motor)
 
     Returns
     -------
-    Resolved meta dict with the same keys as saved_meta plus:
-      p_rated_elec_kw   float  effective rated electrical input (kW)
-      p_rated_source    str    "nameplate" or "estimated_from_data"
-      v_nominal_source  str    "nameplate" or "default_230v"
-      i_rated_source    str    "nameplate" or "skipped"
+    Resolved meta dict with extra keys:
+      p_rated_elec_kw     float  effective rated electrical input (kW)
+      p_rated_source      str    "nameplate" | "estimated_from_data"
+      v_nominal_source    str    "nameplate" | "estimated_from_data"
+      i_rated_source      str    "nameplate" | "estimated_from_data"
+      pf_rated_source     str    "nameplate" | "assumed_default"
+      eta_rated_source    str    "nameplate" | "assumed_default"
     """
     meta = dict(saved_meta)
 
+    # Unpack data columns once
+    power_cols   = ["phase_1_active_power", "phase_2_active_power", "phase_3_active_power"]
+    voltage_cols = ["phase_1_voltage",      "phase_2_voltage",      "phase_3_voltage"]
+    current_cols = ["phase_1_current",      "phase_2_current",      "phase_3_current"]
+    has_power    = all(c in data_w.columns for c in power_cols)
+    has_voltage  = all(c in data_w.columns for c in voltage_cols)
+    has_current  = all(c in data_w.columns for c in current_cols)
+
+    _pt = (data_w[power_cols[0]] + data_w[power_cols[1]] + data_w[power_cols[2]]
+           if has_power else pd.Series(dtype=float))
+    # Running mask — very loose (any positive power) for estimation purposes
+    _running = _pt > 0 if len(_pt) > 0 else pd.Series(dtype=bool)
+
     # ── Rated electrical input ───────────────────────────────────────────────
     p_shaft = float(meta.get("p_rated_shaft_kw", 0))
-    eta     = float(meta.get("eta_rated", 0.90))
-    if p_shaft > 0 and eta > 0:
-        p_rated_elec = p_shaft / eta
+    eta_cur = float(meta.get("eta_rated", 0.90))
+    if p_shaft > 0 and eta_cur > 0:
+        p_rated_elec = p_shaft / eta_cur
         meta["p_rated_source"] = "nameplate"
     else:
-        # §2.5 fallback: 95th percentile of full dataset ÷ 0.95
-        _pt = pd.Series(dtype=float)
-        power_cols = ["phase_1_active_power", "phase_2_active_power",
-                      "phase_3_active_power"]
-        if all(c in data_w.columns for c in power_cols):
-            _pt = (data_w["phase_1_active_power"] +
-                   data_w["phase_2_active_power"] +
-                   data_w["phase_3_active_power"])
-        _p95 = float(_pt[_pt > 0].quantile(0.95)) / 1000.0 if (_pt > 0).any() else 0.0
-        p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0   # 1 kW hard floor
+        _p95 = float(_pt[_pt > 0].quantile(0.95)) / 1000.0 if has_power and (_pt > 0).any() else 0.0
+        p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0
         meta["p_rated_source"] = "estimated_from_data"
-        # Write back so downstream functions that read p_rated_shaft_kw work correctly
-        meta["p_rated_shaft_kw"] = round(p_rated_elec * eta, 2) if eta > 0 else round(p_rated_elec, 2)
-
+        meta["p_rated_shaft_kw"] = round(p_rated_elec * eta_cur, 2) if eta_cur > 0 else round(p_rated_elec, 2)
     meta["p_rated_elec_kw"] = round(p_rated_elec, 3)
 
     # ── Nominal voltage ──────────────────────────────────────────────────────
     v_nom = float(meta.get("v_nominal_phase", 0))
     if v_nom > 0:
         meta["v_nominal_source"] = "nameplate"
+    elif has_voltage and _running.any():
+        # Median of all phase voltages when machine is running
+        _v_all = pd.concat([
+            data_w.loc[_running, c] for c in voltage_cols
+        ])
+        _v_median = float(_v_all[_v_all > 10].median())
+        meta["v_nominal_phase"] = round(_v_median)
+        meta["v_nominal_source"] = "estimated_from_data"
     else:
-        meta["v_nominal_phase"] = 230.0   # §2.5 default
-        meta["v_nominal_source"] = "default_230v"
+        meta["v_nominal_phase"] = 230.0
+        meta["v_nominal_source"] = "estimated_from_data"
 
     # ── Full-load current ────────────────────────────────────────────────────
     i_rated = float(meta.get("i_rated", 0))
-    meta["i_rated_source"] = "nameplate" if i_rated > 0 else "skipped"
+    if i_rated > 0:
+        meta["i_rated_source"] = "nameplate"
+    elif has_current and _running.any():
+        # 95th percentile of I_avg when running
+        _i_avg = (data_w.loc[_running, current_cols[0]] +
+                  data_w.loc[_running, current_cols[1]] +
+                  data_w.loc[_running, current_cols[2]]) / 3.0
+        _i95 = float(_i_avg[_i_avg > 0].quantile(0.95)) if (_i_avg > 0).any() else 0.0
+        meta["i_rated"] = round(_i95 / 0.95, 1) if _i95 > 0 else 0.0
+        meta["i_rated_source"] = "estimated_from_data"
+    else:
+        meta["i_rated_source"] = "estimated_from_data"
 
     # ── Rated PF ─────────────────────────────────────────────────────────────
     pf_rated = float(meta.get("pf_rated", 0))
-    if pf_rated <= 0:
-        meta["pf_rated"] = 0.87   # typical induction motor default
-        meta["pf_rated_source"] = "estimated_default"
-    else:
+    if pf_rated > 0:
         meta["pf_rated_source"] = "nameplate"
+    else:
+        meta["pf_rated"] = 0.87
+        meta["pf_rated_source"] = "assumed_default"
 
     # ── Rated efficiency ─────────────────────────────────────────────────────
     eta = float(meta.get("eta_rated", 0))
-    if eta <= 0:
-        meta["eta_rated"] = 0.90  # typical induction motor default
-        meta["eta_rated_source"] = "estimated_default"
-    else:
+    if eta > 0:
         meta["eta_rated_source"] = "nameplate"
+    else:
+        meta["eta_rated"] = 0.90
+        meta["eta_rated_source"] = "assumed_default"
 
     return meta
 
@@ -1356,13 +1381,16 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
 
     # Helper: caption to show under each field
     def _est_note(col, key, label, fmt, unit, note=""):
-        """Show orange 'Estimated/Assumed: X' note when nameplate value is not saved."""
-        if not _is_saved(key):
-            eff_val = _eff.get(key, 0)
-            if eff_val:
-                col.caption(f"\u26a0\ufe0f Estimated/Assumed: {eff_val:{fmt}} {unit}{' \u2014 ' + note if note else ''}")
-            else:
-                col.caption(f"\u26a0\ufe0f {label} not entered")
+        """Show 'Estimated/Assumed: X' note when value was not entered from nameplate."""
+        src = _eff.get(key + "_source", "")
+        if src == "nameplate":
+            return  # entered from nameplate — no annotation needed
+        eff_val = _eff.get(key, 0)
+        if eff_val:
+            tag = "Assumed default" if src == "assumed_default" else "Estimated from data"
+            col.caption(f"\u26a0\ufe0f {tag}: {eff_val:{fmt}} {unit}{' \u2014 ' + note if note else ''}")
+        else:
+            col.caption(f"\u26a0\ufe0f {label} not available")
 
     # Helper: field display value — saved value or estimated value or blank
     def _field_display(key, fmt):
@@ -1402,8 +1430,13 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         placeholder="e.g. 140",
         help="Nameplate full-load current (FLA).",
     )
-    if not _is_saved("i_rated"):
-        _c3.caption("\u26a0\ufe0f Not entered \u2014 Check 2 (current plausibility) will be skipped")
+    _i_src = _eff.get("i_rated_source", "estimated_from_data")
+    if _i_src != "nameplate":
+        _i_eff = _eff.get("i_rated", 0)
+        if _i_eff:
+            _c3.caption(f"\u26a0\ufe0f Estimated from data: {_i_eff:.1f} A")
+        else:
+            _c3.caption("\u26a0\ufe0f Not available \u2014 Check 2 will be skipped")
 
     # Row 2 — PF, Efficiency, Panel checkbox
     _c4, _c5, _c6 = st.columns(3)
@@ -1627,10 +1660,10 @@ with tab_data:
         # ── Effective parameters banner ───────────────────────────────────
         if meta:
             _src_p   = meta.get("p_rated_source",   "nameplate")
-            _src_v   = meta.get("v_nominal_source",  "nameplate")
-            _src_i   = meta.get("i_rated_source",    "nameplate")
-            _src_pf  = meta.get("pf_rated_source",   "nameplate")
-            _src_eta = meta.get("eta_rated_source",  "nameplate")
+            _src_v   = meta.get("v_nominal_source",  "estimated_from_data")
+            _src_i   = meta.get("i_rated_source",    "estimated_from_data")
+            _src_pf  = meta.get("pf_rated_source",   "assumed_default")
+            _src_eta = meta.get("eta_rated_source",  "assumed_default")
             _p_elec  = meta.get("p_rated_elec_kw", 0)
             _v_nom   = meta.get("v_nominal_phase", 230)
             _i_fla   = meta.get("i_rated", 0)
@@ -1640,9 +1673,7 @@ with tab_data:
             def _src_label(src):
                 if src == "nameplate":           return "\u2705 from nameplate"
                 if src == "estimated_from_data": return "\u26a0\ufe0f estimated from data"
-                if src == "estimated_default":   return "\u26a0\ufe0f assumed default"
-                if src == "default_230v":        return "\u26a0\ufe0f assumed 230 V"
-                if src == "skipped":             return "\u26a0\ufe0f not set - check skipped"
+                if src == "assumed_default":     return "\u26a0\ufe0f assumed default"
                 return src
 
             _any_estimated = any(s != "nameplate" for s in [_src_p, _src_v, _src_i, _src_pf, _src_eta])
