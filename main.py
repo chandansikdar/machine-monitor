@@ -1443,7 +1443,7 @@ with tab_data:
                                     _pre_fail_check  = _pre_fail_check.where(~_c0, "check_0_non_numeric")
                                     _pre_fail_reason = _pre_fail_reason.where(~_c0,
                                         f"{_col_name} contains non-numeric value "
-                                        f"'{_bad_val}' \u2014 cannot be used for diagnostics")
+                                        f"'{_bad_val}' - cannot be used for diagnostics")
 
                 # Fallback: re-read stored CSV to scan for strings that survived to disk
                 if not _has_sidecar or (_pre_fail_check == "").all():
@@ -1477,7 +1477,7 @@ with tab_data:
                                                 _pre_fail_check  = _pre_fail_check.where(~_c0, "check_0_non_numeric")
                                                 _pre_fail_reason = _pre_fail_reason.where(~_c0,
                                                     f"{_mc} contains non-numeric value "
-                                                    f"'{_bv}' \u2014 cannot be used for diagnostics")
+                                                    f"'{_bv}' - cannot be used for diagnostics")
                     except Exception:
                         pass  # Fallback failed silently — Check 0 proceeds without it
 
