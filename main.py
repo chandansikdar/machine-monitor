@@ -310,7 +310,7 @@ def run_integrity_checks(df_json: str, meta_json: str):
         fail_check  = fail_check.where(~c1_missing, "check_1_voltage_plausibility")
         fail_reason = fail_reason.where(~c1_missing,
             f"Phase {ph} voltage missing (null/zero) while current is flowing "
-            f"— possible voltage sensor dropout or data logging gap")
+            f"- possible voltage sensor dropout or data logging gap")
 
         # Voltage present but below 50 V floor (channel failure or short)
         c1_floor = powered & ~v_missing & (v < 50.0) & (fail_check == "")
@@ -318,21 +318,21 @@ def run_integrity_checks(df_json: str, meta_json: str):
         fail_reason = fail_reason.where(~c1_floor,
             f"Phase {ph} voltage below 50 V floor (channel failure or short suspected)")
 
-        # Voltage present but above 1.5× nominal (reference lead on phase conductor)
+        # Voltage present but above 1.5x nominal (reference lead on phase conductor)
         c1_high = powered & ~v_missing & (v > v_max) & (fail_check == "")
         fail_check  = fail_check.where(~c1_high, "check_1_voltage_plausibility")
         fail_reason = fail_reason.where(~c1_high,
-            f"Phase {ph} voltage above 1.5\u00d7V_nominal ({v_max:.0f} V) "
-            f"— reference lead may be on phase conductor")
+            f"Phase {ph} voltage above 1.5x V_nominal ({v_max:.0f} V) "
+            f"- reference lead may be on phase conductor")
 
-        # Voltage outside ±15% nominal band
+        # Voltage outside +-15% nominal band
         c1_range = (powered & ~v_missing
                     & ~v.between(v_lo, v_hi)
                     & (fail_check == "")
                     & ~c1_floor & ~c1_high)
         fail_check  = fail_check.where(~c1_range, "check_1_voltage_plausibility")
         fail_reason = fail_reason.where(~c1_range,
-            f"Phase {ph} voltage outside \u00b115% nominal band "
+            f"Phase {ph} voltage outside +-15% nominal band "
             f"[{v_lo:.0f}, {v_hi:.0f}] V")
 
     # Check 2 — Current plausibility (running samples only)
