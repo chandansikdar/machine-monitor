@@ -161,24 +161,27 @@ def parse_electrical_meta(description: str) -> dict:
 
 def build_meta(machine_info: dict) -> dict | None:
     """Build the metadata dict required by electrical_diagnostics functions.
-    Returns None if the minimum set of fields is unavailable.
+    Returns None only when no metadata block exists yet (new machine, nothing saved).
+    All five numeric parameters have soft defaults — resolve_effective_meta
+    fills in data-derived estimates for any that are zero.
 
-    Hard requirements: pf_rated, eta_rated (both dimensionless and stable defaults exist).
-    Soft defaults: v_nominal_phase=230, p_rated_shaft_kw=0, i_rated=0.
-    When p_rated=0 or i_rated=0, integrity checks fall back to data-derived estimates
-    and skip checks that require nameplate current bounds respectively.
+    Soft defaults:
+      v_nominal_phase  = 230.0  (EU/Swiss standard L-N)
+      p_rated_shaft_kw = 0.0    (triggers data-derived estimation in §2.5)
+      i_rated          = 0.0    (skips Check 2)
+      pf_rated         = 0.87   (typical induction motor)
+      eta_rated        = 0.90   (typical induction motor)
     """
     desc = machine_info.get("description", "")
     em   = parse_electrical_meta(desc)
-    # Minimum hard requirements — platform cannot compute anything meaningful without these
-    hard_required = ["pf_rated", "eta_rated"]
-    missing = [r for r in hard_required if r not in em]
-    if missing:
+    # Return None only if no metadata has ever been saved for this machine
+    if not em:
         return None
-    # Soft defaults for optional fields
-    em.setdefault("v_nominal_phase",  230.0)   # standard Swiss/EU L-N voltage
-    em.setdefault("p_rated_shaft_kw",   0.0)   # 0 triggers data-derived estimation
-    em.setdefault("i_rated",            0.0)   # 0 skips current plausibility check
+    em.setdefault("v_nominal_phase",  230.0)
+    em.setdefault("p_rated_shaft_kw",   0.0)
+    em.setdefault("i_rated",            0.0)
+    em.setdefault("pf_rated",           0.87)
+    em.setdefault("eta_rated",          0.90)
     if "application_type" not in em:
         em["application_type"] = APP_TYPE_MAP.get(
             machine_info.get("machine_type", ""), "compressed_air"
@@ -244,6 +247,82 @@ def scale_power_to_watts(df: pd.DataFrame, power_unit: str) -> pd.DataFrame:
             if col in df.columns:
                 df[col] = df[col] * 1000.0
     return df
+
+
+def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
+    """Resolve effective nameplate values per §2.5, using data estimates as fallback.
+
+    Called once after data loads. Returns a complete meta dict where every
+    parameter used by integrity checks and the analysis pipeline has a
+    concrete value. No estimation logic should exist anywhere else.
+
+    Parameters
+    ----------
+    saved_meta : raw meta dict from build_meta() — may have zeros for unknown fields
+    data_w     : full dataset scaled to Watts, with DatetimeIndex
+
+    Returns
+    -------
+    Resolved meta dict with the same keys as saved_meta plus:
+      p_rated_elec_kw   float  effective rated electrical input (kW)
+      p_rated_source    str    "nameplate" or "estimated_from_data"
+      v_nominal_source  str    "nameplate" or "default_230v"
+      i_rated_source    str    "nameplate" or "skipped"
+    """
+    meta = dict(saved_meta)
+
+    # ── Rated electrical input ───────────────────────────────────────────────
+    p_shaft = float(meta.get("p_rated_shaft_kw", 0))
+    eta     = float(meta.get("eta_rated", 0.90))
+    if p_shaft > 0 and eta > 0:
+        p_rated_elec = p_shaft / eta
+        meta["p_rated_source"] = "nameplate"
+    else:
+        # §2.5 fallback: 95th percentile of full dataset ÷ 0.95
+        _pt = pd.Series(dtype=float)
+        power_cols = ["phase_1_active_power", "phase_2_active_power",
+                      "phase_3_active_power"]
+        if all(c in data_w.columns for c in power_cols):
+            _pt = (data_w["phase_1_active_power"] +
+                   data_w["phase_2_active_power"] +
+                   data_w["phase_3_active_power"])
+        _p95 = float(_pt[_pt > 0].quantile(0.95)) / 1000.0 if (_pt > 0).any() else 0.0
+        p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0   # 1 kW hard floor
+        meta["p_rated_source"] = "estimated_from_data"
+        # Write back so downstream functions that read p_rated_shaft_kw work correctly
+        meta["p_rated_shaft_kw"] = round(p_rated_elec * eta, 2) if eta > 0 else round(p_rated_elec, 2)
+
+    meta["p_rated_elec_kw"] = round(p_rated_elec, 3)
+
+    # ── Nominal voltage ──────────────────────────────────────────────────────
+    v_nom = float(meta.get("v_nominal_phase", 0))
+    if v_nom > 0:
+        meta["v_nominal_source"] = "nameplate"
+    else:
+        meta["v_nominal_phase"] = 230.0   # §2.5 default
+        meta["v_nominal_source"] = "default_230v"
+
+    # ── Full-load current ────────────────────────────────────────────────────
+    i_rated = float(meta.get("i_rated", 0))
+    meta["i_rated_source"] = "nameplate" if i_rated > 0 else "skipped"
+
+    # ── Rated PF ─────────────────────────────────────────────────────────────
+    pf_rated = float(meta.get("pf_rated", 0))
+    if pf_rated <= 0:
+        meta["pf_rated"] = 0.87   # typical induction motor default
+        meta["pf_rated_source"] = "estimated_default"
+    else:
+        meta["pf_rated_source"] = "nameplate"
+
+    # ── Rated efficiency ─────────────────────────────────────────────────────
+    eta = float(meta.get("eta_rated", 0))
+    if eta <= 0:
+        meta["eta_rated"] = 0.90  # typical induction motor default
+        meta["eta_rated_source"] = "estimated_default"
+    else:
+        meta["eta_rated_source"] = "nameplate"
+
+    return meta
 
 
 def apply_integrity_filter(
@@ -752,6 +831,7 @@ def build_assessment_charts(
     data: pd.DataFrame,
     record: AssessmentRecord,
     cleaned_data: pd.DataFrame | None = None,
+    meta: dict | None = None,
 ) -> list:
     """Build control charts for VUF, P_total and PF_machine.
 
@@ -865,12 +945,29 @@ def build_assessment_charts(
         y_range=[0, max(iuf_max * 1.3, IUF_CRITICAL * 1.5)],
     ))
 
-    # P_total chart
+    # P_total chart — baseline avg + 40% load precondition threshold
     p_hlines = []
     if record.zone4 and record.zone4.p_baseline_avg_kw:
         p_hlines.append((
             record.zone4.p_baseline_avg_kw, "#054D5F", "dashdot",
             f"Baseline avg {record.zone4.p_baseline_avg_kw:.1f} kW",
+        ))
+    # 40% load precondition threshold — derive from meta or estimate from data
+    _p40_kw = None
+    if meta:
+        _p_shaft = float(meta.get("p_rated_shaft_kw", 0))
+        _eta     = float(meta.get("eta_rated", 0.90))
+        if _p_shaft > 0 and _eta > 0:
+            _p40_kw = 0.40 * (_p_shaft / _eta)
+        else:
+            # Estimate from data 95th percentile (same logic as clean_samples)
+            _p95_raw = float(raw_p_kw[raw_p_kw > 0].quantile(0.95)) if (raw_p_kw > 0).any() else 0.0
+            _p_rated_est = _p95_raw / 0.95 if _p95_raw > 0 else 0.0
+            _p40_kw = 0.40 * _p_rated_est if _p_rated_est > 0 else None
+    if _p40_kw and _p40_kw > 0:
+        p_hlines.append((
+            _p40_kw, "#177E40", "dot",
+            f"40% load threshold ({_p40_kw:.1f} kW)",
         ))
     figs.append(_chart(
         data.index, raw_p_kw,
@@ -930,12 +1027,13 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 
 for _k, _v in [
-    ("last_assessment",         None),
-    ("last_data",               None),
-    ("last_cleaned_data",       None),
-    ("last_integrity_passed_ts",      None),  # set of timestamps that passed all integrity checks
-    ("baseline_ic_excluded",          0),     # rows excluded from last baseline ingest by integrity filter
-    ("last_integrity_failure_summary", {}),   # {check_label: count} of failures from last integrity run
+    ("last_assessment",          None),
+    ("last_data",                None),
+    ("last_cleaned_data",        None),
+    ("last_integrity_passed_ts", None),
+    ("baseline_ic_excluded",     0),
+    ("last_integrity_failure_summary", {}),
+    ("effective_meta",           None),   # resolved meta per §2.5 — single source of truth
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -1242,63 +1340,91 @@ st.title(f"{machine_info['machine_type']}  \u00b7  {selected_id}")
 
 with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_meta(machine_info)):
     st.caption(
-        "Required for diagnostics. Enter values from the motor nameplate. "
-        "Saved immediately to the machine profile."
+        "Enter values from the motor nameplate. Fields left blank use the estimated "
+        "value shown below them. Estimates are derived per \u00a72.5 and flagged in the platform."
     )
     _desc = machine_info.get("description", "")
     _em   = parse_electrical_meta(_desc)
 
-    # Show which fields were already saved (e.g. from registration)
-    _pre_filled = []
-    if _em.get("v_nominal_phase", 0) > 0:    _pre_filled.append(f"V_nom={_em['v_nominal_phase']:.0f} V")
-    if _em.get("p_rated_shaft_kw", 0) > 0:   _pre_filled.append(f"P_rated={_em['p_rated_shaft_kw']:.0f} kW")
-    if _em.get("i_rated", 0) > 0:            _pre_filled.append(f"FLA={_em['i_rated']:.0f} A")
-    if _pre_filled:
-        st.info(f"\u2139\ufe0f Pre-filled from registration: {', '.join(_pre_filled)}. "
-                "Confirm or update below, then save.")
-    st.caption("Leave any field blank if the value is unknown. Blank fields default to 0 (checks that require that value will be skipped or estimated from data).")
+    # Effective (resolved) meta — has estimated values where nameplate is missing
+    _eff = st.session_state.get("effective_meta") or {}
 
-    def _field_val(em_key, default):
-        """Return saved value as string for text_input, or empty string if 0/missing."""
-        v = _em.get(em_key, default)
-        return "" if (v == 0 or v is None) else str(v)
+    # Helper: is a field saved from the nameplate (not just a default)?
+    def _is_saved(key):
+        v = _em.get(key, 0)
+        return v is not None and v != 0
 
+    # Helper: caption to show under each field
+    def _est_note(col, key, label, fmt, unit, note=""):
+        """Show orange 'Estimated: X' note when nameplate value is not saved."""
+        if not _is_saved(key):
+            eff_val = _eff.get(key, 0)
+            if eff_val:
+                col.caption(f"\u26a0\ufe0f Estimated: {eff_val:{fmt}} {unit}{' ' + note if note else ''}")
+            else:
+                col.caption(f"\u26a0\ufe0f {label} not set")
+
+    # Helper: field display value — saved value or estimated value or blank
+    def _field_display(key, fmt):
+        v = _em.get(key, 0)
+        if v and v != 0:
+            return f"{v:{fmt}}"
+        eff = _eff.get(key, 0)
+        if eff and eff != 0:
+            return f"{eff:{fmt}}"  # show estimate as placeholder text
+        return ""
+
+    # Row 1 — Voltage, Power, Current
     _c1, _c2, _c3 = st.columns(3)
+
     _v_nom_txt = _c1.text_input(
         "Phase-to-neutral voltage (V)",
-        value=_field_val("v_nominal_phase", ""),
+        value=_field_display("v_nominal_phase", ".0f"),
         key="ep_v_nom",
-        help="e.g. 230 V for a 400/230 V system. Leave blank to use default 230 V.",
         placeholder="e.g. 230",
+        help="e.g. 230 V for a 400/230 V system.",
     )
+    _est_note(_c1, "v_nominal_phase", "Voltage", ".0f", "V", "(default 230 V \u2014 EU/Swiss standard)")
+
     _p_rated_txt = _c2.text_input(
         "Rated shaft power (kW)",
-        value=_field_val("p_rated_shaft_kw", ""),
+        value=_field_display("p_rated_shaft_kw", ".1f"),
         key="ep_p_rated",
         placeholder="e.g. 75",
-        help="Leave blank to estimate from data with a warning.",
+        help="Motor nameplate shaft power.",
     )
+    _est_note(_c2, "p_rated_shaft_kw", "Rated power", ".1f", "kW", "(estimated from data 95th percentile)")
+
     _i_rated_txt = _c3.text_input(
-        "Full-load current (A)",
-        value=_field_val("i_rated", ""),
+        "Full-load current / FLA (A)",
+        value=_field_display("i_rated", ".1f"),
         key="ep_i_rated",
         placeholder="e.g. 140",
-        help="Nameplate FLA. Leave blank to skip current plausibility check.",
+        help="Nameplate full-load current (FLA).",
     )
+    if not _is_saved("i_rated"):
+        _c3.caption("\u26a0\ufe0f Not set \u2014 Check 2 (current plausibility) will be skipped")
+
+    # Row 2 — PF, Efficiency, Panel checkbox
     _c4, _c5, _c6 = st.columns(3)
+
     _pf_rated_txt = _c4.text_input(
         "Rated full-load PF",
-        value=_field_val("pf_rated", ""),
+        value=_field_display("pf_rated", ".2f"),
         key="ep_pf_rated",
         placeholder="e.g. 0.87",
     )
+    _est_note(_c4, "pf_rated", "PF", ".2f", "", "(typical induction motor default)")
+
     _eta_rated_txt = _c5.text_input(
-        "Rated efficiency (0-1)",
-        value=_field_val("eta_rated", ""),
+        "Rated efficiency (0\u20131)",
+        value=_field_display("eta_rated", ".2f"),
         key="ep_eta_rated",
         placeholder="e.g. 0.93",
         help="e.g. 0.93 for 93% efficiency",
     )
+    _est_note(_c5, "eta_rated", "Efficiency", ".2f", "", "(typical induction motor default)")
+
     _at_panel = _c6.checkbox(
         "Voltage measured at panel",
         value=bool(_em.get("measurement_at_panel", True)),
@@ -1432,17 +1558,35 @@ if not _active_file and _file_info:
 
 data = db.get_data_from_file(selected_id, _active_file) if _active_file else None
 
+# ── Resolve effective meta (§2.5) ─────────────────────────────────────────
+# Called once here after data loads. Combines saved nameplate values with
+# data-derived estimates for any missing parameters.
+# All subsequent code — integrity checks, cleaning, analysis, charts —
+# reads from st.session_state["effective_meta"] instead of computing its own estimate.
+_saved_meta = build_meta(machine_info)
+if data is not None and not data.empty and _saved_meta is not None:
+    _data_w_full = scale_power_to_watts(
+        data.reset_index(), _saved_meta.get("power_unit", "W")
+    )
+    _resolved = resolve_effective_meta(_saved_meta, _data_w_full)
+    st.session_state["effective_meta"] = _resolved
+elif _saved_meta is not None:
+    st.session_state["effective_meta"] = _saved_meta
+# Use effective_meta as the working meta for this page render
+meta = st.session_state.get("effective_meta") or _saved_meta
+
 # Auto-clear stale session data when the loaded dataset changes
 _data_fp = (
     f"{selected_id}|{len(data)}|{str(data.index.min())}|{str(data.index.max())}"
     if data is not None and not data.empty else f"{selected_id}|empty"
 )
 if st.session_state.get("_data_fp") != _data_fp:
-    st.session_state["_data_fp"]       = _data_fp
-    st.session_state["last_assessment"] = None
-    st.session_state["last_cleaned_data"] = None
+    st.session_state["_data_fp"]           = _data_fp
+    st.session_state["last_assessment"]    = None
+    st.session_state["last_cleaned_data"]  = None
     st.session_state["last_integrity_passed_ts"] = None
-    st.session_state["last_data"]       = None
+    st.session_state["last_data"]          = None
+    st.session_state["effective_meta"]     = None   # recompute on next render
 
 
 # ---------------------------------------------------------------------------
@@ -1480,8 +1624,47 @@ with tab_data:
         else:
             st.success("\u2705 All required electrical measurement columns present.")
 
+        # ── Effective parameters banner ───────────────────────────────────
+        if meta:
+            _src_p   = meta.get("p_rated_source",   "nameplate")
+            _src_v   = meta.get("v_nominal_source",  "nameplate")
+            _src_i   = meta.get("i_rated_source",    "nameplate")
+            _src_pf  = meta.get("pf_rated_source",   "nameplate")
+            _src_eta = meta.get("eta_rated_source",  "nameplate")
+            _p_elec  = meta.get("p_rated_elec_kw", 0)
+            _v_nom   = meta.get("v_nominal_phase", 230)
+            _i_fla   = meta.get("i_rated", 0)
+            _pf      = meta.get("pf_rated", 0.87)
+            _eta     = meta.get("eta_rated", 0.90)
+
+            def _src_label(src):
+                if src == "nameplate":           return "nameplate"
+                if src == "estimated_from_data": return "\u26a0\ufe0f estimated from data"
+                if src == "estimated_default":   return "\u26a0\ufe0f default"
+                if src == "default_230v":        return "\u26a0\ufe0f default 230 V"
+                if src == "skipped":             return "\u26a0\ufe0f not set"
+                return src
+
+            _any_estimated = any(s != "nameplate" for s in [_src_p, _src_v, _src_i, _src_pf, _src_eta])
+            _param_lines = (
+                f"P_rated_elec = **{_p_elec:.1f} kW** ({_src_label(_src_p)})  |  "
+                f"V_nominal = **{_v_nom:.0f} V** ({_src_label(_src_v)})  |  "
+                f"FLA = **{_i_fla:.0f} A** ({_src_label(_src_i)})  |  "
+                f"PF = **{_pf:.2f}** ({_src_label(_src_pf)})  |  "
+                f"Efficiency = **{_eta:.2f}** ({_src_label(_src_eta)})"
+            )
+            if _any_estimated:
+                st.warning(
+                    f"\u26a0\ufe0f **Some nameplate values are missing \u2014 estimates used per \u00a72.5.**  \n"
+                    f"{_param_lines}  \n"
+                    f"Enter missing values in the \u26a1 **Electrical parameters** expander above."
+                )
+            else:
+                with st.expander("\u2139\ufe0f Effective parameters used for checks and analysis", expanded=False):
+                    st.caption(_param_lines)
+
         # ── Integrity checks §3.1 ─────────────────────────────────────────
-        meta_for_check = build_meta(machine_info)
+        meta_for_check = meta   # already resolved via §2.5 — single source of truth
         if not missing_cols and meta_for_check:
             with st.expander("\U0001f50d Integrity checks (§3.1) \u2014 Data tab", expanded=False):
                 st.caption(
@@ -1824,7 +2007,7 @@ with tab_analysis:
     if data is None or data.empty:
         st.info("Upload data first (sidebar), then run diagnostics.")
     else:
-        meta = build_meta(machine_info)
+        meta = st.session_state.get("effective_meta") or build_meta(machine_info)
         missing_cols = check_required_columns(data)
 
         if meta is None:
@@ -2400,7 +2583,9 @@ with tab_analysis:
                             "\u2502  \U0001f6ab **Grey line** = all raw data (not analysed)"
                         )
                         for fig in build_assessment_charts(
-                            _chart_data_w, record, cleaned_data=_cleaned_chart
+                            _chart_data_w, record,
+                            cleaned_data=_cleaned_chart,
+                            meta=meta,
                         ):
                             st.plotly_chart(fig, use_container_width=True)
 
