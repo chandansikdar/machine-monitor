@@ -1742,6 +1742,51 @@ with tab_analysis:
                             _cr = _migrate_cleaning_report(_bl_cr)
                             render_cleaning_report(_cr, title="Baseline data cleaning")
 
+                    # Baseline raw data viewer — shows exactly what was used
+                    with st.expander(
+                        f"\U0001f4cb View baseline data  ({_bl_start} to {_bl_end})",
+                        expanded=False
+                    ):
+                        try:
+                            _bl_start_ts2 = pd.Timestamp(_bl_start)
+                            _bl_end_ts2   = pd.Timestamp(_bl_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                            _bl_view_data = data.loc[
+                                (_bl_start_ts2 <= data.index) & (data.index <= _bl_end_ts2)
+                            ]
+                            if _bl_view_data.empty:
+                                st.warning(
+                                    "No data found for the stored baseline period. "
+                                    "This may indicate a date parsing issue in the ingested file. "
+                                    "Try deleting and re-ingesting the data file."
+                                )
+                                st.caption(
+                                    f"Baseline period: {_bl_start} to {_bl_end}  |  "
+                                    f"Data available: {data.index.min().date()} to {data.index.max().date()}"
+                                )
+                            else:
+                                _n_bl_rows = len(_bl_view_data)
+                                st.caption(
+                                    f"{_n_bl_rows:,} rows  |  "
+                                    f"{_bl_view_data.index.min().strftime('%Y-%m-%d %H:%M')} "
+                                    f"to {_bl_view_data.index.max().strftime('%Y-%m-%d %H:%M')}"
+                                )
+                                st.dataframe(
+                                    _bl_view_data.head(100),
+                                    use_container_width=True,
+                                    height=250,
+                                )
+                                _bl_dl = _bl_view_data.reset_index()
+                                _bl_dl = _bl_dl[[c for c in _bl_dl.columns if not c.startswith("_")]]
+                                st.download_button(
+                                    label=f"\u2b07\ufe0f Download baseline data ({_n_bl_rows:,} rows, CSV)",
+                                    data=_bl_dl.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"baseline_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True,
+                                )
+                        except Exception as _bl_e:
+                            st.error(f"Could not load baseline data: {_bl_e}")
+
                     if st.button("Delete baseline", key="del_baseline_btn",
                                  type="secondary", use_container_width=True):
                         db.delete_baseline(selected_id)
