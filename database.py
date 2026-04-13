@@ -205,6 +205,7 @@ class Database:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.set_index("timestamp")
             df = self._fix_swapped_month_day(df)
+            df = df.sort_index()          # re-sort after date correction
             df = self._coerce_numeric(df)
             return df
         except Exception:
@@ -225,9 +226,21 @@ class Database:
             """).df()
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.set_index("timestamp")
-            df = self._fix_swapped_month_day(df)
-            df = self._coerce_numeric(df)
-            return df
+            fixed = self._fix_swapped_month_day(df)
+            was_fixed = not fixed.index.equals(df.index)
+            fixed = fixed.sort_index()     # re-sort after date correction
+            fixed = self._coerce_numeric(fixed)
+            # Re-save the corrected CSV so the on-disk file is also fixed permanently
+            if was_fixed:
+                try:
+                    corrected = fixed.reset_index()
+                    # Drop sidecar columns before saving
+                    corrected = corrected[[c for c in corrected.columns
+                                          if not c.startswith("_")]]
+                    corrected.to_csv(target, index=False)
+                except Exception:
+                    pass   # Non-critical — data is correct in memory even if save fails
+            return fixed
         except Exception:
             return None
 
