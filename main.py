@@ -2132,72 +2132,89 @@ with tab_analysis:
                                 "removed at each cleaning step."
                             )
 
-                            # Re-derive removed rows at each step using clean_samples
+                            # Re-derive removed rows per step using same logic as clean_samples
                             _raw_w = scale_power_to_watts(
                                 (_raw_for_dl if _raw_for_dl is not None else
-                                 data.loc[(pd.Timestamp(date_range[0]) <= data.index) &
-                                          (data.index <= pd.Timestamp(date_range[1]) +
-                                           pd.Timedelta(days=1) - pd.Timedelta(seconds=1))]
-                                ).reset_index(), meta.get("power_unit", "W")
+                                 data.loc[
+                                     (pd.Timestamp(date_range[0]) <= data.index) &
+                                     (data.index <= pd.Timestamp(date_range[1]) +
+                                      pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+                                 ]).reset_index(), meta.get("power_unit", "W")
                             )
-
-                            # Derive step masks using same logic as clean_samples
-                            _p_rated_e = float(meta.get("p_rated_shaft_kw", 0)) / float(meta.get("eta_rated", 0.9))
+                            _p_rated_e = (float(meta.get("p_rated_shaft_kw", 0)) /
+                                          float(meta.get("eta_rated", 0.9)))
                             _load_min  = 0.40 * _p_rated_e * 1000.0
                             _cold_min  = 0.01 * _p_rated_e * 1000.0
-                            _pt = (_raw_w["phase_1_active_power"] +
-                                   _raw_w["phase_2_active_power"] +
-                                   _raw_w["phase_3_active_power"])
+                            _pt_raw    = (_raw_w["phase_1_active_power"] +
+                                          _raw_w["phase_2_active_power"] +
+                                          _raw_w["phase_3_active_power"])
 
-                            # Step 1 removed
-                            _s1_mask    = _pt >= _load_min
-                            _removed_s1 = _raw_w[~_s1_mask].copy()
-                            _after_s1   = _raw_w[_s1_mask].copy()
+                            # Step 1 — load precondition
+                            _s1_pass  = _raw_w[_pt_raw >= _load_min].copy()
+                            _s1_fail  = _raw_w[_pt_raw <  _load_min].copy()
+                            _s1_fail["removed_at_step"] = "Step 1 - Load precondition (<40% rated)"
 
-                            # Step 2 removed (start transient)
-                            _cleaned_ts = set(_cleaned["timestamp"].astype(str)) \
-                                          if "timestamp" in _cleaned.columns \
-                                          else set(_cleaned.index.astype(str))
-                            _after_s1_ts = set(_after_s1["timestamp"].astype(str)) \
-                                           if "timestamp" in _after_s1.columns \
-                                           else set(_after_s1.index.astype(str))
-                            # Rows in after_s1 but not in after_s2 = start transient removed
-                            _after_s2_n   = _cr.n_after_start_transient
-                            # Use row counts from report to identify s2 removed
-                            # (exact rows need the same transient logic — approximate by
-                            #  rows present after s1 but absent in cleaned and not s3/s4)
-                            # Best approach: re-run clean_samples capturing each stage
-                            _bm_for_dl = baseline_from_dict(db.get_baseline(selected_id))
-                            _uf = _bm_for_dl.user_filter_expr if _bm_for_dl else None
-                            # Get full cleaned step-by-step via separate calls
-                            # Step 1 only
-                            _meta_s = meta.copy()
-                            _after_s1_full, _ = clean_samples(
-                                _raw_w, _meta_s, user_filter=None
-                            )
-                            # That gives us final; we need intermediate.
-                            # Simplest: mark removed = in raw but timestamp not in cleaned
-                            _cleaned_ts_set = set(
-                                (_cleaned["timestamp"] if "timestamp" in _cleaned.columns
-                                 else _cleaned.index).astype(str)
-                            )
-                            _raw_ts_set = set(_raw_w["timestamp"].astype(str))
-                            _removed_all = _raw_w[
-                                ~_raw_w["timestamp"].astype(str).isin(_cleaned_ts_set)
-                            ].copy()
-                            _removed_s1_ts = set(_removed_s1["timestamp"].astype(str))
+                            # Step 2 — start transient
+                            _prev_below = _pt_raw.shift(1, fill_value=0.0) < _cold_min
+                            _curr_above = _pt_raw >= _cold_min
+                            _crossing   = _raw_w.index[_prev_below & _curr_above]
+                            _transient_ts: set = set()
+                            for _ci in _crossing:
+                                _loc = _raw_w.index.get_loc(_ci)
+                                for _off in range(2):   # COLD_START_TRANSIENT_SAMPLES = 2
+                                    if _loc + _off < len(_raw_w):
+                                        _transient_ts.add(
+                                            str(_raw_w.iloc[_loc + _off]["timestamp"])
+                                        )
+                            _s1_pass_ts = _s1_pass["timestamp"].astype(str)
+                            _s2_fail    = _s1_pass[_s1_pass_ts.isin(_transient_ts)].copy()
+                            _s2_pass    = _s1_pass[~_s1_pass_ts.isin(_transient_ts)].copy()
+                            _s2_fail["removed_at_step"] = "Step 2 - Start transient exclusion"
 
-                            # Categorise removed rows
-                            _removed_s1_dl   = _removed_s1.copy()
-                            _removed_other   = _removed_all[
-                                ~_removed_all["timestamp"].astype(str).isin(_removed_s1_ts)
-                            ].copy()
-                            # Label removed_other by step (approximate — marks all as post-S1)
-                            _removed_s1_dl["removed_at_step"]   = "Step 1 - Load precondition (<40% rated)"
-                            _removed_other["removed_at_step"]    = "Step 2/3/4 - Transient / User filter / IQR"
+                            # Step 3 — user filter
+                            _bm_for_dl2 = baseline_from_dict(db.get_baseline(selected_id))
+                            _uf = _bm_for_dl2.user_filter_expr if _bm_for_dl2 else None
+                            if _uf and len(_s2_pass) > 0:
+                                try:
+                                    _s3_pass = _s2_pass.query(_uf).copy()
+                                    _s3_fail = _s2_pass[
+                                        ~_s2_pass.index.isin(_s3_pass.index)
+                                    ].copy()
+                                    _s3_fail["removed_at_step"] = "Step 3 - User filter"
+                                except Exception:
+                                    _s3_pass = _s2_pass.copy()
+                                    _s3_fail = pd.DataFrame(columns=_s2_pass.columns)
+                            else:
+                                _s3_pass = _s2_pass.copy()
+                                _s3_fail = pd.DataFrame(columns=_s2_pass.columns)
 
+                            # Step 4 — IQR rejection
+                            _s4_fail = pd.DataFrame(columns=_s3_pass.columns)
+                            if len(_s3_pass) >= 4:
+                                _pt4  = (_s3_pass["phase_1_active_power"] +
+                                         _s3_pass["phase_2_active_power"] +
+                                         _s3_pass["phase_3_active_power"])
+                                _ia4  = (_s3_pass["phase_1_current"] +
+                                         _s3_pass["phase_2_current"] +
+                                         _s3_pass["phase_3_current"]) / 3.0
+                                _ss4  = (_s3_pass["phase_1_voltage"] * _s3_pass["phase_1_current"] +
+                                         _s3_pass["phase_2_voltage"] * _s3_pass["phase_2_current"] +
+                                         _s3_pass["phase_3_voltage"] * _s3_pass["phase_3_current"])
+                                _pf4  = _pt4 / _ss4.replace(0, float("nan"))
+                                _keep4 = pd.Series(True, index=_s3_pass.index)
+                                for _sig in (_pt4, _ia4, _pf4):
+                                    _q25 = _sig.quantile(0.25); _q75 = _sig.quantile(0.75)
+                                    _iqr = _q75 - _q25
+                                    _keep4 &= _sig.between(
+                                        _q25 - 1.5 * _iqr, _q75 + 1.5 * _iqr, inclusive="both"
+                                    )
+                                _s4_fail = _s3_pass[~_keep4].copy()
+                                _s4_fail["removed_at_step"] = "Step 4 - IQR outlier rejection"
+
+                            # Combine all removed rows
                             _removed_all_labelled = pd.concat(
-                                [_removed_s1_dl, _removed_other], ignore_index=True
+                                [_s1_fail, _s2_fail, _s3_fail, _s4_fail],
+                                ignore_index=True
                             )
                             _n_removed = len(_removed_all_labelled)
 
@@ -2206,8 +2223,10 @@ with tab_analysis:
 
                             with _dc1:
                                 st.markdown(f"**\u2705 Cleaned ({_n_cleaned:,} rows)**")
-                                _dl_cleaned = _to_dl_unit(_cleaned if "timestamp" in _cleaned.columns
-                                                          else _cleaned.reset_index())
+                                _dl_cleaned = _to_dl_unit(
+                                    _cleaned if "timestamp" in _cleaned.columns
+                                    else _cleaned.reset_index()
+                                )
                                 st.download_button(
                                     label=f"\u2b07\ufe0f Download {_n_cleaned:,} cleaned rows (CSV)",
                                     data=_dl_cleaned.to_csv(index=False).encode("utf-8"),
