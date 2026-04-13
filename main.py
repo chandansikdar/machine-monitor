@@ -1412,6 +1412,8 @@ with tab_data:
                     "Failed samples are flagged below \u2014 they will not enter the analysis pipeline."
                 )
                 _raw_reset = data.reset_index()
+                # Drop rows with null/NaT timestamp — empty trailing rows from CSV
+                _raw_reset = _raw_reset[_raw_reset["timestamp"].notna()].copy()
                 _scaled    = scale_power_to_watts(_raw_reset, meta_for_check.get("power_unit", "W"))
 
                 # ── Check 0: Non-numeric — scan BEFORE any coercion ──────────
