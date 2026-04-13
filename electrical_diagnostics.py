@@ -278,7 +278,10 @@ def integrity_gate(row: pd.Series, meta: dict) -> IntegrityResult:
     v1, v2, v3 = float(row["phase_1_voltage"]), float(row["phase_2_voltage"]), float(row["phase_3_voltage"])
     i1, i2, i3 = float(row["phase_1_current"]), float(row["phase_2_current"]), float(row["phase_3_current"])
     p_total = p1 + p2 + p3
-    p_rated_elec = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
+    # meta["p_rated_shaft_kw"] guaranteed non-zero by resolve_effective_meta (§2.5)
+    _p_shaft_ig = float(meta.get("p_rated_shaft_kw", 0))
+    _eta_ig     = float(meta.get("eta_rated", 0.90))
+    p_rated_elec = (_p_shaft_ig / _eta_ig) if (_p_shaft_ig > 0 and _eta_ig > 0) else 1.0
     running = p_total > RUNNING_THRESHOLD_FRACTION * p_rated_elec * 1000.0
 
     # --- Check 1: Voltage plausibility ---
@@ -454,7 +457,18 @@ def clean_samples(
     user_filter : optional pandas query string applied at step 3
     """
     report = CleaningReport(n_raw=len(raw))
-    p_rated_elec = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
+    # meta["p_rated_shaft_kw"] is guaranteed non-zero by resolve_effective_meta (§2.5)
+    # which runs once after data ingestion and fills in data-derived estimates.
+    p_shaft = float(meta.get("p_rated_shaft_kw", 0))
+    eta     = float(meta.get("eta_rated", 0.90))
+    if p_shaft > 0 and eta > 0:
+        p_rated_elec = p_shaft / eta
+    else:
+        # Fallback only if called without resolved meta (e.g. unit tests)
+        _pt_fb = (raw["phase_1_active_power"] + raw["phase_2_active_power"]
+                  + raw["phase_3_active_power"])
+        _p95fb = float(_pt_fb[_pt_fb > 0].quantile(0.95)) / 1000.0 if (_pt_fb > 0).any() else 1.0
+        p_rated_elec = _p95fb / 0.95
     load_min_w   = LOAD_PRECONDITION_FRACTION * p_rated_elec * 1000.0
     cold_min_w   = COLD_START_THRESHOLD_FRACTION * p_rated_elec * 1000.0
 
@@ -762,8 +776,11 @@ def validate_baseline_state(
     Issues user-facing messages if baseline IUF or PF are already elevated.
     """
     state = BaselineState()
-    p_rated_elec = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
-    pf_nameplate = float(meta["pf_rated"])
+    # meta["p_rated_shaft_kw"] guaranteed non-zero by resolve_effective_meta (§2.5)
+    _p_shaft_vbs = float(meta.get("p_rated_shaft_kw", 0))
+    _eta_vbs     = float(meta.get("eta_rated", 0.90))
+    p_rated_elec = (_p_shaft_vbs / _eta_vbs) if (_p_shaft_vbs > 0 and _eta_vbs > 0) else 1.0
+    pf_nameplate = float(meta.get("pf_rated", 0))
 
     # 6.5.1 Baseline IUF check
     if len(cleaned_baseline) > 0:
@@ -1194,17 +1211,18 @@ def ingest_baseline(
     4. Validate the baseline state (\u00a76.5).
     5. Return BaselineMetadata for storage.
     """
+    # meta["p_rated_shaft_kw"] is guaranteed non-zero by resolve_effective_meta (§2.5).
     p_shaft = float(meta.get("p_rated_shaft_kw", 0))
-    eta     = float(meta.get("eta_rated", 0))
+    eta     = float(meta.get("eta_rated", 0.90))
     if p_shaft > 0 and eta > 0:
         p_rated_elec = p_shaft / eta
     else:
-        # Rated power not saved — estimate from 95th percentile of baseline data
+        # Fallback only if called without resolved meta
         _pt_bl = (raw_baseline["phase_1_active_power"] +
                   raw_baseline["phase_2_active_power"] +
                   raw_baseline["phase_3_active_power"])
         _p95   = float(_pt_bl[_pt_bl > 0].quantile(0.95)) / 1000.0 if len(_pt_bl[_pt_bl > 0]) > 0 else 0.0
-        p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0  # fallback 1 kW avoids zero-division
+        p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0
     bm = BaselineMetadata(
         timestamp_start=raw_baseline["timestamp"].min() if "timestamp" in raw_baseline.columns else None,
         timestamp_end=raw_baseline["timestamp"].max() if "timestamp" in raw_baseline.columns else None,
