@@ -934,6 +934,7 @@ for _k, _v in [
     ("last_data",               None),
     ("last_cleaned_data",       None),
     ("last_integrity_passed_ts", None),  # set of timestamps that passed all integrity checks
+    ("baseline_ic_excluded",     0),     # rows excluded from last baseline ingest by integrity filter
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -1826,6 +1827,13 @@ with tab_analysis:
                         if _bl_p_avg else
                         f"\u2705 Baseline ingested {_stored_at} \u2014 {_n_bands} PF band(s)"
                     )
+                    _bl_ic_excl = st.session_state.get("baseline_ic_excluded", 0)
+                    if _bl_ic_excl and _bl_ic_excl > 0:
+                        st.warning(
+                            f"\u26a0\ufe0f **{_bl_ic_excl:,} rows were excluded from this baseline** "
+                            f"because they failed integrity checks (wiring/CT faults). "
+                            f"Only integrity-passed rows were used to build PF bands."
+                        )
                     for _w in _bl_warns:
                         st.caption(f"\u26a0\ufe0f {_w}")
 
@@ -1847,6 +1855,25 @@ with tab_analysis:
                             _bl_view_data = data.loc[
                                 (_bl_start_ts2 <= data.index) & (data.index <= _bl_end_ts2)
                             ]
+                            # Apply integrity filter so viewer shows only rows
+                            # that actually entered the baseline
+                            _ic_ts_view = st.session_state.get("last_integrity_passed_ts")
+                            _bl_view_data, _bl_view_excluded = apply_integrity_filter(
+                                _bl_view_data, _ic_ts_view
+                            )
+                            if _bl_view_excluded > 0:
+                                st.warning(
+                                    f"\u26a0\ufe0f {_bl_view_excluded:,} rows removed by integrity checks "
+                                    f"(wiring/CT faults) and excluded from this baseline. "
+                                    f"{len(_bl_view_data):,} rows shown below are what was actually used."
+                                )
+                            elif _ic_ts_view is None:
+                                st.info(
+                                    "\u2139\ufe0f Integrity checks have not been run for this session. "
+                                    "Row count below may include wiring-fault rows. "
+                                    "Open the \U0001f50d Integrity checks expander in the Data tab "
+                                    "and re-ingest baseline to apply filtering."
+                                )
                             if _bl_view_data.empty:
                                 st.warning(
                                     "No data found for the stored baseline period. "
@@ -1860,7 +1887,7 @@ with tab_analysis:
                             else:
                                 _n_bl_rows = len(_bl_view_data)
                                 st.caption(
-                                    f"{_n_bl_rows:,} rows  |  "
+                                    f"{_n_bl_rows:,} rows (integrity-passed)  |  "
                                     f"{_bl_view_data.index.min().strftime('%Y-%m-%d %H:%M')} "
                                     f"to {_bl_view_data.index.max().strftime('%Y-%m-%d %H:%M')}"
                                 )
@@ -1920,6 +1947,7 @@ with tab_analysis:
                         # Apply integrity filter — exclude rows that failed checks
                         _ic_passed_ts = st.session_state.get("last_integrity_passed_ts")
                         _raw_bl, _bl_excluded = apply_integrity_filter(_raw_bl, _ic_passed_ts)
+                        st.session_state["baseline_ic_excluded"] = _bl_excluded
                         if _ic_passed_ts is None:
                             st.info(
                                 "\u2139\ufe0f Integrity checks have not been run yet. "
