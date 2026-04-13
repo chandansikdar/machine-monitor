@@ -1491,9 +1491,12 @@ with tab_data:
                 for _mc in _MEAS:
                     _orig_col = f"_orig_{_mc}"
                     if _orig_col in _pre_failed_df.columns:
-                        _orig_vals = _pre_failed_df[_orig_col]
-                        _has_orig  = _orig_vals.astype(str) != ""
-                        _pre_failed_df.loc[_has_orig, _mc] = _orig_vals[_has_orig]
+                        _orig_vals = _pre_failed_df[_orig_col].astype(str)
+                        _has_orig  = _orig_vals.str.strip() != ""
+                        if _has_orig.any():
+                            # Convert to object dtype first to allow string assignment
+                            _pre_failed_df[_mc] = _pre_failed_df[_mc].astype(object)
+                            _pre_failed_df.loc[_has_orig, _mc] = _orig_vals[_has_orig]
                         _pre_failed_df = _pre_failed_df.drop(columns=[_orig_col])
 
                 import json as _json
