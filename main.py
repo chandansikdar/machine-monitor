@@ -1340,8 +1340,8 @@ st.title(f"{machine_info['machine_type']}  \u00b7  {selected_id}")
 
 with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_meta(machine_info)):
     st.caption(
-        "Enter values from the motor nameplate. Fields left blank use the estimated "
-        "value shown below them. Estimates are derived per \u00a72.5 and flagged in the platform."
+        "Enter values from the motor nameplate. Fields left blank use the estimated or assumed "
+        "value shown below them \u2014 derived per \u00a72.5 and flagged throughout the platform."
     )
     _desc = machine_info.get("description", "")
     _em   = parse_electrical_meta(_desc)
@@ -1356,13 +1356,13 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
 
     # Helper: caption to show under each field
     def _est_note(col, key, label, fmt, unit, note=""):
-        """Show orange 'Estimated: X' note when nameplate value is not saved."""
+        """Show orange 'Estimated/Assumed: X' note when nameplate value is not saved."""
         if not _is_saved(key):
             eff_val = _eff.get(key, 0)
             if eff_val:
-                col.caption(f"\u26a0\ufe0f Estimated: {eff_val:{fmt}} {unit}{' ' + note if note else ''}")
+                col.caption(f"\u26a0\ufe0f Estimated/Assumed: {eff_val:{fmt}} {unit}{' \u2014 ' + note if note else ''}")
             else:
-                col.caption(f"\u26a0\ufe0f {label} not set")
+                col.caption(f"\u26a0\ufe0f {label} not entered")
 
     # Helper: field display value — saved value or estimated value or blank
     def _field_display(key, fmt):
@@ -1403,7 +1403,7 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         help="Nameplate full-load current (FLA).",
     )
     if not _is_saved("i_rated"):
-        _c3.caption("\u26a0\ufe0f Not set \u2014 Check 2 (current plausibility) will be skipped")
+        _c3.caption("\u26a0\ufe0f Not entered \u2014 Check 2 (current plausibility) will be skipped")
 
     # Row 2 — PF, Efficiency, Panel checkbox
     _c4, _c5, _c6 = st.columns(3)
@@ -1638,11 +1638,11 @@ with tab_data:
             _eta     = meta.get("eta_rated", 0.90)
 
             def _src_label(src):
-                if src == "nameplate":           return "nameplate"
+                if src == "nameplate":           return "\u2705 from nameplate"
                 if src == "estimated_from_data": return "\u26a0\ufe0f estimated from data"
-                if src == "estimated_default":   return "\u26a0\ufe0f default"
-                if src == "default_230v":        return "\u26a0\ufe0f default 230 V"
-                if src == "skipped":             return "\u26a0\ufe0f not set"
+                if src == "estimated_default":   return "\u26a0\ufe0f assumed default"
+                if src == "default_230v":        return "\u26a0\ufe0f assumed 230 V"
+                if src == "skipped":             return "\u26a0\ufe0f not set - check skipped"
                 return src
 
             _any_estimated = any(s != "nameplate" for s in [_src_p, _src_v, _src_i, _src_pf, _src_eta])
@@ -1655,9 +1655,9 @@ with tab_data:
             )
             if _any_estimated:
                 st.warning(
-                    f"\u26a0\ufe0f **Some nameplate values are missing \u2014 estimates used per \u00a72.5.**  \n"
+                    f"\u26a0\ufe0f **Some parameters not entered \u2014 estimated/assumed values used per \u00a72.5.**  \n"
                     f"{_param_lines}  \n"
-                    f"Enter missing values in the \u26a1 **Electrical parameters** expander above."
+                    f"Enter correct values in the \u26a1 **Electrical parameters** expander above."
                 )
             else:
                 with st.expander("\u2139\ufe0f Effective parameters used for checks and analysis", expanded=False):
