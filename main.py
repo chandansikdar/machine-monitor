@@ -712,49 +712,75 @@ def render_assessment(record: AssessmentRecord):
 # Assessment charts
 # ---------------------------------------------------------------------------
 
-def build_assessment_charts(data: pd.DataFrame, record: AssessmentRecord) -> list:
-    """Build control charts for VUF, P_total and PF_machine from the full dataset."""
+def build_assessment_charts(
+    data: pd.DataFrame,
+    record: AssessmentRecord,
+    cleaned_data: pd.DataFrame | None = None,
+) -> list:
+    """Build control charts for VUF, P_total and PF_machine.
+
+    Shows cleaned samples (used for analysis) in solid blue.
+    Non-cleaned samples are shown as faded grey in the background so
+    the user can see the full time window without confusing stopped
+    periods with analysed data.
+    """
     figs = []
     if data is None or data.empty:
         return figs
-
     missing = check_required_columns(data)
     if missing:
         return figs
 
-    v1 = data["phase_1_voltage"]
-    v2 = data["phase_2_voltage"]
-    v3 = data["phase_3_voltage"]
-    v_avg = (v1 + v2 + v3) / 3.0
-    vuf = (
-        pd.concat([
-            (v1 - v_avg).abs(),
-            (v2 - v_avg).abs(),
-            (v3 - v_avg).abs(),
-        ], axis=1).max(axis=1) / v_avg * 100.0
-    )
+    def _derive(df):
+        v1 = df["phase_1_voltage"]
+        v2 = df["phase_2_voltage"]
+        v3 = df["phase_3_voltage"]
+        v_avg = (v1 + v2 + v3) / 3.0
+        vuf = (pd.concat([(v1-v_avg).abs(),(v2-v_avg).abs(),(v3-v_avg).abs()],
+                         axis=1).max(axis=1) / v_avg.replace(0, np.nan) * 100.0)
+        i1=df["phase_1_current"]; i2=df["phase_2_current"]; i3=df["phase_3_current"]
+        p_w = df["phase_1_active_power"]+df["phase_2_active_power"]+df["phase_3_active_power"]
+        p_kw = p_w / 1000.0
+        s_sum = v1*i1 + v2*i2 + v3*i3
+        pf = (p_w / s_sum.replace(0, np.nan)).clip(0, 1)
+        return vuf, p_kw, pf
 
-    i1 = data["phase_1_current"]
-    i2 = data["phase_2_current"]
-    i3 = data["phase_3_current"]
+    # Raw (full window) — used as faded background
+    raw_vuf, raw_p_kw, raw_pf = _derive(data)
 
-    p_total_w = (data["phase_1_active_power"] + data["phase_2_active_power"]
-                 + data["phase_3_active_power"])
-    p_total_kw = p_total_w / 1000.0
-
-    s_sum = v1 * i1 + v2 * i2 + v3 * i3
-    pf_machine = (p_total_w / s_sum.replace(0, np.nan)).clip(0, 1)
+    # Cleaned (analysis samples) — primary series
+    if cleaned_data is not None and not cleaned_data.empty:
+        cln_idx = cleaned_data.index if hasattr(cleaned_data.index, "name") else cleaned_data.index
+        cl_vuf, cl_p_kw, cl_pf = _derive(cleaned_data)
+        has_cleaned = True
+    else:
+        has_cleaned = False
 
     baseline = record.motor_side
 
-    def _line_chart(x, y, title, y_label, h_lines=None, y_range=None):
+    def _chart(raw_x, raw_y, cl_x, cl_y, title, y_label,
+               h_lines=None, y_range=None, show_cleaned=True):
         fig = go.Figure()
+
+        # Background: all raw data (faded grey)
         fig.add_trace(go.Scatter(
-            x=x, y=y, mode="lines",
-            line=dict(color="#185FA5", width=1.2),
-            name=y_label,
-            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + y_label + ": %{y:.3f}<extra></extra>",
+            x=raw_x, y=raw_y, mode="lines",
+            line=dict(color="rgba(180,180,180,0.45)", width=0.8),
+            name="All data (not analysed)",
+            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + y_label + ": %{y:.3f} (raw)<extra></extra>",
+            showlegend=True,
         ))
+
+        # Foreground: cleaned / analysed data (solid blue)
+        if show_cleaned and cl_x is not None and cl_y is not None:
+            fig.add_trace(go.Scatter(
+                x=cl_x, y=cl_y, mode="markers",
+                marker=dict(color="#185FA5", size=2.5, opacity=0.85),
+                name="Cleaned (used for analysis)",
+                hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + y_label + ": %{y:.3f}<extra></extra>",
+                showlegend=True,
+            ))
+
         for val, colour, dash, name in (h_lines or []):
             fig.add_hline(
                 y=val, line_color=colour, line_dash=dash, line_width=1.5,
@@ -767,44 +793,51 @@ def build_assessment_charts(data: pd.DataFrame, record: AssessmentRecord) -> lis
             yaxis=dict(range=y_range) if y_range else {},
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=40, r=20, t=45, b=40),
-            hovermode="x unified", font=dict(size=11), height=280,
+            hovermode="x unified", font=dict(size=11), height=300,
+            legend=dict(orientation="h", yanchor="bottom", y=1.01,
+                        xanchor="left", x=0, font=dict(size=10)),
         )
         return fig
 
+    cl_idx = cleaned_data.index if has_cleaned else None
+
     # VUF chart
-    figs.append(_line_chart(
-        data.index, vuf,
+    figs.append(_chart(
+        data.index, raw_vuf,
+        cl_idx, cl_vuf if has_cleaned else None,
         "Zone 1 \u2014 Voltage Unbalance Factor (VUF)", "VUF (%)",
         h_lines=[
             (VUF_CRITICAL, "#C0392B", "solid",  f"Critical {VUF_CRITICAL:.1f}%"),
             (VUF_WATCH,    "#E67E22", "dash",   f"Watch {VUF_WATCH:.1f}%"),
         ],
-        y_range=[0, max(float(vuf.max()) * 1.3, VUF_CRITICAL * 1.5)],
+        y_range=[0, max(float(raw_vuf.max()) * 1.3, VUF_CRITICAL * 1.5)],
     ))
 
-    # P_total chart — add baseline mean if available
+    # P_total chart
     p_hlines = []
     if record.zone4 and record.zone4.p_baseline_avg_kw:
         p_hlines.append((
             record.zone4.p_baseline_avg_kw, "#054D5F", "dashdot",
             f"Baseline avg {record.zone4.p_baseline_avg_kw:.1f} kW",
         ))
-    figs.append(_line_chart(
-        data.index, p_total_kw,
+    figs.append(_chart(
+        data.index, raw_p_kw,
+        cl_idx, cl_p_kw if has_cleaned else None,
         "Total Active Power (P_total)", "P_total (kW)",
         h_lines=p_hlines or None,
     ))
 
-    # PF_machine chart — add per-band baselines if available
+    # PF_machine chart
     pf_hlines = []
     if baseline and baseline.bands:
-        for b in baseline.bands[:6]:  # cap at 6 to keep chart readable
+        for b in baseline.bands[:6]:
             pf_hlines.append((
                 b.mean_pf_baseline, "rgba(180,180,180,0.6)", "dot",
                 f"Band {b.centre_kw:.0f} kW baseline PF",
             ))
-    figs.append(_line_chart(
-        data.index, pf_machine,
+    figs.append(_chart(
+        data.index, raw_pf,
+        cl_idx, cl_pf if has_cleaned else None,
         "Machine Power Factor (PF_machine)", "PF_machine",
         h_lines=pf_hlines or None,
         y_range=[0, 1.05],
@@ -1753,10 +1786,24 @@ with tab_analysis:
                     if _chart_data is None:
                         _chart_data = data
                     if _chart_data is not None:
-                        _chart_data_w = scale_power_to_watts(_chart_data.reset_index(), meta.get("power_unit", "W")).set_index("timestamp")
+                        _chart_data_w  = scale_power_to_watts(
+                            _chart_data.reset_index(), meta.get("power_unit", "W")
+                        ).set_index("timestamp")
+                        _cleaned_chart = st.session_state.get("last_cleaned_data")
+                        # Ensure cleaned data has a proper datetime index
+                        if _cleaned_chart is not None and not _cleaned_chart.empty:
+                            if "timestamp" in _cleaned_chart.columns:
+                                _cleaned_chart = _cleaned_chart.set_index("timestamp")
+                            _cleaned_chart.index = pd.to_datetime(_cleaned_chart.index)
                         st.markdown("---")
                         st.subheader("Charts")
-                        for fig in build_assessment_charts(_chart_data_w, record):
+                        st.caption(
+                            "\U0001f7e2 **Blue dots** = cleaned samples used for analysis  "
+                            "\u2502  \U0001f6ab **Grey line** = all raw data (not analysed)"
+                        )
+                        for fig in build_assessment_charts(
+                            _chart_data_w, record, cleaned_data=_cleaned_chart
+                        ):
                             st.plotly_chart(fig, use_container_width=True)
 
 
