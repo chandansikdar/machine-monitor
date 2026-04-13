@@ -271,6 +271,34 @@ def run_integrity_checks(df_json: str, meta_json: str):
     df    = pd.read_json(_io.StringIO(df_json), orient="split")
     meta  = _json.loads(meta_json)
 
+    # ── Check 0 — Non-numeric values ────────────────────────────────────────
+    # Coerce all measurement columns to numeric. Any row where this produces a
+    # NaN that was not already NaN (i.e. a non-numeric string was present) is
+    # flagged and excluded from all subsequent checks.
+    MEAS_COLS = [
+        "phase_1_voltage", "phase_2_voltage", "phase_3_voltage",
+        "phase_1_current", "phase_2_current", "phase_3_current",
+        "phase_1_active_power", "phase_2_active_power", "phase_3_active_power",
+    ]
+    fail_check  = pd.Series("", index=df.index)
+    fail_reason = pd.Series("", index=df.index)
+
+    for col in MEAS_COLS:
+        if col not in df.columns:
+            continue
+        original   = df[col]
+        coerced    = pd.to_numeric(original, errors="coerce")
+        # Non-numeric = was not NaN before but became NaN after coercion
+        non_num    = coerced.isna() & ~original.isna()
+        if non_num.any():
+            c0 = non_num & (fail_check == "")
+            fail_check  = fail_check.where(~c0, "check_0_non_numeric")
+            fail_reason = fail_reason.where(~c0,
+                f"{col} contains non-numeric value "
+                f"'{original[non_num].iloc[0]}' — cannot be used for diagnostics")
+        # Replace non-numeric with NaN so downstream checks work cleanly
+        df[col] = coerced
+
     v_nom       = float(meta.get("v_nominal_phase", 230))
     p_shaft_kw  = float(meta.get("p_rated_shaft_kw", 0))
     eta         = float(meta.get("eta_rated", 0.90))
@@ -292,9 +320,6 @@ def run_integrity_checks(df_json: str, meta_json: str):
 
     run_thr = 0.05 * p_rated * 1000.0   # 5% of rated electrical input (W)
     running = p_total > run_thr
-
-    fail_check  = pd.Series("", index=df.index)
-    fail_reason = pd.Series("", index=df.index)
 
     # Check 1 — Voltage plausibility (skip V=0/NaN & I=0 simultaneously = powered down)
     v_lo = 0.85 * v_nom;  v_hi = 1.15 * v_nom;  v_max = 1.5 * v_nom
@@ -1403,10 +1428,10 @@ with tab_data:
         if not missing_cols and meta_for_check:
             with st.expander("\U0001f50d Integrity checks (§3.1) \u2014 Data tab", expanded=False):
                 st.caption(
-                    "Five integrity checks per §3.1 of the methodology. "
-                    "These run once at upload to catch wiring errors, CT faults, "
-                    "channel pairing errors, and physically impossible values. "
-                    "Failed samples are flagged below — they will not enter the analysis pipeline."
+                    "Six integrity checks per §3.1 of the methodology. "
+                    "Check 0 validates data type (non-numeric values excluded). "
+                    "Checks 1\u20135 validate physical plausibility. "
+                    "Failed samples are flagged below \u2014 they will not enter the analysis pipeline."
                 )
                 _raw_reset = data.reset_index()
                 _scaled    = scale_power_to_watts(_raw_reset, meta_for_check.get("power_unit", "W"))
@@ -1449,6 +1474,7 @@ with tab_data:
                     from collections import Counter
                     _check_counts = Counter(_fail_checks)
                     _check_labels = {
+                        "check_0_non_numeric":           "Check 0 \u2014 Non-numeric value in measurement column",
                         "check_1_voltage_plausibility":  "Check 1 \u2014 Voltage plausibility",
                         "check_2_current_plausibility":  "Check 2 \u2014 Current plausibility",
                         "check_3_power_sign_coherence":  "Check 3 \u2014 Power sign / sum coherence",
