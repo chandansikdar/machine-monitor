@@ -1441,9 +1441,27 @@ with tab_data:
                 _pre_failed_df["failure_check"]  = _pre_fail_check[_pre_failed_mask].values
                 _pre_failed_df["failure_reason"] = _pre_fail_reason[_pre_failed_mask].values
 
+                # Restore original bad string values from _orig_<col> sidecar columns
+                # so the downloaded failure report shows "12:00 AM" not NaN
+                _MEAS = [
+                    "phase_1_voltage","phase_2_voltage","phase_3_voltage",
+                    "phase_1_current","phase_2_current","phase_3_current",
+                    "phase_1_active_power","phase_2_active_power","phase_3_active_power",
+                ]
+                for _mc in _MEAS:
+                    _orig_col = f"_orig_{_mc}"
+                    if _orig_col in _pre_failed_df.columns:
+                        # Where the original sidecar has a non-empty string, use it
+                        _orig_vals = _pre_failed_df[_orig_col]
+                        _has_orig  = _orig_vals != ""
+                        _pre_failed_df.loc[_has_orig, _mc] = _orig_vals[_has_orig]
+                        _pre_failed_df = _pre_failed_df.drop(columns=[_orig_col])
+
                 import json as _json
-                # Drop sidecar before sending to run_integrity_checks
-                _scaled_clean = _scaled.drop(columns=[_flags_col], errors="ignore")
+                # Drop all sidecar columns before sending to run_integrity_checks
+                _sidecar_cols = [c for c in _scaled.columns
+                                 if c.startswith("_orig_") or c == _flags_col]
+                _scaled_clean = _scaled.drop(columns=_sidecar_cols, errors="ignore")
                 _ig = run_integrity_checks(
                     _scaled_clean.to_json(orient="split", date_format="iso"),
                     _json.dumps(meta_for_check),
