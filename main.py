@@ -1973,6 +1973,97 @@ with tab_analysis:
                                  type="secondary", use_container_width=True):
                         db.delete_baseline(selected_id)
                         st.rerun()
+
+                    # PF band histogram
+                    _bl_bands_raw = _stored_bl_dict.get("bands") or []
+                    if _bl_bands_raw:
+                        with st.expander(
+                            f"\U0001f4ca PF band histogram ({len(_bl_bands_raw)} bands)",
+                            expanded=False,
+                        ):
+                            st.caption(
+                                "Each bar is a 2%-wide power bin. Height = number of baseline "
+                                "samples in that bin. Colour = mean baseline PF. "
+                                "Only bands with \u22655 samples qualify for PF drift detection."
+                            )
+                            _bands_df = pd.DataFrame([
+                                {
+                                    "centre_kw":        round(b["centre_kw"] / 1000, 2),
+                                    "low_kw":           round(b.get("low_kw",  b["centre_kw"]) / 1000, 2),
+                                    "high_kw":          round(b.get("high_kw", b["centre_kw"]) / 1000, 2),
+                                    "n_baseline":       b["n_baseline"],
+                                    "mean_pf_baseline": round(b["mean_pf_baseline"], 4),
+                                }
+                                for b in _bl_bands_raw
+                            ]).sort_values("centre_kw")
+
+                            import plotly.graph_objects as _go2
+                            _fig_hist = _go2.Figure()
+
+                            # Bar chart — height = sample count, colour = PF
+                            _pf_min = _bands_df["mean_pf_baseline"].min()
+                            _pf_max = _bands_df["mean_pf_baseline"].max()
+                            _pf_range = max(_pf_max - _pf_min, 0.01)
+
+                            _colors = [
+                                f"rgba({int(5 + 200*(1 - (pf - _pf_min)/_pf_range))}, "
+                                f"{int(77 + 150*((pf - _pf_min)/_pf_range))}, "
+                                f"{int(95 + 100*((pf - _pf_min)/_pf_range))}, 0.85)"
+                                for pf in _bands_df["mean_pf_baseline"]
+                            ]
+
+                            _fig_hist.add_trace(_go2.Bar(
+                                x=_bands_df["centre_kw"],
+                                y=_bands_df["n_baseline"],
+                                width=(_bands_df["high_kw"] - _bands_df["low_kw"]) * 0.9,
+                                marker_color=_colors,
+                                customdata=list(zip(
+                                    _bands_df["mean_pf_baseline"],
+                                    _bands_df["low_kw"],
+                                    _bands_df["high_kw"],
+                                    _bands_df["n_baseline"],
+                                )),
+                                hovertemplate=(
+                                    "Band: %{customdata[1]:.1f} \u2013 %{customdata[2]:.1f} kW<br>"
+                                    "Samples: %{customdata[3]}<br>"
+                                    "Baseline PF: %{customdata[0]:.4f}<extra></extra>"
+                                ),
+                            ))
+
+                            # Minimum sample threshold line
+                            _fig_hist.add_hline(
+                                y=5, line_dash="dash", line_color="#C8A84B",
+                                line_width=1.5,
+                                annotation_text="Min 5 samples",
+                                annotation_position="top right",
+                                annotation_font_size=10,
+                            )
+
+                            _fig_hist.update_layout(
+                                xaxis_title="Band centre (kW)",
+                                yaxis_title="Baseline samples",
+                                height=300,
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                margin=dict(l=40, r=20, t=30, b=40),
+                                font=dict(size=11),
+                                showlegend=False,
+                                bargap=0.05,
+                            )
+                            st.plotly_chart(_fig_hist, use_container_width=True)
+
+                            # Table below the chart
+                            st.dataframe(
+                                _bands_df.rename(columns={
+                                    "centre_kw":        "Centre (kW)",
+                                    "low_kw":           "Low (kW)",
+                                    "high_kw":          "High (kW)",
+                                    "n_baseline":       "Baseline samples",
+                                    "mean_pf_baseline": "Baseline PF",
+                                }),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
                 else:
                     st.info("No baseline ingested yet.")
 
