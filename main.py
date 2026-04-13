@@ -1568,6 +1568,19 @@ with tab_data:
 
                 if _n_failed == 0:
                     st.success("\u2705 All samples passed all five integrity checks.")
+                    # Download passed data
+                    _passed_df = _scaled_clean.copy()
+                    _passed_df = _passed_df[[c for c in _passed_df.columns
+                                             if not c.startswith("_")]]
+                    if "timestamp" not in _passed_df.columns and _passed_df.index.name == "timestamp":
+                        _passed_df = _passed_df.reset_index()
+                    st.download_button(
+                        label=f"\u2b07\ufe0f Download all {_n_total:,} passed rows (CSV)",
+                        data=_passed_df.to_csv(index=False).encode("utf-8"),
+                        file_name=f"integrity_passed_{selected_id}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
                 else:
                     # Summary by check type
                     from collections import Counter
@@ -1592,6 +1605,7 @@ with tab_data:
                             f'\u274c <b>{_lbl}</b>: {_cnt:,} sample(s) failed</div>',
                             unsafe_allow_html=True,
                         )
+
                     # Build full failed rows export
                     _failed_full = _failed.copy()
                     _failed_full["failure_check"]  = _fail_checks
@@ -1603,22 +1617,57 @@ with tab_data:
                     )
                     _failed_full = _failed_full[_export_cols].reset_index(drop=True)
 
-                    # Download button — full list
-                    st.download_button(
-                        label=f"\u2b07\ufe0f Download all {_n_failed:,} failed rows (CSV)",
-                        data=_failed_full.to_csv(index=False).encode("utf-8"),
-                        file_name=f"integrity_failures_{selected_id}.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                    )
+                    # Two-column layout: failed | passed
+                    _col_fail, _col_pass = st.columns(2)
 
-                    # Preview first 10
-                    with st.expander(f"Preview first {min(10, _n_failed)} failed rows", expanded=False):
-                        st.dataframe(
-                            _failed_full.head(10),
+                    with _col_fail:
+                        st.markdown(f"**\u274c Failed rows ({_n_failed:,})**")
+                        st.download_button(
+                            label=f"\u2b07\ufe0f Download {_n_failed:,} failed rows (CSV)",
+                            data=_failed_full.to_csv(index=False).encode("utf-8"),
+                            file_name=f"integrity_failures_{selected_id}.csv",
+                            mime="text/csv",
                             use_container_width=True,
-                            hide_index=True,
                         )
+                        with st.expander(
+                            f"Preview first {min(10, _n_failed)} failed rows",
+                            expanded=False
+                        ):
+                            st.dataframe(
+                                _failed_full.head(10),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                    with _col_pass:
+                        st.markdown(f"**\u2705 Passed rows ({_n_passed:,})**")
+                        # Build passed rows: all rows NOT in failed set
+                        _failed_ts  = set(_failed_full["timestamp"].astype(str).tolist()) \
+                                      if "timestamp" in _failed_full.columns else set()
+                        _passed_df  = _scaled_clean.copy()
+                        _passed_df  = _passed_df[[c for c in _passed_df.columns
+                                                   if not c.startswith("_")]]
+                        if "timestamp" not in _passed_df.columns:
+                            _passed_df = _passed_df.reset_index()
+                        _passed_df  = _passed_df[
+                            ~_passed_df["timestamp"].astype(str).isin(_failed_ts)
+                        ].reset_index(drop=True)
+                        st.download_button(
+                            label=f"\u2b07\ufe0f Download {_n_passed:,} passed rows (CSV)",
+                            data=_passed_df.to_csv(index=False).encode("utf-8"),
+                            file_name=f"integrity_passed_{selected_id}.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
+                        with st.expander(
+                            f"Preview first {min(10, _n_passed)} passed rows",
+                            expanded=False
+                        ):
+                            st.dataframe(
+                                _passed_df.head(10),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
         elif not missing_cols and meta_for_check is None:
             st.info(
                 "\u2139\ufe0f Integrity checks require electrical parameters (nameplate values). "
