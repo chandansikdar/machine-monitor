@@ -933,8 +933,9 @@ for _k, _v in [
     ("last_assessment",         None),
     ("last_data",               None),
     ("last_cleaned_data",       None),
-    ("last_integrity_passed_ts", None),  # set of timestamps that passed all integrity checks
-    ("baseline_ic_excluded",     0),     # rows excluded from last baseline ingest by integrity filter
+    ("last_integrity_passed_ts",      None),  # set of timestamps that passed all integrity checks
+    ("baseline_ic_excluded",          0),     # rows excluded from last baseline ingest by integrity filter
+    ("last_integrity_failure_summary", {}),   # {check_label: count} of failures from last integrity run
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -1596,10 +1597,11 @@ with tab_data:
                                              if not c.startswith("_")]]
                     if "timestamp" not in _passed_df.columns and _passed_df.index.name == "timestamp":
                         _passed_df = _passed_df.reset_index()
-                    # Save passed timestamps to session state for baseline/assessment filtering
+                    # Save passed timestamps and empty failure summary to session state
                     st.session_state["last_integrity_passed_ts"] = set(
                         _passed_df["timestamp"].astype(str).tolist()
                     )
+                    st.session_state["last_integrity_failure_summary"] = {}
                     st.download_button(
                         label=f"\u2b07\ufe0f Download all {_n_total:,} passed rows (CSV)",
                         data=_passed_df.to_csv(index=False).encode("utf-8"),
@@ -1678,10 +1680,20 @@ with tab_data:
                         _passed_df  = _passed_df[
                             ~_passed_df["timestamp"].astype(str).isin(_failed_ts)
                         ].reset_index(drop=True)
-                        # Save passed timestamps to session state for baseline/assessment filtering
+                        # Save passed timestamps and failure reason summary to session state
                         st.session_state["last_integrity_passed_ts"] = set(
                             _passed_df["timestamp"].astype(str).tolist()
                         )
+                        # Build reason summary: {reason_string: count}
+                        if "failure_reason" in _all_failed.columns:
+                            _reason_summary = (
+                                _all_failed["failure_reason"]
+                                .value_counts()
+                                .to_dict()
+                            )
+                        else:
+                            _reason_summary = {}
+                        st.session_state["last_integrity_failure_summary"] = _reason_summary
                         st.download_button(
                             label=f"\u2b07\ufe0f Download {_n_passed:,} passed rows (CSV)",
                             data=_passed_df.to_csv(index=False).encode("utf-8"),
@@ -1829,11 +1841,24 @@ with tab_analysis:
                     )
                     _bl_ic_excl = st.session_state.get("baseline_ic_excluded", 0)
                     if _bl_ic_excl and _bl_ic_excl > 0:
-                        st.warning(
-                            f"\u26a0\ufe0f **{_bl_ic_excl:,} rows were excluded from this baseline** "
-                            f"because they failed integrity checks (wiring/CT faults). "
-                            f"Only integrity-passed rows were used to build PF bands."
-                        )
+                        _fail_summary = st.session_state.get("last_integrity_failure_summary", {})
+                        if _fail_summary:
+                            _reason_lines = "\n".join(
+                                f"- {reason}: {cnt:,} row(s)"
+                                for reason, cnt in sorted(
+                                    _fail_summary.items(), key=lambda x: -x[1]
+                                )
+                            )
+                            st.warning(
+                                f"\u26a0\ufe0f **{_bl_ic_excl:,} rows excluded from this baseline** "
+                                f"by integrity checks. Only clean rows were used to build PF bands.\n\n"
+                                f"{_reason_lines}"
+                            )
+                        else:
+                            st.warning(
+                                f"\u26a0\ufe0f **{_bl_ic_excl:,} rows excluded from this baseline** "
+                                f"by integrity checks. Only clean rows were used to build PF bands."
+                            )
                     for _w in _bl_warns:
                         st.caption(f"\u26a0\ufe0f {_w}")
 
@@ -1862,11 +1887,27 @@ with tab_analysis:
                                 _bl_view_data, _ic_ts_view
                             )
                             if _bl_view_excluded > 0:
-                                st.warning(
-                                    f"\u26a0\ufe0f {_bl_view_excluded:,} rows removed by integrity checks "
-                                    f"(wiring/CT faults) and excluded from this baseline. "
-                                    f"{len(_bl_view_data):,} rows shown below are what was actually used."
+                                _fail_summ_view = st.session_state.get(
+                                    "last_integrity_failure_summary", {}
                                 )
+                                if _fail_summ_view:
+                                    _rsn_lines = "\n".join(
+                                        f"- {r}: {c:,} row(s)"
+                                        for r, c in sorted(
+                                            _fail_summ_view.items(), key=lambda x: -x[1]
+                                        )
+                                    )
+                                    st.warning(
+                                        f"\u26a0\ufe0f {_bl_view_excluded:,} rows excluded by integrity checks. "
+                                        f"{len(_bl_view_data):,} rows shown below are what was actually used.\n\n"
+                                        f"{_rsn_lines}"
+                                    )
+                                else:
+                                    st.warning(
+                                        f"\u26a0\ufe0f {_bl_view_excluded:,} rows removed by integrity checks "
+                                        f"and excluded from this baseline. "
+                                        f"{len(_bl_view_data):,} rows shown below are what was actually used."
+                                    )
                             elif _ic_ts_view is None:
                                 st.info(
                                     "\u2139\ufe0f Integrity checks have not been run for this session. "
