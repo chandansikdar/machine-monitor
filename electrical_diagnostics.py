@@ -645,10 +645,15 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame, p_rated_elec_kw: float) -> l
     Bin width = 2% of rated electrical input.
     Only bins with >= PF_BAND_MIN_SAMPLES samples are selected.
     """
-    p_total = _p_total_series(cleaned_baseline)
+    p_total    = _p_total_series(cleaned_baseline)
     pf_machine = _pf_machine_series(cleaned_baseline)
 
-    bin_width = PF_BAND_BIN_WIDTH_FRACTION * p_rated_elec_kw * 1000.0  # Watts, matching DataFrame
+    bin_width = PF_BAND_BIN_WIDTH_FRACTION * p_rated_elec_kw * 1000.0  # Watts
+    if bin_width <= 0:
+        # Rated power not saved — estimate bin_width from data range (~50 bins)
+        p_range   = max(float(p_total.max()) - float(p_total.min()), 1.0)
+        bin_width = p_range / 50.0
+
     p_min = float(p_total.min())
     p_max = float(p_total.max())
 
@@ -1189,7 +1194,17 @@ def ingest_baseline(
     4. Validate the baseline state (\u00a76.5).
     5. Return BaselineMetadata for storage.
     """
-    p_rated_elec = float(meta["p_rated_shaft_kw"]) / float(meta["eta_rated"])
+    p_shaft = float(meta.get("p_rated_shaft_kw", 0))
+    eta     = float(meta.get("eta_rated", 0))
+    if p_shaft > 0 and eta > 0:
+        p_rated_elec = p_shaft / eta
+    else:
+        # Rated power not saved — estimate from 95th percentile of baseline data
+        _pt_bl = (raw_baseline["phase_1_active_power"] +
+                  raw_baseline["phase_2_active_power"] +
+                  raw_baseline["phase_3_active_power"])
+        _p95   = float(_pt_bl[_pt_bl > 0].quantile(0.95)) / 1000.0 if len(_pt_bl[_pt_bl > 0]) > 0 else 0.0
+        p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0  # fallback 1 kW avoids zero-division
     bm = BaselineMetadata(
         timestamp_start=raw_baseline["timestamp"].min() if "timestamp" in raw_baseline.columns else None,
         timestamp_end=raw_baseline["timestamp"].max() if "timestamp" in raw_baseline.columns else None,
