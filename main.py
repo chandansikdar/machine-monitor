@@ -354,28 +354,20 @@ def run_integrity_checks(df_json: str, meta_json: str):
             fail_reason = fail_reason.where(~c2x,
                 f"Phase {ph} current < 5% of other phases (CT fault suspected)")
 
-    # Check 3 — Power sign and sum coherence (V-I channel pairing error)
-    # A pairing error (e.g. V_A multiplied by I_B) causes ~120 degree phase angle,
-    # producing large negative active power on some phases while others are positive.
-    # The signed sum drops to near zero even though the magnitude sum is large.
-    #
-    # Option B implementation: no fixed floor — instead require at least one phase
-    # to show clearly negative active power (< -100 W, well above measurement noise).
-    # This catches pairing errors at any load level including light load, while
-    # the -100 W guard prevents false positives from shutdown noise.
+    # Check 3 — Negative per-phase active power
+    # For a passive motor load, negative active power on any phase is physically
+    # impossible under correct wiring. Any value below -100 W (well above measurement
+    # noise) indicates a wiring fault: V-I channel pairing error, CT polarity reversal,
+    # or voltage reference error. The -100 W noise floor is machine-size-independent
+    # and catches faults at any load level including light load.
     NOISE_FLOOR_W = -100.0
-    has_negative_phase = (p1 < NOISE_FLOOR_W) | (p2 < NOISE_FLOOR_W) | (p3 < NOISE_FLOOR_W)
-    mag_sum    = p1.abs() + p2.abs() + p3.abs()
-    signed_sum = (p1 + p2 + p3).abs()
-    c3 = (has_negative_phase
-          & (mag_sum > 0)
-          & (signed_sum < 0.30 * mag_sum)
-          & (fail_check == ""))
-    fail_check  = fail_check.where(~c3, "check_3_power_sign_coherence")
-    fail_reason = fail_reason.where(~c3,
-        "V-I channel pairing error suspected: at least one phase shows "
-        "negative active power and |P_sum|/mag_sum < 0.30 - verify CT and "
-        "voltage channel assignments")
+    for _ph, _p in [("1", p1), ("2", p2), ("3", p3)]:
+        _c3 = (_p < NOISE_FLOOR_W) & (fail_check == "")
+        fail_check  = fail_check.where(~_c3, "check_3_negative_active_power")
+        fail_reason = fail_reason.where(~_c3,
+            f"Phase {_ph} active power is negative (below -100 W) - "
+            f"impossible for a passive motor load - check CT polarity and "
+            f"V-I channel assignment")
 
     # Checks 4 & 5 — PF plausibility and spread (only when meaningfully loaded)
     # Use 10% of rated as minimum for PF to be interpretable.
@@ -1589,7 +1581,7 @@ with tab_data:
                         "check_0_non_numeric":           "Check 0 \u2014 Non-numeric value in measurement column",
                         "check_1_voltage_plausibility":  "Check 1 \u2014 Voltage plausibility",
                         "check_2_current_plausibility":  "Check 2 \u2014 Current plausibility",
-                        "check_3_power_sign_coherence":  "Check 3 \u2014 Power sign coherence (V-I pairing)",
+                        "check_3_negative_active_power": "Check 3 \u2014 Negative active power (wiring fault)",
                         "check_4_pf_plausibility":       "Check 4 \u2014 Per-phase PF plausibility",
                         "check_5_pf_consistency":        "Check 5 \u2014 Per-phase PF spread consistency",
                     }
