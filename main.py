@@ -309,10 +309,17 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
 
     # Read explicit user-entered flags — these distinguish values the user typed
     # from values the platform wrote as defaults during registration
+    _FLAG_MAP = {
+        "v_nominal_phase":  "user_entered_v_nominal",
+        "p_rated_shaft_kw": "user_entered_p_rated",
+        "pf_rated":         "user_entered_pf",
+        "eta_rated":        "user_entered_eta",
+        "i_rated":          "user_entered_i_rated",
+    }
+
     def _user_entered(key):
-        flag_key = f"user_entered_{key.replace('_phase','').replace('_kw','').replace('_shaft','')}"
-        val = meta.get(flag_key, "false")
-        return str(val).lower() == "true"
+        flag_key = _FLAG_MAP.get(key, f"user_entered_{key}")
+        return str(meta.get(flag_key, "false")).lower() == "true"
 
     # Convenience: True only if user typed the value AND it is non-zero
     def _is_nameplate(key):
