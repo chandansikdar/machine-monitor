@@ -229,7 +229,7 @@ class Zone4Result:
 
 @dataclass
 class AssessmentRecord:
-    """Structured output for one user-initiated assessment (\u00a78)."""
+    """Structured output for one user-initiated assessment (§8)."""
     integrity_status: str = "not_run"      # "passed" | "failed" | "suppressed"
     suppressed: bool = False
     suppression_reason: str | None = None
@@ -238,6 +238,7 @@ class AssessmentRecord:
     motor_side: MotorSideResult | None = None
     zone4: Zone4Result | None = None
     messages: list[str] = field(default_factory=list)
+    baseline_bands: list[BandRecord] = field(default_factory=list)  # all 50 bins from baseline
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +655,8 @@ def _p_total_series(df: pd.DataFrame) -> pd.Series:
 
 
 def select_pf_bands(cleaned_baseline: pd.DataFrame,
-                    p_rated_elec_kw: float = 0.0) -> list[BandRecord]:
+                    p_rated_elec_kw: float = 0.0,
+                    min_samples: int | None = None) -> list[BandRecord]:
     """Build multi-band structure from cleaned baseline (§6.3.2).
 
     Bin width = 2% of the actual operating range (P_max − P_min) of the
@@ -662,11 +664,14 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
     Since clean_samples has already removed outliers via IQR rejection,
     min/max are sensible boundaries with no further clipping needed.
 
-    Only bins with >= PF_BAND_MIN_SAMPLES samples are admitted as bands.
+    min_samples : override PF_BAND_MIN_SAMPLES. Pass 0 to return all bins
+                  regardless of count (used for baseline reporting).
     p_rated_elec_kw is retained for backward-compatibility but ignored.
     """
     p_total    = _p_total_series(cleaned_baseline)
     pf_machine = _pf_machine_series(cleaned_baseline)
+
+    _min = min_samples if min_samples is not None else PF_BAND_MIN_SAMPLES
 
     if len(p_total) < PF_BAND_MIN_SAMPLES:
         return []
@@ -687,15 +692,15 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
         hi = edges[i + 1]
         mask = (p_total >= lo) & (p_total < hi)
         n = int(mask.sum())
-        if n >= PF_BAND_MIN_SAMPLES:
-            mean_pf = float(pf_machine[mask].mean())
+        if n >= _min:
+            mean_pf = float(pf_machine[mask].mean()) if n > 0 else 0.0
             centre  = (lo + hi) / 2.0
             bands.append(BandRecord(
                 centre_kw=round(centre, 3),
                 low_kw=round(lo, 3),
                 high_kw=round(hi, 3),
                 n_baseline=n,
-                mean_pf_baseline=round(mean_pf, 5),
+                mean_pf_baseline=round(mean_pf, 5) if n > 0 else 0.0,
             ))
 
     return bands
@@ -1302,7 +1307,9 @@ def run_assessment(
     if raw_baseline is not None and len(raw_baseline) > 0:
         cleaned_bl, _ = clean_samples(raw_baseline, meta, user_filter)
         if len(cleaned_bl) >= CLEANING_MIN_SAMPLES:
-            bands = select_pf_bands(cleaned_bl)   # data-driven bins, no rated power needed
+            all_bins = select_pf_bands(cleaned_bl, min_samples=0)   # all 50 bins
+            bands    = [b for b in all_bins if b.n_baseline >= PF_BAND_MIN_SAMPLES]
+            record.baseline_bands = all_bins   # full histogram for reporting
             baseline = BaselineMetadata(
                 timestamp_start=baseline.timestamp_start,
                 timestamp_end=baseline.timestamp_end,
