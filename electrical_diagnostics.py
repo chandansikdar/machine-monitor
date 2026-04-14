@@ -86,8 +86,8 @@ LOAD_PRECONDITION_FRACTION: float = 0.40  # fraction of p_rated_elec minimum
 IQR_MULTIPLIER: float = 1.5               # standard Tukey fence
 
 # Multi-band PF comparison
-PF_BAND_BIN_WIDTH_FRACTION: float = 0.02  # 2% of p_rated_elec per bin
-PF_BAND_MIN_SAMPLES: int = 5              # minimum samples per band (baseline and assessment)
+PF_BAND_TARGET_BINS: int   = 20              # number of equal-width bins across operating range
+PF_BAND_MIN_SAMPLES: int   = 5               # minimum samples per band (baseline and assessment)
 PF_BAND_MIN_COUNT: int = 3               # minimum qualifying bands
 
 # Cleaning sufficiency
@@ -653,25 +653,29 @@ def _p_total_series(df: pd.DataFrame) -> pd.Series:
     return df["phase_1_active_power"] + df["phase_2_active_power"] + df["phase_3_active_power"]
 
 
-def select_pf_bands(cleaned_baseline: pd.DataFrame, p_rated_elec_kw: float) -> list[BandRecord]:
-    """Build multi-band structure from cleaned baseline (\u00a76.3.2).
+def select_pf_bands(cleaned_baseline: pd.DataFrame,
+                    p_rated_elec_kw: float = 0.0) -> list[BandRecord]:
+    """Build multi-band structure from cleaned baseline (§6.3.2).
 
-    Bin width = 2% of rated electrical input.
-    Only bins with >= PF_BAND_MIN_SAMPLES samples are selected.
+    Bin boundaries span the full range of P_total in the cleaned baseline
+    (min to max). Since clean_samples has already removed outliers via IQR
+    rejection, no further percentile clipping is needed.
+
+    The range is divided into PF_BAND_TARGET_BINS equal-width bins.
+    Only bins with >= PF_BAND_MIN_SAMPLES samples are admitted as bands.
+    p_rated_elec_kw is retained for backward-compatibility but ignored.
     """
     p_total    = _p_total_series(cleaned_baseline)
     pf_machine = _pf_machine_series(cleaned_baseline)
 
-    bin_width = PF_BAND_BIN_WIDTH_FRACTION * p_rated_elec_kw * 1000.0  # Watts
-    if bin_width <= 0:
-        # Rated power not saved — estimate bin_width from data range (~50 bins)
-        p_range   = max(float(p_total.max()) - float(p_total.min()), 1.0)
-        bin_width = p_range / 50.0
+    if len(p_total) < PF_BAND_MIN_SAMPLES:
+        return []
 
-    p_min = float(p_total.min())
-    p_max = float(p_total.max())
+    p_min   = float(p_total.min())
+    p_max   = float(p_total.max())
+    p_range = max(p_max - p_min, 1.0)
 
-    # Build edges that cover [p_min, p_max] in steps of bin_width
+    bin_width = p_range / PF_BAND_TARGET_BINS
     edges = np.arange(p_min, p_max + bin_width, bin_width)
     if len(edges) < 2:
         return []
@@ -684,7 +688,7 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame, p_rated_elec_kw: float) -> l
         n = int(mask.sum())
         if n >= PF_BAND_MIN_SAMPLES:
             mean_pf = float(pf_machine[mask].mean())
-            centre = (lo + hi) / 2.0
+            centre  = (lo + hi) / 2.0
             bands.append(BandRecord(
                 centre_kw=round(centre, 3),
                 low_kw=round(lo, 3),
@@ -1293,14 +1297,11 @@ def run_assessment(
 
     record.integrity_status = "passed"
 
-    # -- Compute PF bands from baseline at analysis time using current meta --
+    # -- Compute PF bands from baseline at analysis time using actual data range --
     if raw_baseline is not None and len(raw_baseline) > 0:
-        p_shaft = float(meta.get("p_rated_shaft_kw", 0))
-        eta     = float(meta.get("eta_rated", 0.90))
-        p_rated_elec = (p_shaft / eta) if (p_shaft > 0 and eta > 0) else 0.0
         cleaned_bl, _ = clean_samples(raw_baseline, meta, user_filter)
         if len(cleaned_bl) >= CLEANING_MIN_SAMPLES:
-            bands = select_pf_bands(cleaned_bl, p_rated_elec)
+            bands = select_pf_bands(cleaned_bl)   # data-driven bins, no rated power needed
             baseline = BaselineMetadata(
                 timestamp_start=baseline.timestamp_start,
                 timestamp_end=baseline.timestamp_end,
