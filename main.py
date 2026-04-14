@@ -1094,6 +1094,7 @@ for _k, _v in [
     ("baseline_ic_excluded",     0),
     ("last_integrity_failure_summary", {}),
     ("effective_meta",           None),   # resolved meta per §2.5 — single source of truth
+    ("_ep_just_saved",           False),  # flag to show save confirmation after rerun
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -1556,7 +1557,6 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
     if st.button("Save electrical parameters", key="save_ep_btn",
                  use_container_width=True, disabled=bool(_ep_errors)):
         _app_type = APP_TYPE_MAP.get(machine_info["machine_type"], "compressed_air")
-        # Track which fields the user explicitly typed vs left blank
         _user_entered_flags = {
             "v_nominal_phase":  bool(_v_nom_txt.strip()),
             "p_rated_shaft_kw": bool(_p_rated_txt.strip()),
@@ -1571,9 +1571,14 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         )
         _new_desc = replace_meta_block(_desc, _new_block)
         db.register_machine(selected_id, machine_info["machine_type"], _new_desc)
-        st.session_state["effective_meta"] = None  # force re-resolution with new values
-        st.success("\u2713 Electrical parameters saved.")
+        st.session_state["effective_meta"]  = None
+        st.session_state["_ep_just_saved"]  = True
         st.rerun()
+
+    # Persistent save confirmation — shown on the render after save rerun
+    if st.session_state.get("_ep_just_saved"):
+        st.session_state["_ep_just_saved"] = False
+        st.success("\u2713 Electrical parameters saved. Banner above now reflects the updated values.")
 
     # Show status
     _meta_check = build_meta(machine_info)
@@ -1652,23 +1657,6 @@ if not _active_file and _file_info:
 
 data = db.get_data_from_file(selected_id, _active_file) if _active_file else None
 
-# ── Resolve effective meta (§2.5) ─────────────────────────────────────────
-# Called once here after data loads. Combines saved nameplate values with
-# data-derived estimates for any missing parameters.
-# All subsequent code — integrity checks, cleaning, analysis, charts —
-# reads from st.session_state["effective_meta"] instead of computing its own estimate.
-_saved_meta = build_meta(machine_info)
-if data is not None and not data.empty and _saved_meta is not None:
-    _data_w_full = scale_power_to_watts(
-        data.reset_index(), _saved_meta.get("power_unit", "W")
-    )
-    _resolved = resolve_effective_meta(_saved_meta, _data_w_full)
-    st.session_state["effective_meta"] = _resolved
-elif _saved_meta is not None:
-    st.session_state["effective_meta"] = _saved_meta
-# Use effective_meta as the working meta for this page render
-meta = st.session_state.get("effective_meta") or _saved_meta
-
 # Auto-clear stale session data when the loaded dataset changes
 _data_fp = (
     f"{selected_id}|{len(data)}|{str(data.index.min())}|{str(data.index.max())}"
@@ -1680,7 +1668,22 @@ if st.session_state.get("_data_fp") != _data_fp:
     st.session_state["last_cleaned_data"]  = None
     st.session_state["last_integrity_passed_ts"] = None
     st.session_state["last_data"]          = None
-    st.session_state["effective_meta"]     = None   # recompute on next render
+    st.session_state["effective_meta"]     = None   # recompute below
+
+# ── Resolve effective meta (§2.5) ─────────────────────────────────────────
+# Always recomputes from current machine_info so changes saved in the
+# ⚡ Electrical parameters expander are reflected immediately after save+rerun.
+_saved_meta = build_meta(machine_info)
+if data is not None and not data.empty and _saved_meta is not None:
+    _data_w_full = scale_power_to_watts(
+        data.reset_index(), _saved_meta.get("power_unit", "W")
+    )
+    _resolved = resolve_effective_meta(_saved_meta, _data_w_full)
+    st.session_state["effective_meta"] = _resolved
+elif _saved_meta is not None:
+    st.session_state["effective_meta"] = _saved_meta
+# Use effective_meta as the working meta for this page render
+meta = st.session_state.get("effective_meta") or _saved_meta
 
 
 # ---------------------------------------------------------------------------
