@@ -86,7 +86,7 @@ LOAD_PRECONDITION_FRACTION: float = 0.40  # fraction of p_rated_elec minimum
 IQR_MULTIPLIER: float = 1.5               # standard Tukey fence
 
 # Multi-band PF comparison
-PF_BAND_TARGET_BINS: int   = 20              # number of equal-width bins across operating range
+PF_BAND_TARGET_BINS: int   = 50              # bins = range / (2% of range) = 50 always
 PF_BAND_MIN_SAMPLES: int   = 5               # minimum samples per band (baseline and assessment)
 PF_BAND_MIN_COUNT: int = 3               # minimum qualifying bands
 
@@ -657,11 +657,11 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
                     p_rated_elec_kw: float = 0.0) -> list[BandRecord]:
     """Build multi-band structure from cleaned baseline (§6.3.2).
 
-    Bin boundaries span the full range of P_total in the cleaned baseline
-    (min to max). Since clean_samples has already removed outliers via IQR
-    rejection, no further percentile clipping is needed.
+    Bin width = 2% of the actual operating range (P_max − P_min) of the
+    cleaned baseline data. This gives 50 equal bins across the full range.
+    Since clean_samples has already removed outliers via IQR rejection,
+    min/max are sensible boundaries with no further clipping needed.
 
-    The range is divided into PF_BAND_TARGET_BINS equal-width bins.
     Only bins with >= PF_BAND_MIN_SAMPLES samples are admitted as bands.
     p_rated_elec_kw is retained for backward-compatibility but ignored.
     """
@@ -675,7 +675,8 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
     p_max   = float(p_total.max())
     p_range = max(p_max - p_min, 1.0)
 
-    bin_width = p_range / PF_BAND_TARGET_BINS
+    # bin_width = 2% of actual operating range → always 50 bins
+    bin_width = 0.02 * p_range
     edges = np.arange(p_min, p_max + bin_width, bin_width)
     if len(edges) < 2:
         return []
