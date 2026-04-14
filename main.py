@@ -684,7 +684,8 @@ def render_motor_side(m: MotorSideResult):
     if active_bands:
         with st.expander(f"PF Drift \u2014 {len(active_bands)} active band(s)", expanded=False):
             st.caption(
-                "Each band is a narrow operating-point window (2% of rated power). "
+                "Each band is an equal-width power bin derived from the full cleaned "
+                "operating range (min to max P_total, divided into 20 bins). "
                 "**Baseline PF** = mean PF during the ingested baseline period. "
                 "**Recent PF** = mean PF during the selected assessment date range. "
                 "**Drift** = Recent \u2212 Baseline (negative = degradation)."
@@ -702,7 +703,9 @@ def render_motor_side(m: MotorSideResult):
                 else:
                     status = "\U0001f7e2 Normal"
                 rows.append({
-                    "Band centre (kW)":  f"{b.centre_kw / 1000:.1f}",
+                    "Low (kW)":          f"{b.low_kw / 1000:.1f}" if b.low_kw else "\u2014",
+                    "Centre (kW)":       f"{b.centre_kw / 1000:.1f}",
+                    "High (kW)":         f"{b.high_kw / 1000:.1f}" if b.high_kw else "\u2014",
                     "Baseline PF":       f"{b.mean_pf_baseline:.4f}",
                     "Recent PF":         f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent else "\u2014",
                     "Drift":             f"{b.pf_drift:+.4f}" if b.pf_drift is not None else "\u2014",
@@ -2271,9 +2274,11 @@ with tab_analysis:
                             else:
                                 st.info("\u2139\ufe0f Run an assessment to see bands computed with current rated power.")
                             st.caption(
-                                "Each bar is a 2%-wide power bin. Height = number of baseline "
-                                "samples in that bin. Colour = mean baseline PF. "
-                                "Only bands with \u22655 samples qualify for PF drift detection."
+                                "Each bar is one of 20 equal-width bins across the full "
+                                "cleaned operating range (min to max P_total). "
+                                "Outliers are already removed by the cleaning pipeline. "
+                                "Height = baseline samples in bin. Colour = mean baseline PF. "
+                                "Only bins with \u22655 samples qualify for PF drift detection."
                             )
                             _bands_df = pd.DataFrame([
                                 {
