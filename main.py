@@ -874,10 +874,11 @@ def render_assessment(record: AssessmentRecord):
         render_zone4(record.zone4)
 
     # Baseline bin report — all 50 bins with qualify/disqualify status
-    if record.baseline_bands:
+    _bl_bands = getattr(record, "baseline_bands", None) or []
+    if _bl_bands:
         import pandas as _pd2
         with st.expander(
-            f"\U0001f4cb Baseline PF bins \u2014 all {len(record.baseline_bands)} bins",
+            f"\U0001f4cb Baseline PF bins \u2014 all {len(_bl_bands)} bins",
             expanded=False,
         ):
             st.caption(
@@ -886,7 +887,7 @@ def render_assessment(record: AssessmentRecord):
                 "Bins below this threshold are shown for reference only."
             )
             _bl_rows = []
-            for _b in record.baseline_bands:
+            for _b in _bl_bands:
                 _qualifies = _b.n_baseline >= 5
                 _bl_rows.append({
                     "Low (kW)":       f"{_b.low_kw / 1000:.1f}",
@@ -898,8 +899,8 @@ def render_assessment(record: AssessmentRecord):
                 })
             _bl_df = _pd2.DataFrame(_bl_rows)
             st.dataframe(_bl_df, use_container_width=True, hide_index=True)
-            _n_qualify = sum(1 for b in record.baseline_bands if b.n_baseline >= 5)
-            _n_total   = len(record.baseline_bands)
+            _n_qualify = sum(1 for b in _bl_bands if b.n_baseline >= 5)
+            _n_total   = len(_bl_bands)
             st.caption(
                 f"{_n_qualify} of {_n_total} bins qualify (\u22655 samples). "
                 f"{_n_total - _n_qualify} bins excluded from PF drift calculation."
