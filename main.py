@@ -1282,6 +1282,10 @@ with st.sidebar:
         st.session_state["last_integrity_passed_ts"] = None
         st.session_state["last_data"]       = None
         st.session_state["_last_machine"]   = selected_id
+        # Clear electrical parameter widget keys so they re-render from DB values
+        for _ep_key in ["ep_v_nom", "ep_p_rated", "ep_i_rated",
+                         "ep_pf_rated", "ep_eta_rated"]:
+            st.session_state.pop(_ep_key, None)
 
     # ── Delete machine ────────────────────────────────────────────────────
     with st.expander("\U0001f5d1\ufe0f Delete this machine", expanded=False):
@@ -1600,6 +1604,10 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         )
         _new_desc = replace_meta_block(_desc, _new_block)
         db.register_machine(selected_id, machine_info["machine_type"], _new_desc)
+        # Clear widget keys so they re-render with the newly saved values
+        for _ep_key in ["ep_v_nom", "ep_p_rated", "ep_i_rated",
+                         "ep_pf_rated", "ep_eta_rated"]:
+            st.session_state.pop(_ep_key, None)
         st.session_state["effective_meta"]  = None
         st.session_state["_ep_just_saved"]  = True
         st.rerun()
