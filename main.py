@@ -1495,8 +1495,8 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         "Rated efficiency (0\u20131)",
         value=_field_display("eta_rated", ".2f"),
         key="ep_eta_rated",
-        placeholder="e.g. 0.93",
-        help="e.g. 0.93 for 93% efficiency",
+        placeholder="e.g. 0.9",
+        help="e.g. 0.9 for 90% efficiency",
     )
     if not _eta_rated_txt.strip():
         _c5.caption("\u26a0\ufe0f Rated value not entered \u2014 0.9 will be assumed")
