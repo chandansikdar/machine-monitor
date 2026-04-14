@@ -332,7 +332,7 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame,
         _v_all    = pd.concat([data_w.loc[_running, c] for c in voltage_cols])
         _v_valid  = _v_all[_v_all > 10]
         if len(_v_valid) > 0:
-            meta["v_nominal_phase"]  = round(float(_v_valid.median()))
+            meta["v_nominal_phase"]  = round(float(_v_valid.median()), 2)
             meta["v_nominal_source"] = "estimated_from_data"
         else:
             meta["v_nominal_phase"]  = 230.0
@@ -1744,7 +1744,7 @@ with tab_data:
             _any_estimated = any(s != "nameplate" for s in [_src_p, _src_v, _src_i, _src_pf, _src_eta])
             _param_lines = (
                 f"{_p_line}  |  "
-                f"V_nominal = **{_v_nom:.0f} V** ({_src_label(_src_v)})  |  "
+                f"V_nominal = **{_v_nom:.2f} V** ({_src_label(_src_v)})  |  "
                 f"FLA = **{_i_fla:.0f} A** ({_src_label(_src_i)})  |  "
                 f"PF = **{_pf:.2f}** ({_src_label(_src_pf)})  |  "
                 f"Efficiency = **{_eta:.2f}** ({_src_label(_src_eta)})"
