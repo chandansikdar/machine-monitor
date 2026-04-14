@@ -1239,26 +1239,17 @@ def ingest_baseline(
         )
         return bm
 
-    # Band selection
-    bands = select_pf_bands(cleaned, p_rated_elec)
-    bm.bands = bands
-    bm.n_qualifying_bands = len(bands)
-
-    if bm.n_qualifying_bands < PF_BAND_MIN_COUNT:
-        bm.warnings.append(
-            f"Only {bm.n_qualifying_bands} PF bands qualified "
-            f"(minimum {PF_BAND_MIN_COUNT}). Multi-band PF drift will be suppressed "
-            f"for assessments that reference this baseline. "
-            f"Consider extending the baseline window."
-        )
+    # Band selection is deferred to analysis time (run_assessment) so it always
+    # uses the current rated power from meta, not the power at ingest time.
+    # BaselineMetadata.bands and n_qualifying_bands remain empty here.
 
     # Zone 4 baseline average power (stored in kW for readability)
     bm.p_baseline_avg_kw = round(
         float((_p_total_series(cleaned)).mean()) / 1000.0, 3
     )
 
-    # Baseline state validation
-    bm.baseline_state = validate_baseline_state(cleaned, bands, meta)
+    # Baseline state validation (bands passed as empty — IUF check still runs)
+    bm.baseline_state = validate_baseline_state(cleaned, [], meta)
 
     return bm
 
@@ -1271,19 +1262,17 @@ def run_assessment(
     raw_recent: pd.DataFrame,
     baseline: BaselineMetadata,
     meta: dict,
+    raw_baseline: pd.DataFrame | None = None,
 ) -> AssessmentRecord:
-    """Run a full user-initiated assessment (\u00a78.1).
+    """Run a full user-initiated assessment (§8.1).
 
     Parameters
     ----------
-    raw_recent           : raw measurement DataFrame for the recent window
-    baseline             : BaselineMetadata from ingest_baseline()
-    meta                 : machine metadata dict
-    zone4_user_response  : removed — Zone 4 is now informational only
-
-    Returns
-    -------
-    AssessmentRecord with all zone findings populated.
+    raw_recent    : raw measurement DataFrame for the recent window
+    baseline      : BaselineMetadata from ingest_baseline()
+    meta          : machine metadata dict (current effective meta)
+    raw_baseline  : raw baseline DataFrame — used to compute PF bands at
+                    analysis time with current rated power (§6.3.2)
     """
     record = AssessmentRecord()
 
@@ -1303,6 +1292,26 @@ def run_assessment(
         return record
 
     record.integrity_status = "passed"
+
+    # -- Compute PF bands from baseline at analysis time using current meta --
+    if raw_baseline is not None and len(raw_baseline) > 0:
+        p_shaft = float(meta.get("p_rated_shaft_kw", 0))
+        eta     = float(meta.get("eta_rated", 0.90))
+        p_rated_elec = (p_shaft / eta) if (p_shaft > 0 and eta > 0) else 0.0
+        cleaned_bl, _ = clean_samples(raw_baseline, meta, user_filter)
+        if len(cleaned_bl) >= CLEANING_MIN_SAMPLES:
+            bands = select_pf_bands(cleaned_bl, p_rated_elec)
+            baseline = BaselineMetadata(
+                timestamp_start=baseline.timestamp_start,
+                timestamp_end=baseline.timestamp_end,
+                user_filter_expr=baseline.user_filter_expr,
+                bands=bands,
+                n_qualifying_bands=len(bands),
+                p_baseline_avg_kw=baseline.p_baseline_avg_kw,
+                cleaning_report=baseline.cleaning_report,
+                warnings=list(baseline.warnings),
+                baseline_state=baseline.baseline_state,
+            )
 
     # -- Check 2: Supply channel (Zone 1) --
     vuf = compute_vuf(cleaned)
