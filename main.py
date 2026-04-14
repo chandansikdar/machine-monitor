@@ -1475,12 +1475,12 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
 
     # Helper: field display value — saved value or estimated value or blank
     def _field_display(key, fmt):
+        """Return the saved nameplate value for the form field.
+        Never pre-fill with estimated values — estimates are shown as captions only,
+        so the user always sees a blank field when no nameplate value is saved."""
         v = _em.get(key, 0)
         if v and v != 0:
             return f"{v:{fmt}}"
-        eff = _eff.get(key, 0)
-        if eff and eff != 0:
-            return f"{eff:{fmt}}"  # show estimate as placeholder text
         return ""
 
     # Row 1 — Voltage, Power, Current
