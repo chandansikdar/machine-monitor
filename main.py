@@ -262,152 +262,97 @@ def scale_power_to_watts(df: pd.DataFrame, power_unit: str) -> pd.DataFrame:
     return df
 
 
-def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
-    """Resolve effective nameplate values per §2.5, using data estimates as fallback.
+def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame,
+                           raw_em: dict | None = None) -> dict:
+    """Resolve effective nameplate values per §2.5.
 
-    Called once after data loads. Returns a complete meta dict where every
-    parameter has a concrete value. No estimation logic exists anywhere else.
+    raw_em  : output of parse_electrical_meta() BEFORE build_meta setdefaults.
+              If a key is non-zero here, the user explicitly saved it.
+    saved_meta : output of build_meta() — has setdefaults applied.
+    data_w  : full dataset in Watts.
 
-    When no rated conditions are entered, the process is:
-      Power      → estimated from data   (95th percentile of P_total ÷ 0.95)
-      Voltage    → estimated from data   (median of phase voltages when running)
-      Current    → estimated from data   (95th percentile of I_avg when running)
-      Efficiency → assumed default       (0.90 — typical induction motor)
-      Power factor → assumed default     (0.87 — typical induction motor)
+    Rule for every parameter:
+      - non-zero in raw_em  → from nameplate  (user saved it)
+      - zero / missing      → estimate from data (or assume default for PF/eta)
 
-    Returns
-    -------
-    Resolved meta dict with extra keys:
-      p_rated_elec_kw     float  effective rated electrical input (kW)
-      p_rated_source      str    "nameplate" | "estimated_from_data"
-      v_nominal_source    str    "nameplate" | "estimated_from_data"
-      i_rated_source      str    "nameplate" | "estimated_from_data"
-      pf_rated_source     str    "nameplate" | "assumed_default"
-      eta_rated_source    str    "nameplate" | "assumed_default"
+    Extra keys added:
+      p_rated_elec_kw, p_rated_source, v_nominal_source,
+      i_rated_source, pf_rated_source, eta_rated_source
     """
     meta = dict(saved_meta)
+    raw  = raw_em or {}
 
-    # ── Backward-compatibility migration ────────────────────────────────────
-    # Old metadata blocks written before this fix don't have user_entered_* flags.
-    # Detect by checking absence of any user_entered key.
-    # Heuristic: pf_rated=0.87/0.88 and eta_rated=0.90 are registration defaults
-    # and were never explicitly typed — mark them as not user-entered.
-    # For voltage/power/current, treat any non-zero, non-default value as user-entered.
-    _has_flags = any(k.startswith("user_entered_") for k in meta)
-    if not _has_flags:
-        _pf_val  = float(meta.get("pf_rated",  0))
-        _eta_val = float(meta.get("eta_rated", 0))
-        _p_val   = float(meta.get("p_rated_shaft_kw", 0))
-        _v_val   = float(meta.get("v_nominal_phase",  0))
-        _i_val   = float(meta.get("i_rated", 0))
-        meta["user_entered_v_nominal"]  = str(_v_val > 0 and _v_val != 230.0).lower()
-        meta["user_entered_p_rated"]    = str(_p_val > 0).lower()
-        # pf 0.87/0.88 and eta 0.90 were registration defaults — not user-entered
-        meta["user_entered_pf"]         = str(_pf_val > 0 and _pf_val not in (0.87, 0.88)).lower()
-        meta["user_entered_eta"]        = str(_eta_val > 0 and _eta_val != 0.90).lower()
-        meta["user_entered_i_rated"]    = str(_i_val > 0).lower()
-
-    # Read explicit user-entered flags — these distinguish values the user typed
-    # from values the platform wrote as defaults during registration
-    _FLAG_MAP = {
-        "v_nominal_phase":  "user_entered_v_nominal",
-        "p_rated_shaft_kw": "user_entered_p_rated",
-        "pf_rated":         "user_entered_pf",
-        "eta_rated":        "user_entered_eta",
-        "i_rated":          "user_entered_i_rated",
-    }
-
-    def _user_entered(key):
-        flag_key = _FLAG_MAP.get(key, f"user_entered_{key}")
-        return str(meta.get(flag_key, "false")).lower() == "true"
-
-    # Convenience: True only if user typed the value AND it is non-zero
-    def _is_nameplate(key):
-        v = float(meta.get(key, 0))
-        return v != 0 and _user_entered(key)
     power_cols   = ["phase_1_active_power", "phase_2_active_power", "phase_3_active_power"]
     voltage_cols = ["phase_1_voltage",      "phase_2_voltage",      "phase_3_voltage"]
     current_cols = ["phase_1_current",      "phase_2_current",      "phase_3_current"]
-    has_power    = all(c in data_w.columns for c in power_cols)
-    has_voltage  = all(c in data_w.columns for c in voltage_cols)
-    has_current  = all(c in data_w.columns for c in current_cols)
+    has_power   = all(c in data_w.columns for c in power_cols)
+    has_voltage = all(c in data_w.columns for c in voltage_cols)
+    has_current = all(c in data_w.columns for c in current_cols)
 
     _pt = (data_w[power_cols[0]] + data_w[power_cols[1]] + data_w[power_cols[2]]
            if has_power else pd.Series(dtype=float))
-    # Running mask — very loose (any positive power) for estimation purposes
-    _running = _pt > 0 if len(_pt) > 0 else pd.Series(dtype=bool)
+    _running = (_pt > 0) if len(_pt) > 0 else pd.Series(dtype=bool)
 
-    # _em_raw: raw values from DB before build_meta applied setdefaults
-    # Used to distinguish user-saved values from platform defaults
-    _em_raw = saved_meta  # saved_meta is the pre-setdefault dict
-
-    # ── Rated electrical input ───────────────────────────────────────────────
-    p_shaft = float(meta.get("p_rated_shaft_kw", 0))
-    _p_raw  = float(_em_raw.get("p_rated_shaft_kw", 0))
-    eta_cur = float(meta.get("eta_rated", 0.90))
-    if _p_raw > 0 and eta_cur > 0:
-        # Any non-zero value in DB = user saved it (whether flagged or not)
-        p_rated_elec = _p_raw / eta_cur
-        meta["p_rated_shaft_kw"] = _p_raw
-        meta["p_rated_source"] = "nameplate"
+    # ── Efficiency (needed first for p_rated_elec) ───────────────────────────
+    _eta_raw = float(raw.get("eta_rated", 0))
+    if _eta_raw > 0:
+        meta["eta_rated"]        = _eta_raw
+        meta["eta_rated_source"] = "nameplate"
     else:
-        # Truly no value saved — estimate from data
-        _p95 = float(_pt[_pt > 0].quantile(0.95)) / 1000.0 if has_power and (_pt > 0).any() else 0.0
-        p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0
-        meta["p_rated_source"] = "estimated_from_data"
-        meta["p_rated_shaft_kw"] = round(p_rated_elec * eta_cur, 2) if eta_cur > 0 else round(p_rated_elec, 2)
-    meta["p_rated_elec_kw"] = round(p_rated_elec, 3)
+        meta["eta_rated"]        = 0.90
+        meta["eta_rated_source"] = "assumed_default"
+    eta = meta["eta_rated"]
 
-    # ── Nominal voltage ──────────────────────────────────────────────────────
-    _v_raw = float(_em_raw.get("v_nominal_phase", 0))
+    # ── Shaft power ──────────────────────────────────────────────────────────
+    _p_raw = float(raw.get("p_rated_shaft_kw", 0))
+    if _p_raw > 0:
+        meta["p_rated_shaft_kw"] = _p_raw
+        meta["p_rated_elec_kw"]  = round(_p_raw / eta, 3)
+        meta["p_rated_source"]   = "nameplate"
+    else:
+        _p95_kw = float(_pt[_pt > 0].quantile(0.95)) / 1000.0 if has_power and (_pt > 0).any() else 0.0
+        p_elec  = _p95_kw / 0.95 if _p95_kw > 0 else 1.0
+        meta["p_rated_elec_kw"]  = round(p_elec, 3)
+        meta["p_rated_shaft_kw"] = round(p_elec * eta, 3)   # estimated shaft = elec × eta
+        meta["p_rated_source"]   = "estimated_from_data"
+
+    # ── Voltage ──────────────────────────────────────────────────────────────
+    _v_raw = float(raw.get("v_nominal_phase", 0))
     if _v_raw > 0:
-        meta["v_nominal_phase"] = _v_raw
+        meta["v_nominal_phase"]  = _v_raw
         meta["v_nominal_source"] = "nameplate"
     elif has_voltage and _running.any():
-        _v_all = pd.concat([data_w.loc[_running, c] for c in voltage_cols])
-        _v_median = float(_v_all[_v_all > 10].median())
-        meta["v_nominal_phase"] = round(_v_median)
+        _v_all    = pd.concat([data_w.loc[_running, c] for c in voltage_cols])
+        meta["v_nominal_phase"]  = round(float(_v_all[_v_all > 10].median()))
         meta["v_nominal_source"] = "estimated_from_data"
     else:
-        meta["v_nominal_phase"] = 230.0
+        meta["v_nominal_phase"]  = 230.0
         meta["v_nominal_source"] = "estimated_from_data"
 
-    # ── Full-load current ────────────────────────────────────────────────────
-    _i_raw = float(_em_raw.get("i_rated", 0))
+    # ── Current ──────────────────────────────────────────────────────────────
+    _i_raw = float(raw.get("i_rated", 0))
     if _i_raw > 0:
-        meta["i_rated"] = _i_raw
+        meta["i_rated"]        = _i_raw
         meta["i_rated_source"] = "nameplate"
     elif has_current and _running.any():
         _i_avg = (data_w.loc[_running, current_cols[0]] +
                   data_w.loc[_running, current_cols[1]] +
                   data_w.loc[_running, current_cols[2]]) / 3.0
         _i95 = float(_i_avg[_i_avg > 0].quantile(0.95)) if (_i_avg > 0).any() else 0.0
-        meta["i_rated"] = round(_i95 / 0.95, 1) if _i95 > 0 else 0.0
+        meta["i_rated"]        = round(_i95 / 0.95, 1) if _i95 > 0 else 0.0
         meta["i_rated_source"] = "estimated_from_data"
     else:
+        meta["i_rated"]        = 0.0
         meta["i_rated_source"] = "estimated_from_data"
 
-    # ── Rated PF ─────────────────────────────────────────────────────────────
-    _pf_raw = float(_em_raw.get("pf_rated", 0))
-    if _pf_raw > 0 and _pf_raw not in (0.87, 0.88):
-        meta["pf_rated"] = _pf_raw
-        meta["pf_rated_source"] = "nameplate"
-    elif _pf_raw in (0.87, 0.88) and _is_nameplate("pf_rated"):
+    # ── PF ───────────────────────────────────────────────────────────────────
+    _pf_raw = float(raw.get("pf_rated", 0))
+    if _pf_raw > 0:
+        meta["pf_rated"]        = _pf_raw
         meta["pf_rated_source"] = "nameplate"
     else:
-        meta["pf_rated"] = 0.87
+        meta["pf_rated"]        = 0.87
         meta["pf_rated_source"] = "assumed_default"
-
-    # ── Rated efficiency ─────────────────────────────────────────────────────
-    _eta_raw = float(_em_raw.get("eta_rated", 0))
-    if _eta_raw > 0 and _eta_raw != 0.90:
-        meta["eta_rated"] = _eta_raw
-        meta["eta_rated_source"] = "nameplate"
-    elif _eta_raw == 0.90 and _is_nameplate("eta_rated"):
-        meta["eta_rated_source"] = "nameplate"
-    else:
-        meta["eta_rated"] = 0.90
-        meta["eta_rated_source"] = "assumed_default"
 
     return meta
 
@@ -1708,16 +1653,19 @@ if st.session_state.get("_data_fp") != _data_fp:
 # ── Resolve effective meta (§2.5) ─────────────────────────────────────────
 # Always recomputes from current machine_info so changes saved in the
 # ⚡ Electrical parameters expander are reflected immediately after save+rerun.
+# ── Resolve effective meta (§2.5) ─────────────────────────────────────────
 _saved_meta = build_meta(machine_info)
+# raw_em: parsed BEFORE build_meta setdefaults — zero here = truly not saved
+_raw_em = parse_electrical_meta(machine_info.get("description", ""))
 if data is not None and not data.empty and _saved_meta is not None:
     _data_w_full = scale_power_to_watts(
         data.reset_index(), _saved_meta.get("power_unit", "W")
     )
-    _resolved = resolve_effective_meta(_saved_meta, _data_w_full)
+    _resolved = resolve_effective_meta(_saved_meta, _data_w_full, _raw_em)
     st.session_state["effective_meta"] = _resolved
 elif _saved_meta is not None:
-    st.session_state["effective_meta"] = _saved_meta
-# Use effective_meta as the working meta for this page render
+    _resolved = resolve_effective_meta(_saved_meta, pd.DataFrame(), _raw_em)
+    st.session_state["effective_meta"] = _resolved
 meta = st.session_state.get("effective_meta") or _saved_meta
 
 
