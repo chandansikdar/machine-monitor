@@ -688,12 +688,17 @@ def render_motor_side(m: MotorSideResult):
                 "Only bins with \u22655 samples in both baseline and recent period are used for PF drift calculation. "
                 "**Baseline PF** = mean PF during the ingested baseline period. "
                 "**Recent PF** = mean PF during the selected assessment date range. "
-                "**Drift** = Recent \u2212 Baseline (negative = degradation)."
+                "**Drift** = Recent \u2212 Baseline (negative = degradation). "
+                "**Drift %** = Drift as percentage of Baseline PF.  \n"
+                f"\U0001f7e1 Watch: drift \u2264 {PF_DRIFT_WATCH*100:.0f}%  \u2002"
+                f"\U0001f7e0 Alert: drift \u2264 {PF_DRIFT_ALERT*100:.0f}%  \u2002"
+                f"\U0001f534 Action: drift \u2264 {PF_DRIFT_ACTION*100:.0f}%"
             )
             # Table — convert band centres from W to kW for display
             rows = []
             for b in active_bands:
                 drift = b.pf_drift if b.pf_drift is not None else 0.0
+                drift_pct = (drift / b.mean_pf_baseline * 100) if b.mean_pf_baseline else 0.0
                 if drift <= PF_DRIFT_ACTION:
                     status = "\U0001f534 Action"
                 elif drift <= PF_DRIFT_ALERT:
@@ -709,6 +714,7 @@ def render_motor_side(m: MotorSideResult):
                     "Baseline PF":       f"{b.mean_pf_baseline:.4f}",
                     "Recent PF":         f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent else "\u2014",
                     "Drift":             f"{b.pf_drift:+.4f}" if b.pf_drift is not None else "\u2014",
+                    "Drift %":           f"{drift_pct:+.2f}%" if b.pf_drift is not None else "\u2014",
                     "Status":            status,
                     "n baseline":        b.n_baseline,
                     "n recent":          b.n_recent,
