@@ -1499,7 +1499,7 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         help="e.g. 0.93 for 93% efficiency",
     )
     if not _eta_rated_txt.strip():
-        _c5.caption("\u26a0\ufe0f Rated value not entered \u2014 0.90 will be assumed")
+        _c5.caption("\u26a0\ufe0f Rated value not entered \u2014 0.9 will be assumed")
 
     _at_panel = _c6.checkbox(
         "Voltage measured at panel",
