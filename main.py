@@ -1735,7 +1735,8 @@ with tab_data:
             _src_i   = meta.get("i_rated_source",    "estimated_from_data")
             _src_pf  = meta.get("pf_rated_source",   "assumed_default")
             _src_eta = meta.get("eta_rated_source",  "assumed_default")
-            _p_elec  = meta.get("p_rated_elec_kw", 0)
+            _p_shaft = meta.get("p_rated_shaft_kw", 0)   # what user entered / what to display
+            _p_elec  = meta.get("p_rated_elec_kw", 0)    # derived (shaft/eta) — used internally
             _v_nom   = meta.get("v_nominal_phase", 230)
             _i_fla   = meta.get("i_rated", 0)
             _pf      = meta.get("pf_rated", 0.87)
@@ -1747,9 +1748,12 @@ with tab_data:
                 if src == "assumed_default":     return "\u26a0\ufe0f assumed default"
                 return src
 
+            # P_rated line: show shaft power only (P_elec is internal)
+            _p_line = f"P_shaft = **{_p_shaft:.1f} kW** ({_src_label(_src_p)})"
+
             _any_estimated = any(s != "nameplate" for s in [_src_p, _src_v, _src_i, _src_pf, _src_eta])
             _param_lines = (
-                f"P_rated_elec = **{_p_elec:.1f} kW** ({_src_label(_src_p)})  |  "
+                f"{_p_line}  |  "
                 f"V_nominal = **{_v_nom:.0f} V** ({_src_label(_src_v)})  |  "
                 f"FLA = **{_i_fla:.0f} A** ({_src_label(_src_i)})  |  "
                 f"PF = **{_pf:.2f}** ({_src_label(_src_pf)})  |  "
