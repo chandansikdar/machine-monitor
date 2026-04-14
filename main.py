@@ -1456,7 +1456,8 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         placeholder="e.g. 230",
         help="e.g. 230 V for a 400/230 V system.",
     )
-    _est_note(_c1, "v_nominal_phase", "Voltage", ".0f", "V", "(default 230 V \u2014 EU/Swiss standard)")
+    if not _v_nom_txt.strip():
+        _c1.caption("\u26a0\ufe0f Rated value not entered \u2014 will be estimated from data")
 
     _p_rated_txt = _c2.text_input(
         "Rated shaft power (kW)",
@@ -1465,7 +1466,8 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         placeholder="e.g. 75",
         help="Motor nameplate shaft power.",
     )
-    _est_note(_c2, "p_rated_shaft_kw", "Rated power", ".1f", "kW", "(estimated from data 95th percentile)")
+    if not _p_rated_txt.strip():
+        _c2.caption("\u26a0\ufe0f Rated value not entered \u2014 will be estimated from data")
 
     _i_rated_txt = _c3.text_input(
         "Full-load current / FLA (A)",
@@ -1474,13 +1476,8 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         placeholder="e.g. 140",
         help="Nameplate full-load current (FLA).",
     )
-    _i_src = _eff.get("i_rated_source", "estimated_from_data")
-    if _i_src != "nameplate":
-        _i_eff = _eff.get("i_rated", 0)
-        if _i_eff:
-            _c3.caption(f"\u26a0\ufe0f Estimated from data: {_i_eff:.1f} A")
-        else:
-            _c3.caption("\u26a0\ufe0f Not available \u2014 Check 2 will be skipped")
+    if not _i_rated_txt.strip():
+        _c3.caption("\u26a0\ufe0f Rated value not entered \u2014 will be estimated from data")
 
     # Row 2 — PF, Efficiency, Panel checkbox
     _c4, _c5, _c6 = st.columns(3)
@@ -1491,7 +1488,8 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         key="ep_pf_rated",
         placeholder="e.g. 0.87",
     )
-    _est_note(_c4, "pf_rated", "PF", ".2f", "", "(typical induction motor default)")
+    if not _pf_rated_txt.strip():
+        _c4.caption("\u26a0\ufe0f Rated value not entered \u2014 0.87 will be assumed")
 
     _eta_rated_txt = _c5.text_input(
         "Rated efficiency (0\u20131)",
@@ -1500,7 +1498,8 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
         placeholder="e.g. 0.93",
         help="e.g. 0.93 for 93% efficiency",
     )
-    _est_note(_c5, "eta_rated", "Efficiency", ".2f", "", "(typical induction motor default)")
+    if not _eta_rated_txt.strip():
+        _c5.caption("\u26a0\ufe0f Rated value not entered \u2014 0.90 will be assumed")
 
     _at_panel = _c6.checkbox(
         "Voltage measured at panel",
