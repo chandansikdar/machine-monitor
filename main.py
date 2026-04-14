@@ -311,10 +311,14 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame,
         meta["p_rated_source"]   = "nameplate"
     else:
         _p95_kw = float(_pt[_pt > 0].quantile(0.95)) / 1000.0 if has_power and (_pt > 0).any() else 0.0
-        p_elec  = _p95_kw / 0.95 if _p95_kw > 0 else 1.0
+        if _p95_kw > 0:
+            p_elec = _p95_kw / 0.95
+            meta["p_rated_source"] = "estimated_from_data"
+        else:
+            p_elec = 1.0
+            meta["p_rated_source"] = "assumed_default"
         meta["p_rated_elec_kw"]  = round(p_elec, 3)
-        meta["p_rated_shaft_kw"] = round(p_elec * eta, 3)   # estimated shaft = elec × eta
-        meta["p_rated_source"]   = "estimated_from_data"
+        meta["p_rated_shaft_kw"] = round(p_elec * eta, 3)
 
     # ── Voltage ──────────────────────────────────────────────────────────────
     _v_raw = float(raw.get("v_nominal_phase", 0))
@@ -323,11 +327,16 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame,
         meta["v_nominal_source"] = "nameplate"
     elif has_voltage and _running.any():
         _v_all    = pd.concat([data_w.loc[_running, c] for c in voltage_cols])
-        meta["v_nominal_phase"]  = round(float(_v_all[_v_all > 10].median()))
-        meta["v_nominal_source"] = "estimated_from_data"
+        _v_valid  = _v_all[_v_all > 10]
+        if len(_v_valid) > 0:
+            meta["v_nominal_phase"]  = round(float(_v_valid.median()))
+            meta["v_nominal_source"] = "estimated_from_data"
+        else:
+            meta["v_nominal_phase"]  = 230.0
+            meta["v_nominal_source"] = "assumed_default"
     else:
         meta["v_nominal_phase"]  = 230.0
-        meta["v_nominal_source"] = "estimated_from_data"
+        meta["v_nominal_source"] = "assumed_default"
 
     # ── Current ──────────────────────────────────────────────────────────────
     _i_raw = float(raw.get("i_rated", 0))
@@ -339,11 +348,15 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame,
                   data_w.loc[_running, current_cols[1]] +
                   data_w.loc[_running, current_cols[2]]) / 3.0
         _i95 = float(_i_avg[_i_avg > 0].quantile(0.95)) if (_i_avg > 0).any() else 0.0
-        meta["i_rated"]        = round(_i95 / 0.95, 1) if _i95 > 0 else 0.0
-        meta["i_rated_source"] = "estimated_from_data"
+        if _i95 > 0:
+            meta["i_rated"]        = round(_i95 / 0.95, 1)
+            meta["i_rated_source"] = "estimated_from_data"
+        else:
+            meta["i_rated"]        = 0.0
+            meta["i_rated_source"] = "assumed_default"
     else:
         meta["i_rated"]        = 0.0
-        meta["i_rated_source"] = "estimated_from_data"
+        meta["i_rated_source"] = "assumed_default"
 
     # ── PF ───────────────────────────────────────────────────────────────────
     _pf_raw = float(raw.get("pf_rated", 0))
