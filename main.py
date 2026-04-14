@@ -1667,22 +1667,20 @@ if st.session_state.get("_data_fp") != _data_fp:
     st.session_state["effective_meta"]     = None   # recompute below
 
 # ── Resolve effective meta (§2.5) ─────────────────────────────────────────
-# Always recomputes from current machine_info so changes saved in the
-# ⚡ Electrical parameters expander are reflected immediately after save+rerun.
-# ── Resolve effective meta (§2.5) ─────────────────────────────────────────
+# Always recomputes fresh every render from current machine_info + data.
+# Never reads from session state cache — the cache was causing stale values.
 _saved_meta = build_meta(machine_info)
-# raw_em: parsed BEFORE build_meta setdefaults — zero here = truly not saved
-_raw_em = parse_electrical_meta(machine_info.get("description", ""))
+_raw_em     = parse_electrical_meta(machine_info.get("description", ""))
 if data is not None and not data.empty and _saved_meta is not None:
     _data_w_full = scale_power_to_watts(
         data.reset_index(), _saved_meta.get("power_unit", "W")
     )
-    _resolved = resolve_effective_meta(_saved_meta, _data_w_full, _raw_em)
-    st.session_state["effective_meta"] = _resolved
+    meta = resolve_effective_meta(_saved_meta, _data_w_full, _raw_em)
 elif _saved_meta is not None:
-    _resolved = resolve_effective_meta(_saved_meta, pd.DataFrame(), _raw_em)
-    st.session_state["effective_meta"] = _resolved
-meta = st.session_state.get("effective_meta") or _saved_meta
+    meta = resolve_effective_meta(_saved_meta, pd.DataFrame(), _raw_em)
+else:
+    meta = None
+st.session_state["effective_meta"] = meta
 
 
 # ---------------------------------------------------------------------------
