@@ -1537,7 +1537,7 @@ with st.expander("\u26a1 Electrical parameters (nameplate)", expanded=not build_
     _ep_errors = []
     if _v_nom_txt.strip()     and _v_nom     == 0.0: _ep_errors.append("Voltage: enter a positive number (e.g. 230)")
     if _pf_rated_txt.strip()  and _pf_rated  == 0.0: _ep_errors.append("PF: must be between 0 and 1 (e.g. 0.87)")
-    if _eta_rated_txt.strip() and _eta_rated == 0.0: _ep_errors.append("Efficiency: must be between 0 and 1 (e.g. 0.93)")
+    if _eta_rated_txt.strip() and _eta_rated == 0.0: _ep_errors.append("Efficiency: must be between 0 and 1 (e.g. 0.9)")
     for _ep_err in _ep_errors:
         st.error(f"\u274c {_ep_err}")
 
