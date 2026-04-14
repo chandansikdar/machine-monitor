@@ -343,15 +343,25 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
     if _is_nameplate("p_rated_shaft_kw") and eta_cur > 0:
         p_rated_elec = p_shaft / eta_cur
         meta["p_rated_source"] = "nameplate"
+    elif p_shaft > 0 and eta_cur > 0:
+        # Value saved but flag missing (old record) — treat saved value as entered
+        p_rated_elec = p_shaft / eta_cur
+        meta["p_rated_source"] = "nameplate"
     else:
+        # Truly no value saved — estimate from data
         _p95 = float(_pt[_pt > 0].quantile(0.95)) / 1000.0 if has_power and (_pt > 0).any() else 0.0
         p_rated_elec = _p95 / 0.95 if _p95 > 0 else 1.0
         meta["p_rated_source"] = "estimated_from_data"
+        # Only write back estimated shaft equivalent — never overwrite a saved value
         meta["p_rated_shaft_kw"] = round(p_rated_elec * eta_cur, 2) if eta_cur > 0 else round(p_rated_elec, 2)
     meta["p_rated_elec_kw"] = round(p_rated_elec, 3)
 
     # ── Nominal voltage ──────────────────────────────────────────────────────
+    _v_saved = float(meta.get("v_nominal_phase", 0))
     if _is_nameplate("v_nominal_phase"):
+        meta["v_nominal_source"] = "nameplate"
+    elif _v_saved > 0:
+        # Value saved but flag missing — treat as nameplate
         meta["v_nominal_source"] = "nameplate"
     elif has_voltage and _running.any():
         _v_all = pd.concat([data_w.loc[_running, c] for c in voltage_cols])
@@ -363,7 +373,11 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
         meta["v_nominal_source"] = "estimated_from_data"
 
     # ── Full-load current ────────────────────────────────────────────────────
+    _i_saved = float(meta.get("i_rated", 0))
     if _is_nameplate("i_rated"):
+        meta["i_rated_source"] = "nameplate"
+    elif _i_saved > 0:
+        # Value saved but flag missing — treat as nameplate
         meta["i_rated_source"] = "nameplate"
     elif has_current and _running.any():
         _i_avg = (data_w.loc[_running, current_cols[0]] +
@@ -376,14 +390,22 @@ def resolve_effective_meta(saved_meta: dict, data_w: pd.DataFrame) -> dict:
         meta["i_rated_source"] = "estimated_from_data"
 
     # ── Rated PF ─────────────────────────────────────────────────────────────
+    _pf_saved = float(meta.get("pf_rated", 0))
     if _is_nameplate("pf_rated"):
+        meta["pf_rated_source"] = "nameplate"
+    elif _pf_saved > 0 and _pf_saved not in (0.87, 0.88):
+        # Non-default value saved without flag — treat as nameplate
         meta["pf_rated_source"] = "nameplate"
     else:
         meta["pf_rated"] = 0.87
         meta["pf_rated_source"] = "assumed_default"
 
     # ── Rated efficiency ─────────────────────────────────────────────────────
+    _eta_saved = float(meta.get("eta_rated", 0))
     if _is_nameplate("eta_rated"):
+        meta["eta_rated_source"] = "nameplate"
+    elif _eta_saved > 0 and _eta_saved != 0.90:
+        # Non-default value saved without flag — treat as nameplate
         meta["eta_rated_source"] = "nameplate"
     else:
         meta["eta_rated"] = 0.90
