@@ -165,23 +165,26 @@ def build_meta(machine_info: dict) -> dict | None:
     All five numeric parameters have soft defaults — resolve_effective_meta
     fills in data-derived estimates for any that are zero.
 
-    Soft defaults:
-      v_nominal_phase  = 230.0  (EU/Swiss standard L-N)
-      p_rated_shaft_kw = 0.0    (triggers data-derived estimation in §2.5)
-      i_rated          = 0.0    (skips Check 2)
-      pf_rated         = 0.87   (typical induction motor)
-      eta_rated        = 0.90   (typical induction motor)
+    Soft defaults (only applied when key absent from DB):
+      v_nominal_phase  = 0.0   → triggers data-derived estimation in §2.5
+      p_rated_shaft_kw = 0.0   → triggers data-derived estimation in §2.5
+      i_rated          = 0.0   → triggers data-derived estimation in §2.5
+      pf_rated         = 0.87  → assumed default if not entered
+      eta_rated        = 0.90  → assumed default if not entered
     """
     desc = machine_info.get("description", "")
     em   = parse_electrical_meta(desc)
     # Return None only if no metadata has ever been saved for this machine
     if not em:
         return None
-    em.setdefault("v_nominal_phase",  230.0)
+    # Soft defaults — only for fields not saved in the DB.
+    # v_nominal_phase intentionally has NO default here so resolve_effective_meta
+    # can detect "not saved" (missing/0) and estimate from data per §2.5.
     em.setdefault("p_rated_shaft_kw",   0.0)
     em.setdefault("i_rated",            0.0)
     em.setdefault("pf_rated",           0.87)
     em.setdefault("eta_rated",          0.90)
+    em.setdefault("v_nominal_phase",    0.0)   # 0 = not saved → estimated in §2.5
     if "application_type" not in em:
         em["application_type"] = APP_TYPE_MAP.get(
             machine_info.get("machine_type", ""), "compressed_air"
