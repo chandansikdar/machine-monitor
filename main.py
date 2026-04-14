@@ -2253,13 +2253,23 @@ with tab_analysis:
                         db.delete_baseline(selected_id)
                         st.rerun()
 
-                    # PF band histogram
-                    _bl_bands_raw = _stored_bl_dict.get("bands") or []
-                    if _bl_bands_raw:
+                    # PF band histogram — bands computed at last assessment time
+                    _last_rec = st.session_state.get("last_assessment")
+                    _hist_bands_raw = []
+                    if _last_rec and isinstance(_last_rec, dict):
+                        _hist_bands_raw = _last_rec.get("bands", []) or []
+                    # Fall back to stored baseline bands for backwards compat
+                    if not _hist_bands_raw:
+                        _hist_bands_raw = _stored_bl_dict.get("bands") or []
+                    if _hist_bands_raw:
                         with st.expander(
-                            f"\U0001f4ca PF band histogram ({len(_bl_bands_raw)} bands)",
+                            f"\U0001f4ca PF band histogram ({len(_hist_bands_raw)} bands)",
                             expanded=False,
                         ):
+                            if _last_rec:
+                                st.caption("\u2139\ufe0f Bands computed from last assessment using current rated power.")
+                            else:
+                                st.info("\u2139\ufe0f Run an assessment to see bands computed with current rated power.")
                             st.caption(
                                 "Each bar is a 2%-wide power bin. Height = number of baseline "
                                 "samples in that bin. Colour = mean baseline PF. "
@@ -2273,7 +2283,7 @@ with tab_analysis:
                                     "n_baseline":       b["n_baseline"],
                                     "mean_pf_baseline": round(b["mean_pf_baseline"], 4),
                                 }
-                                for b in _bl_bands_raw
+                                for b in _hist_bands_raw
                             ]).sort_values("centre_kw")
 
                             import plotly.graph_objects as _go2
@@ -2468,7 +2478,18 @@ with tab_analysis:
                             with st.spinner("Running electrical diagnostics\u2026"):
                                 _raw_reset = _recent.reset_index()
                                 _raw_reset = scale_power_to_watts(_raw_reset, meta.get("power_unit", "W"))
-                                _record = run_assessment(_raw_reset, _bm_loaded, meta)
+                                # Load raw baseline data for band computation at analysis time
+                                _bl_start_ts3 = pd.Timestamp(_bm_loaded.timestamp_start) if _bm_loaded and _bm_loaded.timestamp_start else None
+                                _bl_end_ts3   = pd.Timestamp(_bm_loaded.timestamp_end)   if _bm_loaded and _bm_loaded.timestamp_end   else None
+                                if _bl_start_ts3 is not None and _bl_end_ts3 is not None:
+                                    _raw_bl_for_assess = data.loc[
+                                        (_bl_start_ts3 <= data.index) & (data.index <= _bl_end_ts3)
+                                    ].reset_index()
+                                    _raw_bl_for_assess = scale_power_to_watts(_raw_bl_for_assess, meta.get("power_unit", "W"))
+                                else:
+                                    _raw_bl_for_assess = None
+                                _record = run_assessment(_raw_reset, _bm_loaded, meta,
+                                                         raw_baseline=_raw_bl_for_assess)
                                 # Also capture cleaned data for download
                                 _user_filter = _bm_loaded.user_filter_expr if _bm_loaded else None
                                 _cleaned_df, _ = clean_samples(_raw_reset, meta, _user_filter)
