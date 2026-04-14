@@ -684,8 +684,8 @@ def render_motor_side(m: MotorSideResult):
     if active_bands:
         with st.expander(f"PF Drift \u2014 {len(active_bands)} active band(s)", expanded=False):
             st.caption(
-                "Each band is an equal-width power bin derived from the full cleaned "
-                "operating range (min to max P_total, divided into 20 bins). "
+                "Each band is an equal-width power bin (bin width = 2% of actual operating range, giving 50 bins). "
+                "Only bins with \u22655 samples in both baseline and recent period are used for PF drift calculation. "
                 "**Baseline PF** = mean PF during the ingested baseline period. "
                 "**Recent PF** = mean PF during the selected assessment date range. "
                 "**Drift** = Recent \u2212 Baseline (negative = degradation)."
@@ -2274,9 +2274,9 @@ with tab_analysis:
                             else:
                                 st.info("\u2139\ufe0f Run an assessment to see bands computed with current rated power.")
                             st.caption(
-                                "Each bar is one of 20 equal-width bins across the full "
-                                "cleaned operating range (min to max P_total). "
-                                "Outliers are already removed by the cleaning pipeline. "
+                                "Each bar is one of 50 equal-width bins — bin width = 2% of "
+                                "the actual operating range (P_max \u2212 P_min) in the cleaned baseline. "
+                                "Outliers already removed by the cleaning pipeline. "
                                 "Height = baseline samples in bin. Colour = mean baseline PF. "
                                 "Only bins with \u22655 samples qualify for PF drift detection."
                             )
