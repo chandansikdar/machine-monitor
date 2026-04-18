@@ -1395,7 +1395,7 @@ def run_assessment(
     if raw_baseline is not None and len(raw_baseline) > 0:
         _cleaned_bl, _ = clean_samples(raw_baseline, meta, user_filter)
         if len(_cleaned_bl) >= CLEANING_MIN_SAMPLES:
-            all_bins = select_pf_bands(_cleaned_bl, min_samples=0)   # all 50 bins
+            all_bins = select_pf_bands(_cleaned_bl, min_samples=0)   # all 100 bins
             bands    = [b for b in all_bins if b.n_baseline >= PF_BAND_MIN_SAMPLES]
             record.baseline_bands = all_bins   # full histogram for reporting
             baseline = BaselineMetadata(
