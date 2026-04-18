@@ -2783,45 +2783,46 @@ with tab_analysis:
                                     _xl_df["phase_3_voltage"] * _xl_df["phase_3_current"]
                                 ).replace(0, float("nan"))
 
-                                # Assign bin number
-                                _bin_no     = [""] * len(_xl_df)
-                                _bin_low    = [None] * len(_xl_df)
-                                _bin_high   = [None] * len(_xl_df)
-                                _bin_bl_pf  = [None] * len(_xl_df)
-                                _bin_bl_std = [None] * len(_xl_df)
-                                _bin_rc_pf  = [None] * len(_xl_df)
-                                _bin_drift  = [None] * len(_xl_df)
-                                _bin_driftp = [None] * len(_xl_df)
-                                _bin_pval   = [None] * len(_xl_df)
-                                _bin_sig    = [None] * len(_xl_df)
-                                _bin_status = [None] * len(_xl_df)
+                                # Assign bin number using numpy arrays for speed
+                                _pt_arr = _pt_xl.values
+                                _n_rows = len(_xl_df)
+                                _bin_no     = [None] * _n_rows
+                                _bin_low    = [None] * _n_rows
+                                _bin_high   = [None] * _n_rows
+                                _bin_bl_pf  = [None] * _n_rows
+                                _bin_bl_std = [None] * _n_rows
+                                _bin_rc_pf  = [None] * _n_rows
+                                _bin_drift  = [None] * _n_rows
+                                _bin_driftp = [None] * _n_rows
+                                _bin_pval   = [None] * _n_rows
+                                _bin_sig    = [None] * _n_rows
+                                _bin_status = [None] * _n_rows
 
                                 for _bi, _b in enumerate(_bands_src, start=1):
-                                    _mask = ((_pt_xl >= _b.low_kw) &
-                                             (_pt_xl < _b.high_kw))
-                                    _idx  = _xl_df.index[_mask]
-                                    _dp   = ((_b.pf_drift / _b.mean_pf_baseline * 100)
-                                             if _b.mean_pf_baseline else None)
-                                    _st   = ("Action" if _b.pf_drift <= -0.03 else
-                                             "Alert"  if _b.pf_drift <= -0.02 else
-                                             "Watch"  if _b.pf_drift <= -0.01 else
-                                             "Normal")
-                                    for _i in _idx:
-                                        _bin_no[_i]     = _bi
-                                        _bin_low[_i]    = round(_b.low_kw  / 1000, 2)
-                                        _bin_high[_i]   = round(_b.high_kw / 1000, 2)
-                                        _bin_bl_pf[_i]  = _b.mean_pf_baseline
-                                        _bin_bl_std[_i] = _b.std_pf_baseline
-                                        _bin_rc_pf[_i]  = _b.mean_pf_recent
-                                        _bin_drift[_i]  = _b.pf_drift
-                                        _bin_driftp[_i] = round(_dp, 4) if _dp else None
-                                        _bin_pval[_i]   = _b.p_value
-                                        _bin_sig[_i]    = (
-                                            "Yes" if _b.drift_significant else
+                                    _mask_arr = ((_pt_arr >= _b.low_kw) &
+                                                 (_pt_arr < _b.high_kw))
+                                    _dp = ((_b.pf_drift / _b.mean_pf_baseline * 100)
+                                           if _b.mean_pf_baseline else None)
+                                    _st = ("Action" if _b.pf_drift <= -0.03 else
+                                           "Alert"  if _b.pf_drift <= -0.02 else
+                                           "Watch"  if _b.pf_drift <= -0.01 else
+                                           "Normal")
+                                    _sig = ("Yes" if _b.drift_significant else
                                             "No"  if _b.drift_significant is False
-                                            else "n/a"
-                                        )
-                                        _bin_status[_i] = _st
+                                            else "n/a")
+                                    for _pos in range(_n_rows):
+                                        if _mask_arr[_pos]:
+                                            _bin_no[_pos]     = _bi
+                                            _bin_low[_pos]    = round(_b.low_kw  / 1000, 2)
+                                            _bin_high[_pos]   = round(_b.high_kw / 1000, 2)
+                                            _bin_bl_pf[_pos]  = _b.mean_pf_baseline
+                                            _bin_bl_std[_pos] = _b.std_pf_baseline
+                                            _bin_rc_pf[_pos]  = _b.mean_pf_recent
+                                            _bin_drift[_pos]  = _b.pf_drift
+                                            _bin_driftp[_pos] = round(_dp, 4) if _dp else None
+                                            _bin_pval[_pos]   = _b.p_value
+                                            _bin_sig[_pos]    = _sig
+                                            _bin_status[_pos] = _st
 
                                 _xl_df["p_total_kw"]       = (_pt_xl / 1000).round(3)
                                 _xl_df["pf_sample"]        = _pf_xl.round(5)
