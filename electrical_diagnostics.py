@@ -63,6 +63,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy import stats as _scipy_stats
 
 # ---------------------------------------------------------------------------
 # Module-level threshold constants (\u00a710 of methodology)
@@ -153,11 +154,15 @@ class BandRecord:
     high_kw: float
     n_baseline: int
     mean_pf_baseline: float
+    std_pf_baseline: float = 0.0           # std dev of PF in baseline — for Welch's t-test
     n_recent: int = 0
     mean_pf_recent: float | None = None
+    std_pf_recent: float | None = None     # std dev of PF in recent period
     pf_drift: float | None = None
     suppressed: bool = False
     suppression_reason: str | None = None
+    p_value: float | None = None           # Welch's t-test p-value
+    drift_significant: bool | None = None  # True if p < 0.05
 
 
 @dataclass
@@ -694,6 +699,7 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
         n = int(mask.sum())
         if n >= _min:
             mean_pf = float(pf_machine[mask].mean()) if n > 0 else 0.0
+            std_pf  = float(pf_machine[mask].std(ddof=1)) if n > 1 else 0.0
             centre  = (lo + hi) / 2.0
             bands.append(BandRecord(
                 centre_kw=round(centre, 3),
@@ -701,6 +707,7 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
                 high_kw=round(hi, 3),
                 n_baseline=n,
                 mean_pf_baseline=round(mean_pf, 5) if n > 0 else 0.0,
+                std_pf_baseline=round(std_pf, 6),
             ))
 
     return bands
@@ -746,10 +753,41 @@ def compute_pf_drift(
                 f"Only {n_recent} recent samples (minimum {PF_BAND_MIN_SAMPLES})"
             )
         else:
-            b.mean_pf_recent = round(float(pf_machine[mask].mean()), 5)
-            b.pf_drift = round(b.mean_pf_recent - band.mean_pf_baseline, 5)
+            pf_recent_vals = pf_machine[mask]
+            b.mean_pf_recent = round(float(pf_recent_vals.mean()), 5)
+            b.std_pf_recent  = round(float(pf_recent_vals.std(ddof=1)) if n_recent > 1 else 0.0, 6)
+            b.pf_drift       = round(b.mean_pf_recent - band.mean_pf_baseline, 5)
             active_drifts.append(b.pf_drift)
             active_weights.append(float(n_recent))
+
+            # Welch's t-test — requires std from both baseline and recent
+            if (band.std_pf_baseline > 0 and b.std_pf_recent > 0
+                    and band.n_baseline > 1 and n_recent > 1):
+                try:
+                    _se = ((band.std_pf_baseline**2 / band.n_baseline) +
+                           (b.std_pf_recent**2 / n_recent)) ** 0.5
+                    if _se > 0:
+                        _t = b.pf_drift / _se
+                        # Welch-Satterthwaite degrees of freedom
+                        _var1 = band.std_pf_baseline**2 / band.n_baseline
+                        _var2 = b.std_pf_recent**2 / n_recent
+                        _df = (_var1 + _var2)**2 / (
+                            _var1**2 / (band.n_baseline - 1) +
+                            _var2**2 / (n_recent - 1)
+                        )
+                        _p = float(2 * _scipy_stats.t.sf(abs(_t), df=_df))
+                        b.p_value = round(_p, 4)
+                        b.drift_significant = _p < 0.05
+                    else:
+                        b.p_value = 1.0
+                        b.drift_significant = False
+                except Exception:
+                    b.p_value = None
+                    b.drift_significant = None
+            else:
+                # Not enough variance info — mark as inconclusive
+                b.p_value = None
+                b.drift_significant = None
         updated.append(b)
 
     if len(active_drifts) < PF_BAND_MIN_COUNT:
