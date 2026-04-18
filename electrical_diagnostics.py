@@ -56,6 +56,7 @@ Project-wide conventions
 
 from __future__ import annotations
 
+import math
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -783,8 +784,8 @@ def compute_pf_drift(
                             """Regularised incomplete beta I(x; a, b)."""
                             if x <= 0: return 0.0
                             if x >= 1: return 1.0
-                            lbeta = (np.math.lgamma(a) + np.math.lgamma(b_val)
-                                     - np.math.lgamma(a + b_val))
+                            lbeta = (math.lgamma(a) + math.lgamma(b_val)
+                                     - math.lgamma(a + b_val))
                             front = np.exp(np.log(x) * a + np.log(1-x) * b_val - lbeta) / a
                             # Lentz continued fraction
                             f = 1.0; c = 1.0; d = 1.0 - (a + b_val) * x / (a + 1)
