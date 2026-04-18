@@ -2952,6 +2952,110 @@ with tab_analysis:
                                     ].width = _w
                                 _ws2.freeze_panes = "A2"
 
+                                # ── Sheet 3: Baseline sample data ────────────
+                                _ws3 = _wb.create_sheet("Baseline Data")
+                                _hdr3 = [
+                                    "Timestamp", "P_total (kW)", "PF (sample)",
+                                    "Bin #", "Bin Low (kW)", "Bin High (kW)",
+                                    "Baseline PF mean", "Baseline PF std",
+                                ]
+                                _style_header(_ws3, _hdr3)
+
+                                # Load raw baseline data using stored timestamps
+                                try:
+                                    _bm_xl = baseline_from_dict(
+                                        db.get_baseline(selected_id)
+                                    )
+                                    if (_bm_xl and _bm_xl.timestamp_start
+                                            and _bm_xl.timestamp_end):
+                                        _bl_ts1 = pd.Timestamp(_bm_xl.timestamp_start)
+                                        _bl_ts2 = pd.Timestamp(_bm_xl.timestamp_end)
+                                        _bl_raw = data.loc[
+                                            (_bl_ts1 <= data.index) &
+                                            (data.index <= _bl_ts2)
+                                        ].reset_index()
+                                        _bl_w = scale_power_to_watts(
+                                            _bl_raw, meta.get("power_unit", "W")
+                                        )
+                                        # Clean baseline same way as assessment
+                                        _bl_cleaned, _ = clean_samples(
+                                            _bl_w, meta,
+                                            _bm_xl.user_filter_expr
+                                        )
+                                        _pt_bl = (
+                                            _bl_cleaned["phase_1_active_power"] +
+                                            _bl_cleaned["phase_2_active_power"] +
+                                            _bl_cleaned["phase_3_active_power"]
+                                        )
+                                        _s_bl = (
+                                            _bl_cleaned["phase_1_voltage"] *
+                                            _bl_cleaned["phase_1_current"] +
+                                            _bl_cleaned["phase_2_voltage"] *
+                                            _bl_cleaned["phase_2_current"] +
+                                            _bl_cleaned["phase_3_voltage"] *
+                                            _bl_cleaned["phase_3_current"]
+                                        ).replace(0, float("nan"))
+                                        _pf_bl = (_pt_bl / _s_bl).round(5)
+                                        _pt_bl_arr = _pt_bl.values
+                                        _n_bl = len(_bl_cleaned)
+
+                                        # Bin arrays for baseline
+                                        _bl_bin_no  = [None] * _n_bl
+                                        _bl_bin_low = [None] * _n_bl
+                                        _bl_bin_hi  = [None] * _n_bl
+                                        _bl_bl_pf   = [None] * _n_bl
+                                        _bl_bl_std  = [None] * _n_bl
+
+                                        for _bi3, _b3 in enumerate(_bands_src, start=1):
+                                            _m3 = ((_pt_bl_arr >= _b3.low_kw) &
+                                                   (_pt_bl_arr <  _b3.high_kw))
+                                            for _p3 in range(_n_bl):
+                                                if _m3[_p3]:
+                                                    _bl_bin_no[_p3]  = _bi3
+                                                    _bl_bin_low[_p3] = round(_b3.low_kw  / 1000, 2)
+                                                    _bl_bin_hi[_p3]  = round(_b3.high_kw / 1000, 2)
+                                                    _bl_bl_pf[_p3]   = _b3.mean_pf_baseline
+                                                    _bl_bl_std[_p3]  = _b3.std_pf_baseline
+
+                                        _ts_bl = (
+                                            _bl_cleaned["timestamp"].tolist()
+                                            if "timestamp" in _bl_cleaned.columns
+                                            else [None] * _n_bl
+                                        )
+
+                                        for _ri3 in range(_n_bl):
+                                            _row3 = [
+                                                _ts_bl[_ri3],
+                                                round(float(_pt_bl.iloc[_ri3]) / 1000, 3),
+                                                float(_pf_bl.iloc[_ri3])
+                                                if not pd.isna(_pf_bl.iloc[_ri3]) else None,
+                                                _bl_bin_no[_ri3],
+                                                _bl_bin_low[_ri3],
+                                                _bl_bin_hi[_ri3],
+                                                _bl_bl_pf[_ri3],
+                                                _bl_bl_std[_ri3],
+                                            ]
+                                            for _ci3, _val3 in enumerate(_row3, start=1):
+                                                _c3 = _ws3.cell(
+                                                    row=_ri3 + 2,
+                                                    column=_ci3,
+                                                    value=_val3,
+                                                )
+                                                _c3.font = _body_font
+                                                _c3.border = _thin
+
+                                        for _ci3, _w3 in enumerate(
+                                            [18, 12, 12, 8, 12, 12, 16, 14],
+                                            start=1
+                                        ):
+                                            _ws3.column_dimensions[
+                                                _ws3.cell(1, _ci3).column_letter
+                                            ].width = _w3
+                                        _ws3.freeze_panes = "A2"
+                                except Exception as _e3:
+                                    _ws3.cell(row=2, column=1,
+                                              value=f"Could not load baseline data: {_e3}")
+
                                 # ── Save to buffer and offer download ─────────
                                 _buf = _io.BytesIO()
                                 _wb.save(_buf)
