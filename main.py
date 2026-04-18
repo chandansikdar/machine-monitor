@@ -2735,7 +2735,242 @@ with tab_analysis:
                                 st.dataframe(_dl_removed.head(10), use_container_width=True,
                                              hide_index=True)
 
-                    # Control charts
+                    # ── PF Drift Excel export ────────────────────────────────
+                    _cleaned_for_xl = st.session_state.get("last_cleaned_data")
+                    if _cleaned_for_xl is not None and not _cleaned_for_xl.empty and record:
+
+                        with st.expander(
+                            "\U0001f4c8 PF drift Excel export", expanded=False
+                        ):
+                            st.caption(
+                                "Each cleaned sample tagged with its bin number and the "
+                                "band statistics. Sheet 1 = sample-level data. "
+                                "Sheet 2 = band summary."
+                            )
+                            if st.button(
+                                "\U0001f4be Generate PF drift Excel",
+                                key="gen_pf_xl_btn",
+                                use_container_width=True,
+                            ):
+                                import io as _io
+                                from openpyxl import Workbook as _WB
+                                from openpyxl.styles import (
+                                    Font as _Font, PatternFill as _Fill,
+                                    Alignment as _Align, Border as _Border,
+                                    Side as _Side,
+                                )
+
+                                # ── Build band lookup from all active bands ──
+                                _bands_src = []
+                                if record.motor_side and record.motor_side.bands:
+                                    for _b in record.motor_side.bands:
+                                        if not _b.suppressed and _b.pf_drift is not None:
+                                            _bands_src.append(_b)
+
+                                # ── Tag each sample with bin number ──────────
+                                _xl_df = (_cleaned_for_xl.reset_index()
+                                          if "timestamp" not in _cleaned_for_xl.columns
+                                          else _cleaned_for_xl.copy())
+                                _xl_df = scale_power_to_watts(
+                                    _xl_df, meta.get("power_unit", "W")
+                                )
+                                _pt_xl = (_xl_df["phase_1_active_power"] +
+                                          _xl_df["phase_2_active_power"] +
+                                          _xl_df["phase_3_active_power"])
+                                _pf_xl = _pt_xl / (
+                                    _xl_df["phase_1_voltage"] * _xl_df["phase_1_current"] +
+                                    _xl_df["phase_2_voltage"] * _xl_df["phase_2_current"] +
+                                    _xl_df["phase_3_voltage"] * _xl_df["phase_3_current"]
+                                ).replace(0, float("nan"))
+
+                                # Assign bin number
+                                _bin_no     = [""] * len(_xl_df)
+                                _bin_low    = [None] * len(_xl_df)
+                                _bin_high   = [None] * len(_xl_df)
+                                _bin_bl_pf  = [None] * len(_xl_df)
+                                _bin_bl_std = [None] * len(_xl_df)
+                                _bin_rc_pf  = [None] * len(_xl_df)
+                                _bin_drift  = [None] * len(_xl_df)
+                                _bin_driftp = [None] * len(_xl_df)
+                                _bin_pval   = [None] * len(_xl_df)
+                                _bin_sig    = [None] * len(_xl_df)
+                                _bin_status = [None] * len(_xl_df)
+
+                                for _bi, _b in enumerate(_bands_src, start=1):
+                                    _mask = ((_pt_xl >= _b.low_kw) &
+                                             (_pt_xl < _b.high_kw))
+                                    _idx  = _xl_df.index[_mask]
+                                    _dp   = ((_b.pf_drift / _b.mean_pf_baseline * 100)
+                                             if _b.mean_pf_baseline else None)
+                                    _st   = ("Action" if _b.pf_drift <= -0.03 else
+                                             "Alert"  if _b.pf_drift <= -0.02 else
+                                             "Watch"  if _b.pf_drift <= -0.01 else
+                                             "Normal")
+                                    for _i in _idx:
+                                        _bin_no[_i]     = _bi
+                                        _bin_low[_i]    = round(_b.low_kw  / 1000, 2)
+                                        _bin_high[_i]   = round(_b.high_kw / 1000, 2)
+                                        _bin_bl_pf[_i]  = _b.mean_pf_baseline
+                                        _bin_bl_std[_i] = _b.std_pf_baseline
+                                        _bin_rc_pf[_i]  = _b.mean_pf_recent
+                                        _bin_drift[_i]  = _b.pf_drift
+                                        _bin_driftp[_i] = round(_dp, 4) if _dp else None
+                                        _bin_pval[_i]   = _b.p_value
+                                        _bin_sig[_i]    = (
+                                            "Yes" if _b.drift_significant else
+                                            "No"  if _b.drift_significant is False
+                                            else "n/a"
+                                        )
+                                        _bin_status[_i] = _st
+
+                                _xl_df["p_total_kw"]       = (_pt_xl / 1000).round(3)
+                                _xl_df["pf_sample"]        = _pf_xl.round(5)
+                                _xl_df["bin_number"]       = _bin_no
+                                _xl_df["bin_low_kw"]       = _bin_low
+                                _xl_df["bin_high_kw"]      = _bin_high
+                                _xl_df["baseline_pf_mean"] = _bin_bl_pf
+                                _xl_df["baseline_pf_std"]  = _bin_bl_std
+                                _xl_df["recent_pf_mean"]   = _bin_rc_pf
+                                _xl_df["pf_drift"]         = _bin_drift
+                                _xl_df["pf_drift_pct"]     = _bin_driftp
+                                _xl_df["p_value"]          = _bin_pval
+                                _xl_df["significant"]      = _bin_sig
+                                _xl_df["status"]           = _bin_status
+
+                                # ── Build Excel workbook ─────────────────────
+                                _hdr_fill = _Fill("solid", start_color="054D5F")
+                                _hdr_font = _Font(bold=True, color="FFFFFF",
+                                                  name="Arial", size=10)
+                                _body_font = _Font(name="Arial", size=10)
+                                _thin = _Border(
+                                    left=_Side(style="thin"),
+                                    right=_Side(style="thin"),
+                                    top=_Side(style="thin"),
+                                    bottom=_Side(style="thin"),
+                                )
+
+                                def _style_header(ws, headers):
+                                    for col, h in enumerate(headers, 1):
+                                        c = ws.cell(row=1, column=col, value=h)
+                                        c.font = _hdr_font
+                                        c.fill = _hdr_fill
+                                        c.alignment = _Align(
+                                            horizontal="center", wrap_text=True
+                                        )
+                                        c.border = _thin
+
+                                _wb = _WB()
+
+                                # ── Sheet 1: Sample-level ────────────────────
+                                _ws1 = _wb.active
+                                _ws1.title = "Sample Data"
+                                _keep_cols = [
+                                    "timestamp", "p_total_kw", "pf_sample",
+                                    "bin_number", "bin_low_kw", "bin_high_kw",
+                                    "baseline_pf_mean", "baseline_pf_std",
+                                    "recent_pf_mean", "pf_drift", "pf_drift_pct",
+                                    "p_value", "significant", "status",
+                                ]
+                                _out_cols = [c for c in _keep_cols
+                                             if c in _xl_df.columns]
+                                _hdr1 = [
+                                    "Timestamp", "P_total (kW)", "PF (sample)",
+                                    "Bin #", "Bin Low (kW)", "Bin High (kW)",
+                                    "Baseline PF mean", "Baseline PF std",
+                                    "Recent PF mean", "PF Drift",
+                                    "Drift %", "p-value", "Significant", "Status",
+                                ]
+                                _style_header(_ws1, _hdr1[:len(_out_cols)])
+                                for _ri, _row in enumerate(
+                                    _xl_df[_out_cols].itertuples(index=False), start=2
+                                ):
+                                    for _ci, _val in enumerate(_row, start=1):
+                                        _c = _ws1.cell(row=_ri, column=_ci,
+                                                        value=_val)
+                                        _c.font = _body_font
+                                        _c.border = _thin
+                                # Column widths
+                                for _ci, _w in enumerate(
+                                    [18,12,12,8,12,12,16,14,14,10,10,10,12,10],
+                                    start=1
+                                ):
+                                    _ws1.column_dimensions[
+                                        _ws1.cell(1, _ci).column_letter
+                                    ].width = _w
+                                _ws1.freeze_panes = "A2"
+
+                                # ── Sheet 2: Band summary ────────────────────
+                                _ws2 = _wb.create_sheet("Band Summary")
+                                _hdr2 = [
+                                    "Bin #", "Low (kW)", "Centre (kW)", "High (kW)",
+                                    "Baseline PF", "Baseline σ",
+                                    "Recent PF", "Recent σ",
+                                    "Drift", "Drift %", "p-value",
+                                    "Significant", "Status",
+                                    "n baseline", "n recent",
+                                ]
+                                _style_header(_ws2, _hdr2)
+                                for _bi, _b in enumerate(_bands_src, start=1):
+                                    _dp2 = ((_b.pf_drift / _b.mean_pf_baseline * 100)
+                                            if _b.mean_pf_baseline else None)
+                                    _st2 = ("Action" if _b.pf_drift <= -0.03 else
+                                            "Alert"  if _b.pf_drift <= -0.02 else
+                                            "Watch"  if _b.pf_drift <= -0.01 else
+                                            "Normal")
+                                    _row2 = [
+                                        _bi,
+                                        round(_b.low_kw    / 1000, 2),
+                                        round(_b.centre_kw / 1000, 2),
+                                        round(_b.high_kw   / 1000, 2),
+                                        _b.mean_pf_baseline,
+                                        _b.std_pf_baseline,
+                                        _b.mean_pf_recent,
+                                        _b.std_pf_recent,
+                                        _b.pf_drift,
+                                        round(_dp2, 4) if _dp2 else None,
+                                        _b.p_value,
+                                        ("Yes" if _b.drift_significant else
+                                         "No"  if _b.drift_significant is False
+                                         else "n/a"),
+                                        _st2,
+                                        _b.n_baseline,
+                                        _b.n_recent,
+                                    ]
+                                    for _ci, _val in enumerate(_row2, start=1):
+                                        _c = _ws2.cell(
+                                            row=_bi + 1, column=_ci, value=_val
+                                        )
+                                        _c.font = _body_font
+                                        _c.border = _thin
+                                for _ci, _w in enumerate(
+                                    [8,10,12,10,12,12,12,10,10,10,10,12,10,12,10],
+                                    start=1
+                                ):
+                                    _ws2.column_dimensions[
+                                        _ws2.cell(1, _ci).column_letter
+                                    ].width = _w
+                                _ws2.freeze_panes = "A2"
+
+                                # ── Save to buffer and offer download ─────────
+                                _buf = _io.BytesIO()
+                                _wb.save(_buf)
+                                _buf.seek(0)
+                                st.download_button(
+                                    label="\u2b07\ufe0f Download PF drift Excel",
+                                    data=_buf.getvalue(),
+                                    file_name=(
+                                        f"pf_drift_{selected_id}_"
+                                        f"{date_range[0]}_to_{date_range[1]}.xlsx"
+                                    ),
+                                    mime="application/vnd.openxmlformats-officedocument"
+                                         ".spreadsheetml.sheet",
+                                    use_container_width=True,
+                                )
+                                st.success(
+                                    f"\u2713 Excel ready — "
+                                    f"{len(_xl_df):,} samples, "
+                                    f"{len(_bands_src)} bands."
+                                )
                     _chart_data = st.session_state.get("last_data")
                     if _chart_data is None:
                         _chart_data = data
