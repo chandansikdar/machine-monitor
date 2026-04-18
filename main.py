@@ -690,6 +690,8 @@ def render_motor_side(m: MotorSideResult):
                 "**Recent PF** = mean PF during the selected assessment date range. "
                 "**Drift** = Recent \u2212 Baseline (negative = degradation). "
                 "**Drift %** = Drift as percentage of Baseline PF.  \n"
+                "**p-value** = Welch\u2019s t-test (two-tailed). "
+                "**Significant** = Yes if p < 0.05 (drift exceeds normal statistical variation).  \n"
                 f"\U0001f7e1 Watch: drift \u2264 {PF_DRIFT_WATCH*100:.0f}%  \u2002"
                 f"\U0001f7e0 Alert: drift \u2264 {PF_DRIFT_ALERT*100:.0f}%  \u2002"
                 f"\U0001f534 Action: drift \u2264 {PF_DRIFT_ACTION*100:.0f}%"
@@ -715,6 +717,10 @@ def render_motor_side(m: MotorSideResult):
                     "Recent PF":         f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent else "\u2014",
                     "Drift":             f"{b.pf_drift:+.4f}" if b.pf_drift is not None else "\u2014",
                     "Drift %":           f"{drift_pct:+.2f}%" if b.pf_drift is not None else "\u2014",
+                    "p-value":           f"{b.p_value:.4f}" if b.p_value is not None else "\u2014",
+                    "Significant":       ("\u2705 Yes" if b.drift_significant
+                                          else ("\u274c No" if b.drift_significant is False
+                                                else "\u2753 n/a")),
                     "Status":            status,
                     "n baseline":        b.n_baseline,
                     "n recent":          b.n_recent,
