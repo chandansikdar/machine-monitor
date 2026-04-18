@@ -87,7 +87,7 @@ LOAD_PRECONDITION_FRACTION: float = 0.40  # fraction of p_rated_elec minimum
 IQR_MULTIPLIER: float = 1.5               # standard Tukey fence
 
 # Multi-band PF comparison
-PF_BAND_TARGET_BINS: int   = 50              # bins = range / (2% of range) = 50 always
+PF_BAND_TARGET_BINS: int   = 100             # bins = range / (1% of range) = 100
 PF_BAND_MIN_SAMPLES: int   = 5               # minimum samples per band (baseline and assessment)
 PF_BAND_MIN_COUNT: int = 3               # minimum qualifying bands
 
@@ -685,8 +685,8 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
     p_max   = float(p_total.max())
     p_range = max(p_max - p_min, 1.0)
 
-    # bin_width = 2% of actual operating range → always 50 bins
-    bin_width = 0.02 * p_range
+    # bin_width = 1% of actual operating range → always 100 bins
+    bin_width = 0.01 * p_range
     edges = np.arange(p_min, p_max + bin_width, bin_width)
     if len(edges) < 2:
         return []
