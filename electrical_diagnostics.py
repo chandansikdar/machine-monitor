@@ -63,7 +63,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy import stats as _scipy_stats
 
 # ---------------------------------------------------------------------------
 # Module-level threshold constants (\u00a710 of methodology)
@@ -764,18 +763,55 @@ def compute_pf_drift(
             if (band.std_pf_baseline > 0 and b.std_pf_recent > 0
                     and band.n_baseline > 1 and n_recent > 1):
                 try:
-                    _se = ((band.std_pf_baseline**2 / band.n_baseline) +
-                           (b.std_pf_recent**2 / n_recent)) ** 0.5
+                    _var1 = band.std_pf_baseline**2 / band.n_baseline
+                    _var2 = b.std_pf_recent**2 / n_recent
+                    _se   = (_var1 + _var2) ** 0.5
                     if _se > 0:
-                        _t = b.pf_drift / _se
+                        _t = abs(b.pf_drift / _se)
                         # Welch-Satterthwaite degrees of freedom
-                        _var1 = band.std_pf_baseline**2 / band.n_baseline
-                        _var2 = b.std_pf_recent**2 / n_recent
                         _df = (_var1 + _var2)**2 / (
                             _var1**2 / (band.n_baseline - 1) +
                             _var2**2 / (n_recent - 1)
                         )
-                        _p = float(2 * _scipy_stats.t.sf(abs(_t), df=_df))
+                        # Two-tailed p-value via regularised incomplete beta:
+                        # p = I(df/(df+t²), df/2, 0.5)
+                        # Implemented using numpy's betainc equivalent
+                        _x = _df / (_df + _t**2)
+                        # Use numpy to compute regularised incomplete beta
+                        # via the continued fraction / series approximation
+                        def _betainc(a, b_val, x):
+                            """Regularised incomplete beta I(x; a, b)."""
+                            if x <= 0: return 0.0
+                            if x >= 1: return 1.0
+                            lbeta = (np.math.lgamma(a) + np.math.lgamma(b_val)
+                                     - np.math.lgamma(a + b_val))
+                            front = np.exp(np.log(x) * a + np.log(1-x) * b_val - lbeta) / a
+                            # Lentz continued fraction
+                            f = 1.0; c = 1.0; d = 1.0 - (a + b_val) * x / (a + 1)
+                            if abs(d) < 1e-30: d = 1e-30
+                            d = 1.0 / d; f = d
+                            for m in range(1, 200):
+                                m2 = 2 * m
+                                # Even step
+                                num = m * (b_val - m) * x / ((a + m2 - 1) * (a + m2))
+                                d = 1.0 + num * d
+                                if abs(d) < 1e-30: d = 1e-30
+                                c = 1.0 + num / c
+                                if abs(c) < 1e-30: c = 1e-30
+                                d = 1.0 / d; f *= c * d
+                                # Odd step
+                                num = -(a + m) * (a + b_val + m) * x / ((a + m2) * (a + m2 + 1))
+                                d = 1.0 + num * d
+                                if abs(d) < 1e-30: d = 1e-30
+                                c = 1.0 + num / c
+                                if abs(c) < 1e-30: c = 1e-30
+                                d = 1.0 / d; delta = c * d; f *= delta
+                                if abs(delta - 1.0) < 1e-10: break
+                            return front * f
+
+                        # I(x; df/2, 0.5) gives two-tailed p directly
+                        _p = float(_betainc(_df / 2, 0.5, _x))
+                        _p = max(0.0, min(1.0, _p))
                         b.p_value = round(_p, 4)
                         b.drift_significant = _p < 0.05
                     else:
@@ -785,7 +821,6 @@ def compute_pf_drift(
                     b.p_value = None
                     b.drift_significant = None
             else:
-                # Not enough variance info — mark as inconclusive
                 b.p_value = None
                 b.drift_significant = None
         updated.append(b)
