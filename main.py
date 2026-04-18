@@ -681,8 +681,12 @@ def render_motor_side(m: MotorSideResult):
 
     # Per-band breakdown (collapsible)
     active_bands = [b for b in m.bands if not b.suppressed and b.pf_drift is not None]
+    total_bands  = len(m.bands)
     if active_bands:
-        with st.expander(f"PF Drift \u2014 {len(active_bands)} active band(s)", expanded=False):
+        with st.expander(
+            f"PF Drift \u2014 {len(active_bands)} active band(s) of {total_bands} total",
+            expanded=False,
+        ):
             st.caption(
                 "Each band is an equal-width power bin (bin width = 1% of actual operating range, giving 100 bins). "
                 "Only bins with \u22655 samples in both baseline and recent period are used for PF drift calculation. "
