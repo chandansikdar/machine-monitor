@@ -2917,7 +2917,7 @@ with tab_analysis:
                             _n_removed = len(_removed_all_labelled)
 
                             # Two download columns
-                            _dc1, _dc2, _dc3 = st.columns(3)
+                            _dc1, _dc2, _dc3, _dc4 = st.columns(4)
 
                             with _dc1:
                                 # True raw: slice from data before integrity filter
@@ -2941,6 +2941,21 @@ with tab_analysis:
                                              hide_index=True)
 
                             with _dc2:
+                                # Post-integrity-filter: rows that passed integrity checks
+                                _dl_post_ic = _to_dl_unit(_raw_w)
+                                _n_ic_excluded = len(_dl_raw) - len(_dl_post_ic)
+                                st.markdown(f"**\U0001f6e1\ufe0f After integrity ({len(_dl_post_ic):,} rows)**")
+                                st.caption(f"{_n_ic_excluded:,} rows excluded by integrity check")
+                                st.download_button(
+                                    label=f"\u2b07\ufe0f Download {len(_dl_post_ic):,} post-integrity rows (CSV)",
+                                    data=_dl_post_ic.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"post_integrity_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
+                                    mime="text/csv", use_container_width=True,
+                                )
+                                st.dataframe(_dl_post_ic.head(10), use_container_width=True,
+                                             hide_index=True)
+
+                            with _dc3:
                                 st.markdown(f"**\u2705 Cleaned ({_n_cleaned:,} rows)**")
                                 _dl_cleaned = _to_dl_unit(
                                     _cleaned if "timestamp" in _cleaned.columns
@@ -2955,7 +2970,7 @@ with tab_analysis:
                                 st.dataframe(_dl_cleaned.head(10), use_container_width=True,
                                              hide_index=True)
 
-                            with _dc3:
+                            with _dc4:
                                 st.markdown(f"**\u274c Removed ({_n_removed:,} rows)**")
                                 _dl_removed = _to_dl_unit(_removed_all_labelled)
                                 st.download_button(
