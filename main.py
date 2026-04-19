@@ -570,7 +570,7 @@ def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning")
         st.markdown(f"**{title}**")
         steps = [
             ("Raw samples",                    report.n_raw),
-            ("Step 1 \u2014 Load \u226540% rated",   report.n_after_load_precondition),
+            ("Step 1 2014 Load 226520% rated",   report.n_after_load_precondition),
             ("Step 2 \u2014 Start transient",        getattr(report, "n_after_start_transient",
                                                      report.n_after_load_precondition)),
             ("Step 3 \u2014 User filter",            report.n_after_user_filter),
@@ -1067,7 +1067,7 @@ def build_assessment_charts(
         y_range=[0, max(iuf_max * 1.3, IUF_CRITICAL * 1.5)],
     ))
 
-    # P_total chart — baseline avg + 40% load precondition threshold
+    # P_total chart — baseline avg + 20% load precondition threshold
     p_hlines = []
     if record.zone4 and record.zone4.p_baseline_avg_kw:
         p_hlines.append((
@@ -1086,22 +1086,22 @@ def build_assessment_charts(
                     _assess_avg_kw, "#C8A84B", "dash",
                     f"Assessment avg {_assess_avg_kw:.1f} kW",
                 ))
-    # 40% load precondition threshold — derive from meta or estimate from data
+    # 20% load precondition threshold — derive from meta or estimate from data
     _p40_kw = None
     if meta:
         _p_shaft = float(meta.get("p_rated_shaft_kw", 0))
         _eta     = float(meta.get("eta_rated", 0.90))
         if _p_shaft > 0 and _eta > 0:
-            _p40_kw = 0.40 * (_p_shaft / _eta)
+            _p40_kw = 0.20 * (_p_shaft / _eta)
         else:
             # Estimate from data 95th percentile (same logic as clean_samples)
             _p95_raw = float(raw_p_kw[raw_p_kw > 0].quantile(0.95)) if (raw_p_kw > 0).any() else 0.0
             _p_rated_est = _p95_raw / 0.95 if _p95_raw > 0 else 0.0
-            _p40_kw = 0.40 * _p_rated_est if _p_rated_est > 0 else None
+            _p40_kw = 0.20 * _p_rated_est if _p_rated_est > 0 else None
     if _p40_kw and _p40_kw > 0:
         p_hlines.append((
             _p40_kw, "#177E40", "dot",
-            f"40% load threshold ({_p40_kw:.1f} kW)",
+            f"20% load threshold ({_p40_kw:.1f} kW)",
         ))
     figs.append(_chart(
         data.index, raw_p_kw,
@@ -2785,7 +2785,7 @@ with tab_analysis:
                             )
                             _p_rated_e = (float(meta.get("p_rated_shaft_kw", 0)) /
                                           float(meta.get("eta_rated", 0.9)))
-                            _load_min  = 0.40 * _p_rated_e * 1000.0
+                            _load_min  = 0.20 * _p_rated_e * 1000.0
                             _cold_min  = 0.01 * _p_rated_e * 1000.0
                             _pt_raw    = (_raw_w["phase_1_active_power"] +
                                           _raw_w["phase_2_active_power"] +
@@ -2794,7 +2794,7 @@ with tab_analysis:
                             # Step 1 — load precondition
                             _s1_pass  = _raw_w[_pt_raw >= _load_min].copy()
                             _s1_fail  = _raw_w[_pt_raw <  _load_min].copy()
-                            _s1_fail["removed_at_step"] = "Step 1 - Load precondition (<40% rated)"
+                            _s1_fail["removed_at_step"] = "Step 1 - Load precondition (<20% rated)"
 
                             # Step 2 — start transient
                             _prev_below = _pt_raw.shift(1, fill_value=0.0) < _cold_min
