@@ -577,18 +577,17 @@ def clean_samples(
     report.n_after_user_filter = len(df)
 
     # ── Step 4: IQR outlier rejection ────────────────────────────────────────
+    # Applied only to directly measured quantities (P_total, I_avg).
+    # PF is a derived quantity and its variation across load bands is normal —
+    # removing PF outliers would eliminate valid lightly-loaded samples.
     if len(df) >= 4:
         p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
                    + df["phase_3_active_power"])
         i_avg = (df["phase_1_current"] + df["phase_2_current"]
                  + df["phase_3_current"]) / 3.0
-        s_sum = (df["phase_1_voltage"] * df["phase_1_current"]
-                 + df["phase_2_voltage"] * df["phase_2_current"]
-                 + df["phase_3_voltage"] * df["phase_3_current"])
-        pf_machine = p_total / s_sum.replace(0, np.nan)
 
         keep = pd.Series(True, index=df.index)
-        for signal in (p_total, i_avg, pf_machine):
+        for signal in (p_total, i_avg):
             q25 = signal.quantile(0.25)
             q75 = signal.quantile(0.75)
             iqr = q75 - q25
