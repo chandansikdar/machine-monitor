@@ -576,26 +576,7 @@ def clean_samples(
             )
     report.n_after_user_filter = len(df)
 
-    # ── Step 4: IQR outlier rejection ────────────────────────────────────────
-    # Applied only to directly measured quantities (P_total, I_avg).
-    # PF is a derived quantity and its variation across load bands is normal —
-    # removing PF outliers would eliminate valid lightly-loaded samples.
-    if len(df) >= 4:
-        p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
-                   + df["phase_3_active_power"])
-        i_avg = (df["phase_1_current"] + df["phase_2_current"]
-                 + df["phase_3_current"]) / 3.0
-
-        keep = pd.Series(True, index=df.index)
-        for signal in (p_total, i_avg):
-            q25 = signal.quantile(0.25)
-            q75 = signal.quantile(0.75)
-            iqr = q75 - q25
-            lo  = q25 - IQR_MULTIPLIER * iqr
-            hi  = q75 + IQR_MULTIPLIER * iqr
-            keep &= signal.between(lo, hi, inclusive="both")
-        df = df[keep].copy()
-    report.n_after_iqr = len(df)
+    report.n_after_iqr = len(df)   # no IQR step — equals n_after_user_filter
 
     return df, report
 
@@ -1682,3 +1663,4 @@ def assessment_summary(record: AssessmentRecord) -> str:
             lines.append("Zone 4: no data")
 
     return "\n".join(lines)
+    
