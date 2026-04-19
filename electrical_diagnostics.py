@@ -57,6 +57,56 @@ Project-wide conventions
 from __future__ import annotations
 
 import math
+
+# ---------------------------------------------------------------------------
+# Statistical helpers
+# ---------------------------------------------------------------------------
+
+def _welch_p(drift: float, std1: float, n1: int, std2: float, n2: int) -> float | None:
+    """Two-tailed p-value for Welch's t-test using regularised incomplete beta.
+
+    Returns None if the test cannot be computed (zero variance or n < 2).
+    """
+    if std1 <= 0 or std2 <= 0 or n1 < 2 or n2 < 2:
+        return None
+    try:
+        var1 = std1 ** 2 / n1
+        var2 = std2 ** 2 / n2
+        se   = (var1 + var2) ** 0.5
+        if se <= 0:
+            return 1.0
+        t  = abs(drift / se)
+        df = (var1 + var2) ** 2 / (var1 ** 2 / (n1 - 1) + var2 ** 2 / (n2 - 1))
+        x  = df / (df + t ** 2)
+        # Regularised incomplete beta I(x; df/2, 0.5) via Lentz continued fraction
+        if x <= 0:
+            return 0.0
+        if x >= 1:
+            return 1.0
+        a, b_val = df / 2, 0.5
+        lb   = math.lgamma(a) + math.lgamma(b_val) - math.lgamma(a + b_val)
+        front = math.exp(math.log(x) * a + math.log(1 - x) * b_val - lb) / a
+        f = 1.0; c = 1.0
+        d = 1.0 - (a + b_val) * x / (a + 1)
+        if abs(d) < 1e-30: d = 1e-30
+        d = 1.0 / d; f = d
+        for m in range(1, 200):
+            m2  = 2 * m
+            nu  = m * (b_val - m) * x / ((a + m2 - 1) * (a + m2))
+            d   = 1.0 + nu * d; c = 1.0 + nu / c
+            if abs(d) < 1e-30: d = 1e-30
+            if abs(c) < 1e-30: c = 1e-30
+            d = 1.0 / d; f *= c * d
+            nu  = -(a + m) * (a + b_val + m) * x / ((a + m2) * (a + m2 + 1))
+            d   = 1.0 + nu * d; c = 1.0 + nu / c
+            if abs(d) < 1e-30: d = 1e-30
+            if abs(c) < 1e-30: c = 1e-30
+            d = 1.0 / d; delta = c * d; f *= delta
+            if abs(delta - 1.0) < 1e-10:
+                break
+        return max(0.0, min(1.0, float(front * f)))
+    except Exception:
+        return None
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -835,67 +885,12 @@ def compute_pf_drift(
             active_drifts.append(b.pf_drift)
             active_weights.append(float(n_recent))
 
-            # Welch's t-test — requires std from both baseline and recent
-            if (band.std_pf_baseline > 0 and b.std_pf_recent > 0
-                    and band.n_baseline > 1 and n_recent > 1):
-                try:
-                    _var1 = band.std_pf_baseline**2 / band.n_baseline
-                    _var2 = b.std_pf_recent**2 / n_recent
-                    _se   = (_var1 + _var2) ** 0.5
-                    if _se > 0:
-                        _t = abs(b.pf_drift / _se)
-                        # Welch-Satterthwaite degrees of freedom
-                        _df = (_var1 + _var2)**2 / (
-                            _var1**2 / (band.n_baseline - 1) +
-                            _var2**2 / (n_recent - 1)
-                        )
-                        # Two-tailed p-value via regularised incomplete beta:
-                        # p = I(df/(df+t²), df/2, 0.5)
-                        # Implemented using numpy's betainc equivalent
-                        _x = _df / (_df + _t**2)
-                        # Use numpy to compute regularised incomplete beta
-                        # via the continued fraction / series approximation
-                        def _betainc(a, b_val, x):
-                            """Regularised incomplete beta I(x; a, b)."""
-                            if x <= 0: return 0.0
-                            if x >= 1: return 1.0
-                            lbeta = (math.lgamma(a) + math.lgamma(b_val)
-                                     - math.lgamma(a + b_val))
-                            front = np.exp(np.log(x) * a + np.log(1-x) * b_val - lbeta) / a
-                            # Lentz continued fraction
-                            f = 1.0; c = 1.0; d = 1.0 - (a + b_val) * x / (a + 1)
-                            if abs(d) < 1e-30: d = 1e-30
-                            d = 1.0 / d; f = d
-                            for m in range(1, 200):
-                                m2 = 2 * m
-                                # Even step
-                                num = m * (b_val - m) * x / ((a + m2 - 1) * (a + m2))
-                                d = 1.0 + num * d
-                                if abs(d) < 1e-30: d = 1e-30
-                                c = 1.0 + num / c
-                                if abs(c) < 1e-30: c = 1e-30
-                                d = 1.0 / d; f *= c * d
-                                # Odd step
-                                num = -(a + m) * (a + b_val + m) * x / ((a + m2) * (a + m2 + 1))
-                                d = 1.0 + num * d
-                                if abs(d) < 1e-30: d = 1e-30
-                                c = 1.0 + num / c
-                                if abs(c) < 1e-30: c = 1e-30
-                                d = 1.0 / d; delta = c * d; f *= delta
-                                if abs(delta - 1.0) < 1e-10: break
-                            return front * f
-
-                        # I(x; df/2, 0.5) gives two-tailed p directly
-                        _p = float(_betainc(_df / 2, 0.5, _x))
-                        _p = max(0.0, min(1.0, _p))
-                        b.p_value = round(_p, 4)
-                        b.drift_significant = _p < 0.05
-                    else:
-                        b.p_value = 1.0
-                        b.drift_significant = False
-                except Exception:
-                    b.p_value = None
-                    b.drift_significant = None
+            # Welch's t-test using module-level _welch_p
+            _p = _welch_p(b.pf_drift, _std_bl, band.n_baseline,
+                          b.std_pf_recent, n_recent)
+            if _p is not None:
+                b.p_value = round(_p, 4)
+                b.drift_significant = _p < 0.05
             else:
                 b.p_value = None
                 b.drift_significant = None
@@ -969,50 +964,19 @@ def compute_pf_drift_phase(
             b.std_pf_recent  = round(float(rc_vals.std(ddof=1)), 6) if len(rc_vals) > 1 else 0.0
             b.pf_drift       = round(b.mean_pf_recent - _bl_mean, 5) if b.mean_pf_recent is not None else None
 
-            # Welch's t-test
-            if (_bl_std > 0 and b.std_pf_recent and b.std_pf_recent > 0
-                    and _bl_n > 1 and n_recent > 1 and b.pf_drift is not None):
-                try:
-                    _var1 = _bl_std**2 / _bl_n
-                    _var2 = b.std_pf_recent**2 / n_recent
-                    _se   = (_var1 + _var2) ** 0.5
-                    if _se > 0:
-                        _t  = abs(b.pf_drift / _se)
-                        _df = (_var1 + _var2)**2 / (
-                            _var1**2 / (_bl_n - 1) + _var2**2 / (n_recent - 1)
-                        )
-                        _x  = _df / (_df + _t**2)
-                        def _bi2(a, bv, x):
-                            if x <= 0: return 0.0
-                            if x >= 1: return 1.0
-                            lb = math.lgamma(a) + math.lgamma(bv) - math.lgamma(a + bv)
-                            fr = math.exp(math.log(x)*a + math.log(1-x)*bv - lb) / a
-                            f=1.0; c=1.0; d=1.0-(a+bv)*x/(a+1)
-                            if abs(d)<1e-30: d=1e-30
-                            d=1.0/d; f=d
-                            for m in range(1, 200):
-                                m2=2*m
-                                nu=m*(bv-m)*x/((a+m2-1)*(a+m2))
-                                d=1.0+nu*d; c=1.0+nu/c
-                                if abs(d)<1e-30: d=1e-30
-                                if abs(c)<1e-30: c=1e-30
-                                d=1.0/d; f*=c*d
-                                nu=-(a+m)*(a+bv+m)*x/((a+m2)*(a+m2+1))
-                                d=1.0+nu*d; c=1.0+nu/c
-                                if abs(d)<1e-30: d=1e-30
-                                if abs(c)<1e-30: c=1e-30
-                                d=1.0/d; dlt=c*d; f*=dlt
-                                if abs(dlt-1.0)<1e-10: break
-                            return fr*f
-                        _p = max(0.0, min(1.0, float(_bi2(_df/2, 0.5, _x))))
-                        b.p_value = round(_p, 4)
-                        b.drift_significant = _p < 0.05
-                    else:
-                        b.p_value = 1.0; b.drift_significant = False
-                except Exception:
-                    b.p_value = None; b.drift_significant = None
+            # Welch's t-test using module-level _welch_p
+            if b.pf_drift is not None:
+                _p = _welch_p(b.pf_drift, _bl_std, _bl_n,
+                              b.std_pf_recent or 0.0, n_recent)
+                if _p is not None:
+                    b.p_value = round(_p, 4)
+                    b.drift_significant = _p < 0.05
+                else:
+                    b.p_value = None
+                    b.drift_significant = None
             else:
-                b.p_value = None; b.drift_significant = None
+                b.p_value = None
+                b.drift_significant = None
 
         updated.append(b)
     return updated
