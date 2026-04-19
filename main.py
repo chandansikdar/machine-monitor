@@ -975,6 +975,40 @@ def render_assessment(record: AssessmentRecord):
                 f"{_n_total - _n_qualify} bins excluded from PF drift calculation."
             )
 
+    # Per-phase baseline bin reports
+    _ph_bl_all = st.session_state.get("last_phase_bl_all_bins") or {}
+    for _ph in (1, 2, 3):
+        _ph_all = _ph_bl_all.get(_ph, [])
+        if not _ph_all:
+            continue
+        with st.expander(
+            f"\U0001f4cb Phase {_ph} baseline PF bins \u2014 all {len(_ph_all)} bins",
+            expanded=False,
+        ):
+            st.caption(
+                f"All bins for Phase {_ph} computed from cleaned baseline "
+                f"(bin width = 1% of P_{_ph} operating range). "
+                f"Bins with \u22655 samples qualify for PF drift detection."
+            )
+            _ph_rows = []
+            for _b in _ph_all:
+                _q = _b.n_baseline >= 5
+                _ph_rows.append({
+                    "Low (kW)":       f"{_b.low_kw  / 1000:.2f}",
+                    "Centre (kW)":    f"{_b.centre_kw / 1000:.2f}",
+                    "High (kW)":      f"{_b.high_kw  / 1000:.2f}",
+                    "n baseline":     _b.n_baseline,
+                    "Baseline PF":    f"{_b.mean_pf_baseline:.4f}" if _b.n_baseline > 0 else "\u2014",
+                    "Baseline \u03c3": f"{_b.std_pf_baseline:.5f}" if _b.n_baseline > 0 else "\u2014",
+                    "Qualifies":      "\u2705 Yes" if _q else "\u274c No (<5 samples)",
+                })
+            st.dataframe(pd.DataFrame(_ph_rows), use_container_width=True, hide_index=True)
+            _nq = sum(1 for b in _ph_all if b.n_baseline >= 5)
+            st.caption(
+                f"{_nq} of {len(_ph_all)} bins qualify. "
+                f"{len(_ph_all) - _nq} bins excluded."
+            )
+
 
 # ---------------------------------------------------------------------------
 # Assessment charts
@@ -1189,6 +1223,7 @@ for _k, _v in [
     ("effective_meta",           None),   # resolved meta per §2.5 — single source of truth
     ("_ep_just_saved",           False),  # flag to show save confirmation after rerun
     ("last_phase_bands",         {}),     # {1: [BandRecord], 2: [...], 3: [...]}
+    ("last_phase_bl_all_bins",   {}),     # {1: all 100 bins, 2: ..., 3: ...}
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -2626,19 +2661,25 @@ with tab_analysis:
                                 )
                             if _cleaned_bl_for_phase is not None and len(_cleaned_bl_for_phase) > 0:
                                 _ph_bands = {}
+                                _ph_bl_all_bins = {}  # all bins including <5 samples
                                 for _ph in (1, 2, 3):
                                     # Build phase-specific baseline bands from cleaned baseline
-                                    _ph_bl_bands = select_pf_bands_phase(
-                                        _cleaned_bl_for_phase, _ph
+                                    _ph_bl_all = select_pf_bands_phase(
+                                        _cleaned_bl_for_phase, _ph, min_samples=0
                                     )
+                                    _ph_bl_bands = [b for b in _ph_bl_all
+                                                    if b.n_baseline >= 5]
+                                    _ph_bl_all_bins[_ph] = _ph_bl_all
                                     # Compute drift using cleaned assessment data
                                     _ph_bands[_ph] = compute_pf_drift_phase(
                                         _cleaned_df, _ph_bl_bands,
                                         _ph, _cleaned_bl_for_phase
                                     )
-                                st.session_state["last_phase_bands"] = _ph_bands
+                                st.session_state["last_phase_bands"]       = _ph_bands
+                                st.session_state["last_phase_bl_all_bins"] = _ph_bl_all_bins
                             else:
-                                st.session_state["last_phase_bands"] = {}
+                                st.session_state["last_phase_bands"]       = {}
+                                st.session_state["last_phase_bl_all_bins"] = {}
                             st.rerun()
 
                 if _run_disabled:
