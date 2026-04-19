@@ -2371,6 +2371,119 @@ with tab_analysis:
                                             f"\u2139\ufe0f Cleaned: {_n_bl_cl:,} rows "
                                             f"({_n_bl_rows - _n_bl_cl:,} removed by cleaning pipeline)"
                                         )
+
+                                    # ── Removed rows per step ──────────────────
+                                    _bl_pt_raw = (_bl_raw_w["phase_1_active_power"] +
+                                                  _bl_raw_w["phase_2_active_power"] +
+                                                  _bl_raw_w["phase_3_active_power"])
+                                    _bl_meta   = meta if meta else {}
+                                    _bl_p_shaft = float(_bl_meta.get("p_rated_shaft_kw", 0))
+                                    _bl_eta     = float(_bl_meta.get("eta_rated", 0.9))
+                                    _bl_p_rated_e = (_bl_p_shaft / _bl_eta) if _bl_eta > 0 else 0.0
+                                    # Estimate if not set
+                                    if _bl_p_rated_e <= 0:
+                                        _bl_p95 = float(_bl_pt_raw[_bl_pt_raw > 0].quantile(0.95)) if (_bl_pt_raw > 0).any() else 0.0
+                                        _bl_p_rated_e = (_bl_p95 / 0.95) if _bl_p95 > 0 else 0.0
+                                    _bl_load_min  = 0.20 * _bl_p_rated_e * 1000.0
+                                    _bl_cold_min  = 0.01 * _bl_p_rated_e * 1000.0
+
+                                    # Step 1
+                                    _bl_s1_pass = _bl_raw_w[_bl_pt_raw >= _bl_load_min].copy()
+                                    _bl_s1_fail = _bl_raw_w[_bl_pt_raw < _bl_load_min].copy()
+                                    _bl_s1_fail["removed_at_step"] = "Step 1 - Load precondition (<20% rated)"
+
+                                    # Step 2
+                                    _bl_s2_fail = pd.DataFrame(columns=_bl_s1_pass.columns)
+                                    _bl_cold_mask = _bl_pt_raw[_bl_s1_pass.index] < _bl_cold_min
+                                    _bl_cold_starts = _bl_cold_mask[_bl_cold_mask].index.tolist()
+                                    if _bl_cold_starts:
+                                        from electrical_diagnostics import COLD_START_TRANSIENT_SAMPLES as _bl_csts
+                                        _bl_transient_idx = set()
+                                        for _cs in _bl_cold_starts:
+                                            _loc = _bl_s1_pass.index.get_loc(_cs)
+                                            for _j in range(_loc, min(_loc + _bl_csts + 1, len(_bl_s1_pass))):
+                                                _bl_transient_idx.add(_bl_s1_pass.index[_j])
+                                        _bl_s2_fail = _bl_s1_pass.loc[list(_bl_transient_idx)].copy()
+                                        _bl_s2_fail["removed_at_step"] = "Step 2 - Start transient exclusion"
+                                        _bl_s2_pass = _bl_s1_pass.drop(index=list(_bl_transient_idx))
+                                    else:
+                                        _bl_s2_pass = _bl_s1_pass.copy()
+
+                                    # Step 3 — user filter
+                                    _bl_s3_fail = pd.DataFrame(columns=_bl_s2_pass.columns)
+                                    _bl_s3_pass = _bl_s2_pass.copy()
+                                    if _bl_user_filter:
+                                        try:
+                                            _bl_mask3 = _bl_s2_pass.eval(_bl_user_filter)
+                                            _bl_s3_pass = _bl_s2_pass[_bl_mask3].copy()
+                                            _bl_s3_fail = _bl_s2_pass[~_bl_mask3].copy()
+                                            _bl_s3_fail["removed_at_step"] = "Step 3 - User filter"
+                                        except Exception:
+                                            pass
+
+                                    # Step 4 — IQR (P_total and I_avg only)
+                                    _bl_s4_fail = pd.DataFrame(columns=_bl_s3_pass.columns)
+                                    if len(_bl_s3_pass) >= 4:
+                                        _bl_pt4 = (_bl_s3_pass["phase_1_active_power"] +
+                                                   _bl_s3_pass["phase_2_active_power"] +
+                                                   _bl_s3_pass["phase_3_active_power"])
+                                        _bl_ia4 = (_bl_s3_pass["phase_1_current"] +
+                                                   _bl_s3_pass["phase_2_current"] +
+                                                   _bl_s3_pass["phase_3_current"]) / 3.0
+                                        _bl_keep4 = pd.Series(True, index=_bl_s3_pass.index)
+                                        _bl_iqr_stats = {}
+                                        _bl_fail_flags = {}
+                                        for _bl_sig, _bl_sn in [(_bl_pt4, "P_total"), (_bl_ia4, "I_avg")]:
+                                            _bl_q25 = _bl_sig.quantile(0.25)
+                                            _bl_q75 = _bl_sig.quantile(0.75)
+                                            _bl_iqr = _bl_q75 - _bl_q25
+                                            _bl_iqr_stats[_bl_sn] = {
+                                                "q25": round(_bl_q25, 4), "q75": round(_bl_q75, 4),
+                                                "iqr": round(_bl_iqr, 4),
+                                                "lower": round(_bl_q25 - 1.5 * _bl_iqr, 4),
+                                                "upper": round(_bl_q75 + 1.5 * _bl_iqr, 4),
+                                            }
+                                            _bl_in_fence = _bl_sig.between(
+                                                _bl_q25 - 1.5 * _bl_iqr,
+                                                _bl_q75 + 1.5 * _bl_iqr,
+                                                inclusive="both"
+                                            )
+                                            _bl_fail_flags[_bl_sn] = ~_bl_in_fence
+                                            _bl_keep4 &= _bl_in_fence
+                                        _bl_s4_fail = _bl_s3_pass[~_bl_keep4].copy()
+                                        _bl_s4_fail["removed_at_step"] = "Step 4 - IQR outlier rejection"
+                                        _bl_s4_fail["iqr_trigger"] = [
+                                            " + ".join(s for s, f in _bl_fail_flags.items() if f.get(i, False))
+                                            for i in _bl_s4_fail.index
+                                        ]
+                                        for _bl_sn, _bl_sv in _bl_iqr_stats.items():
+                                            _bl_s4_fail[f"{_bl_sn}_Q25"]         = _bl_sv["q25"]
+                                            _bl_s4_fail[f"{_bl_sn}_Q75"]         = _bl_sv["q75"]
+                                            _bl_s4_fail[f"{_bl_sn}_IQR"]         = _bl_sv["iqr"]
+                                            _bl_s4_fail[f"{_bl_sn}_lower_fence"] = _bl_sv["lower"]
+                                            _bl_s4_fail[f"{_bl_sn}_upper_fence"] = _bl_sv["upper"]
+
+                                    _bl_removed = pd.concat(
+                                        [_bl_s1_fail, _bl_s2_fail, _bl_s3_fail, _bl_s4_fail],
+                                        ignore_index=True
+                                    )
+                                    _bl_removed = _bl_removed[[
+                                        c for c in _bl_removed.columns if not c.startswith("_")
+                                    ]]
+                                    if _dl_unit == "KW":
+                                        for _pc in ["phase_1_active_power",
+                                                    "phase_2_active_power",
+                                                    "phase_3_active_power"]:
+                                            if _pc in _bl_removed.columns:
+                                                _bl_removed[_pc] = (_bl_removed[_pc] / 1000).round(6)
+                                    if not _bl_removed.empty:
+                                        st.download_button(
+                                            label=f"\u2b07\ufe0f Download **removed** baseline rows ({len(_bl_removed):,} rows, CSV)",
+                                            data=_bl_removed.to_csv(index=False).encode("utf-8"),
+                                            file_name=f"baseline_removed_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                            mime="text/csv",
+                                            use_container_width=True,
+                                        )
                                 except Exception as _bl_cl_e:
                                     st.caption(f"Could not generate cleaned baseline: {_bl_cl_e}")
                         except Exception as _bl_e:
@@ -3322,3 +3435,4 @@ with tab_logs:
                 if st.button("Delete", key=f"tlog_del_{log['filename']}_{log['uploaded_at']}"):
                     db.delete_log(selected_id, log["filename"])
                     st.rerun()
+        
