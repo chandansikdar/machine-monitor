@@ -3008,12 +3008,27 @@ with tab_analysis:
                         ]
 
                         _oz_rows = []
+                        # Infer sampling interval from median timestamp difference
+                        if len(_oz_pt) > 1 and "timestamp" in _oz_raw_w.columns:
+                            _ts_sorted = pd.to_datetime(_oz_raw_w["timestamp"]).sort_values()
+                            _oz_interval_min = float(
+                                _ts_sorted.diff().dropna().dt.total_seconds().median() / 60.0
+                            )
+                        else:
+                            _oz_interval_min = 1.0  # fallback: 1 minute per sample
+
                         for _zname, _zlo, _zhi in _oz_zones:
                             _lo_w = _zlo * _oz_p_rated_w
                             _hi_w = _zhi * _oz_p_rated_w
                             _mask = (_oz_pt >= _lo_w) & (_oz_pt < _hi_w)
                             _cnt  = int(_mask.sum())
                             _pct  = _cnt / _oz_n_total * 100 if _oz_n_total > 0 else 0.0
+                            _mins = _cnt * _oz_interval_min
+                            _hrs  = _mins / 60.0
+                            _time_str = (
+                                f"{_hrs:.1f} h" if _hrs >= 1.0
+                                else f"{_mins:.0f} min"
+                            )
                             _oz_rows.append({
                                 "Zone":              _zname,
                                 "P range (kW)":      (
@@ -3021,8 +3036,9 @@ with tab_analysis:
                                     if _zhi != float("inf")
                                     else f"> {_lo_w/1000:.1f}"
                                 ),
-                                "Samples":           _cnt,
+                                "Time":              _time_str,
                                 "% Operating time":  f"{_pct:.1f}%",
+                                "_hrs":              _hrs,   # for chart
                             })
 
                         import plotly.graph_objects as _go_oz
@@ -3043,25 +3059,24 @@ with tab_analysis:
                                 "#E67E22",  # 20-40% — light load
                                 "#F1C40F",  # 40-60% — medium-light
                                 "#2ECC71",  # 60-80% — good
-                                "#27AE60",  # 80-110% — optimal
-                                "#8E44AD",  # >110% — overload
+                                "#27AE60",  # 80-100% — optimal
+                                "#8E44AD",  # >100% — overload
                             ]
                             _fig_oz = _go_oz.Figure()
                             _fig_oz.add_trace(_go_oz.Bar(
                                 x=[r["Zone"] for r in _oz_rows],
-                                y=[r["Samples"] for r in _oz_rows],
+                                y=[round(r["_hrs"], 2) for r in _oz_rows],
                                 marker_color=_oz_colors,
-                                text=[r["% Operating time"] for r in _oz_rows],
+                                text=[f"{r['Time']} ({r['% Operating time']})" for r in _oz_rows],
                                 textposition="outside",
                                 hovertemplate=(
                                     "<b>%{x}</b><br>"
-                                    "Samples: %{y:,}<br>"
-                                    "% Time: %{text}<extra></extra>"
+                                    "Time: %{text}<extra></extra>"
                                 ),
                             ))
                             _fig_oz.update_layout(
                                 xaxis_title="Load zone",
-                                yaxis_title="Samples",
+                                yaxis_title="Time (hours)",
                                 height=320,
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 paper_bgcolor="rgba(0,0,0,0)",
@@ -3071,7 +3086,11 @@ with tab_analysis:
                                 bargap=0.15,
                             )
                             st.plotly_chart(_fig_oz, use_container_width=True)
-                            st.dataframe(_oz_df, use_container_width=True, hide_index=True)
+                            st.caption(f"Sampling interval: {_oz_interval_min:.1f} min/sample")
+                            st.dataframe(
+                                pd.DataFrame(_oz_rows).drop(columns=["_hrs"]),
+                                use_container_width=True, hide_index=True
+                            )
 
                     # ── PF Drift Excel export ────────────────────────────────
                     _cleaned_for_xl = st.session_state.get("last_cleaned_data")
