@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 from database import Database
 from electrical_diagnostics import (
+    _DIAG_VERSION,
     AssessmentRecord,
     BaselineMetadata,
     BandRecord,
@@ -1199,7 +1200,7 @@ with st.sidebar:
         </style>""", unsafe_allow_html=True)
 
     st.title("Machine Analytics")
-    st.caption("Electrical Diagnostics \u2014 Symbion")
+    st.caption(f"Electrical Diagnostics \u2014 Symbion  |  {_DIAG_VERSION}")
 
     # ── Register new machine ──────────────────────────────────────────────
     with st.expander("Register new machine", expanded=not db.get_machines()):
