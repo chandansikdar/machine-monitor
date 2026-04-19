@@ -293,7 +293,7 @@ class AssessmentRecord:
     motor_side: MotorSideResult | None = None
     zone4: Zone4Result | None = None
     messages: list[str] = field(default_factory=list)
-    baseline_bands: list[BandRecord] = field(default_factory=list)  # all 50 bins from baseline
+    baseline_bands: list[BandRecord] = field(default_factory=list)  # all bins from baseline
 
 
 # ---------------------------------------------------------------------------
@@ -779,17 +779,37 @@ def select_pf_bands_phase(
     cleaned_baseline: pd.DataFrame,
     phase: int,
     min_samples: int | None = None,
+    cleaned_recent: pd.DataFrame | None = None,
 ) -> list[BandRecord]:
     """Build per-phase band structure from cleaned baseline.
 
-    Bins by phase power P_x (not P_total) with bin width = 1% of phase
-    operating range. PF computed as P_x / (V_x × I_x).
-    This ensures load effect on PF is controlled within each phase
-    independently, with no cross-phase dependency.
+    Bin boundaries span the union of baseline AND assessment operating ranges
+    so no assessment samples fall outside the bins. Bin width = 1% of the
+    combined range → 100 bins. Only samples with positive phase power used.
+    PF = P_x / (V_x × I_x). Fully independent of other phases.
     """
     p_phase  = _p_phase_series(cleaned_baseline, phase)
     pf_phase = _pf_phase_series(cleaned_baseline, phase)
     _min     = min_samples if min_samples is not None else PF_BAND_MIN_SAMPLES
+
+    # Keep only samples with positive phase power
+    _valid = p_phase > 0
+    p_phase  = p_phase[_valid]
+    pf_phase = pf_phase[_valid]
+
+    if len(p_phase) < PF_BAND_MIN_SAMPLES:
+        return []
+
+    p_min = float(p_phase.min())
+    p_max = float(p_phase.max())
+
+    # Extend range to cover assessment data if provided
+    if cleaned_recent is not None and len(cleaned_recent) > 0:
+        _p_rec = _p_phase_series(cleaned_recent, phase)
+        _p_rec = _p_rec[_p_rec > 0]
+        if len(_p_rec) > 0:
+            p_min = min(p_min, float(_p_rec.min()))
+            p_max = max(p_max, float(_p_rec.max()))
 
     if len(p_phase) < PF_BAND_MIN_SAMPLES:
         return []
@@ -926,8 +946,19 @@ def compute_pf_drift_phase(
     p_phase  = _p_phase_series(cleaned_recent, phase)
     pf_phase = _pf_phase_series(cleaned_recent, phase)
 
-    _bl_p    = _p_phase_series(cleaned_baseline, phase)    if cleaned_baseline is not None else None
-    _bl_pf   = _pf_phase_series(cleaned_baseline, phase)   if cleaned_baseline is not None else None
+    # Filter to positive phase power only — same as select_pf_bands_phase
+    _valid_r  = p_phase > 0
+    p_phase   = p_phase[_valid_r]
+    pf_phase  = pf_phase[_valid_r]
+
+    if cleaned_baseline is not None:
+        _bl_p_raw  = _p_phase_series(cleaned_baseline, phase)
+        _bl_pf_raw = _pf_phase_series(cleaned_baseline, phase)
+        _valid_bl  = _bl_p_raw > 0
+        _bl_p      = _bl_p_raw[_valid_bl]
+        _bl_pf     = _bl_pf_raw[_valid_bl]
+    else:
+        _bl_p = _bl_pf = None
 
     updated: list[BandRecord] = []
 
