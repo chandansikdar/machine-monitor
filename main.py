@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 
 from database import Database
 from electrical_diagnostics import (
-    _DIAG_VERSION,
     AssessmentRecord,
     BaselineMetadata,
     BandRecord,
@@ -48,6 +47,8 @@ from electrical_diagnostics import (
 )
 
 load_dotenv()
+import electrical_diagnostics as _ed_mod
+_DIAG_VERSION = getattr(_ed_mod, "_DIAG_VERSION", "unknown")
 
 # ---------------------------------------------------------------------------
 # Required DataFrame columns
