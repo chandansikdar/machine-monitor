@@ -985,9 +985,13 @@ def render_assessment(record: AssessmentRecord):
             f"\U0001f4cb Phase {_ph} baseline PF bins \u2014 all {len(_ph_all)} bins",
             expanded=False,
         ):
+            _ph_p_min = _ph_all[0].low_kw  / 1000 if _ph_all else 0
+            _ph_p_max = _ph_all[-1].high_kw / 1000 if _ph_all else 0
             st.caption(
-                f"All bins for Phase {_ph} computed from cleaned baseline "
+                f"All bins for Phase {_ph} computed from **cleaned baseline** "
                 f"(bin width = 1% of P_{_ph} operating range). "
+                f"Baseline range: **{_ph_p_min:.3f} – {_ph_p_max:.3f} kW**. "
+                f"Assessment samples outside this range are not compared. "
                 f"Bins with \u22655 samples qualify for PF drift detection."
             )
             _ph_rows = []
@@ -2386,6 +2390,44 @@ with tab_analysis:
                                     mime="text/csv",
                                     use_container_width=True,
                                 )
+                                # Cleaned baseline download (after all 4 cleaning steps)
+                                try:
+                                    _bl_raw_w = scale_power_to_watts(
+                                        _bl_view_data.reset_index(),
+                                        meta.get("power_unit", "W") if meta else "W"
+                                    )
+                                    _bl_user_filter = _stored_bl_dict.get("user_filter_expr")
+                                    _bl_cleaned, _bl_cr = clean_samples(
+                                        _bl_raw_w, meta, _bl_user_filter
+                                    ) if meta else (pd.DataFrame(), None)
+                                    if not _bl_cleaned.empty:
+                                        _bl_cl_dl = _bl_cleaned.copy()
+                                        _bl_cl_dl = _bl_cl_dl[[
+                                            c for c in _bl_cl_dl.columns
+                                            if not c.startswith("_")
+                                        ]]
+                                        # Convert power back to original unit
+                                        _dl_unit = meta.get("power_unit", "W").upper() if meta else "W"
+                                        if _dl_unit == "KW":
+                                            for _pc in ["phase_1_active_power",
+                                                        "phase_2_active_power",
+                                                        "phase_3_active_power"]:
+                                                if _pc in _bl_cl_dl.columns:
+                                                    _bl_cl_dl[_pc] = (_bl_cl_dl[_pc] / 1000).round(6)
+                                        _n_bl_cl = len(_bl_cl_dl)
+                                        st.download_button(
+                                            label=f"\u2b07\ufe0f Download **cleaned** baseline ({_n_bl_cl:,} rows, CSV)",
+                                            data=_bl_cl_dl.to_csv(index=False).encode("utf-8"),
+                                            file_name=f"baseline_cleaned_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                            mime="text/csv",
+                                            use_container_width=True,
+                                        )
+                                        st.caption(
+                                            f"\u2139\ufe0f Cleaned: {_n_bl_cl:,} rows "
+                                            f"({_n_bl_rows - _n_bl_cl:,} removed by cleaning pipeline)"
+                                        )
+                                except Exception as _bl_cl_e:
+                                    st.caption(f"Could not generate cleaned baseline: {_bl_cl_e}")
                         except Exception as _bl_e:
                             st.error(f"Could not load baseline data: {_bl_e}")
 
@@ -2663,9 +2705,11 @@ with tab_analysis:
                                 _ph_bands = {}
                                 _ph_bl_all_bins = {}  # all bins including <5 samples
                                 for _ph in (1, 2, 3):
-                                    # Build phase-specific baseline bands from cleaned baseline
+                                    # Build phase-specific baseline bands, extended to cover assessment range
                                     _ph_bl_all = select_pf_bands_phase(
-                                        _cleaned_bl_for_phase, _ph, min_samples=0
+                                        _cleaned_bl_for_phase, _ph,
+                                        min_samples=0,
+                                        cleaned_recent=_cleaned_df
                                     )
                                     _ph_bl_bands = [b for b in _ph_bl_all
                                                     if b.n_baseline >= 5]
