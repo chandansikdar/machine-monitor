@@ -39,6 +39,7 @@ from electrical_diagnostics import (
     integrity_gate,
     clean_samples,
     ingest_baseline,
+    run_assessment,
     compute_pf_drift_phase,
     select_pf_bands_phase,
     assessment_summary,
