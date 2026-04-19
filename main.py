@@ -2850,7 +2850,7 @@ with tab_analysis:
                                 "removed at each cleaning step."
                             )
 
-                            # Re-derive removed rows per step using same logic as run_assessment
+                            # Use clean_samples directly — guarantees same result as run_assessment
                             _raw_w = scale_power_to_watts(
                                 (_raw_for_dl if _raw_for_dl is not None else
                                  data.loc[
@@ -2859,61 +2859,45 @@ with tab_analysis:
                                       pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
                                  ]).reset_index(), meta.get("power_unit", "W")
                             )
-                            _p_rated_e = (float(meta.get("p_rated_shaft_kw", 0)) /
-                                          float(meta.get("eta_rated", 0.9)))
-                            _load_min  = 0.20 * _p_rated_e * 1000.0
-                            _cold_min  = 0.01 * _p_rated_e * 1000.0
-                            _pt_raw    = (_raw_w["phase_1_active_power"] +
-                                          _raw_w["phase_2_active_power"] +
-                                          _raw_w["phase_3_active_power"])
+                            _uf_for_dl = (baseline_from_dict(db.get_baseline(selected_id)).user_filter_expr
+                                          if db.get_baseline(selected_id) else None)
+                            _cleaned_redone, _cr_redone = clean_samples(_raw_w, meta, _uf_for_dl)
 
-                            # Step 1 — load precondition
-                            _s1_pass  = _raw_w[_pt_raw >= _load_min].copy()
-                            _s1_fail  = _raw_w[_pt_raw <  _load_min].copy()
-                            _s1_fail["removed_at_step"] = "Step 1 - Load precondition (<20% rated)"
+                            # Derive removed rows by timestamp comparison
+                            _raw_ts_set     = set(_raw_w["timestamp"].astype(str)) if "timestamp" in _raw_w.columns else set()
+                            _cleaned_ts_set = set(_cleaned_redone["timestamp"].astype(str)) if "timestamp" in _cleaned_redone.columns else set()
+                            _removed_ts_set = _raw_ts_set - _cleaned_ts_set
 
-                            # Step 2 — start transient
-                            _prev_below = _pt_raw.shift(1, fill_value=0.0) < _cold_min
-                            _curr_above = _pt_raw >= _cold_min
-                            _crossing   = _raw_w.index[_prev_below & _curr_above]
-                            _transient_ts: set = set()
-                            for _ci in _crossing:
-                                _loc = _raw_w.index.get_loc(_ci)
-                                for _off in range(2):   # COLD_START_TRANSIENT_SAMPLES = 2
-                                    if _loc + _off < len(_raw_w):
-                                        _transient_ts.add(
-                                            str(_raw_w.iloc[_loc + _off]["timestamp"])
-                                        )
-                            _s1_pass_ts = _s1_pass["timestamp"].astype(str)
-                            _s2_fail    = _s1_pass[_s1_pass_ts.isin(_transient_ts)].copy()
-                            _s2_pass    = _s1_pass[~_s1_pass_ts.isin(_transient_ts)].copy()
-                            _s2_fail["removed_at_step"] = "Step 2 - Start transient exclusion"
+                            # Tag each removed row with step label using cleaning report counts
+                            _removed_all_labelled = _raw_w[
+                                _raw_w["timestamp"].astype(str).isin(_removed_ts_set)
+                            ].copy() if "timestamp" in _raw_w.columns else pd.DataFrame()
 
-                            # Step 3 — user filter
-                            _bm_for_dl2 = baseline_from_dict(db.get_baseline(selected_id))
-                            _uf = _bm_for_dl2.user_filter_expr if _bm_for_dl2 else None
-                            if _uf and len(_s2_pass) > 0:
-                                try:
-                                    _s3_pass = _s2_pass.query(_uf).copy()
-                                    _s3_fail = _s2_pass[
-                                        ~_s2_pass.index.isin(_s3_pass.index)
-                                    ].copy()
-                                    _s3_fail["removed_at_step"] = "Step 3 - User filter"
-                                except Exception:
-                                    _s3_pass = _s2_pass.copy()
-                                    _s3_fail = pd.DataFrame(columns=_s2_pass.columns)
-                            else:
-                                _s3_pass = _s2_pass.copy()
-                                _s3_fail = pd.DataFrame(columns=_s2_pass.columns)
+                            # Assign step labels based on cleaning report thresholds
+                            if not _removed_all_labelled.empty:
+                                _pt_rm = (_removed_all_labelled["phase_1_active_power"] +
+                                          _removed_all_labelled["phase_2_active_power"] +
+                                          _removed_all_labelled["phase_3_active_power"])
+                                # Estimate load_min same way clean_samples does
+                                _p_shaft_rm = float(meta.get("p_rated_shaft_kw", 0) or 0)
+                                _eta_rm     = float(meta.get("eta_rated", 0.9) or 0.9)
+                                if _p_shaft_rm > 0 and _eta_rm > 0:
+                                    _lm_rm = 0.20 * (_p_shaft_rm / _eta_rm) * 1000.0
+                                else:
+                                    _p95_rm = float((_raw_w["phase_1_active_power"] +
+                                                     _raw_w["phase_2_active_power"] +
+                                                     _raw_w["phase_3_active_power"]
+                                                    ).quantile(0.95))
+                                    _lm_rm = 0.20 * (_p95_rm / 0.95)
+                                _removed_all_labelled["removed_at_step"] = _removed_all_labelled.apply(
+                                    lambda r: (
+                                        "Step 1 - Load precondition (<20% rated)"
+                                        if (r["phase_1_active_power"] + r["phase_2_active_power"] +
+                                            r["phase_3_active_power"]) < _lm_rm
+                                        else "Step 2/3 - Transient or user filter"
+                                    ), axis=1
+                                )
 
-                            # Step 4 — IQR removed (no longer applied)
-                            _s4_fail = pd.DataFrame(columns=_s3_pass.columns)
-
-                            # Combine all removed rows
-                            _removed_all_labelled = pd.concat(
-                                [_s1_fail, _s2_fail, _s3_fail, _s4_fail],
-                                ignore_index=True
-                            )
                             _n_removed = len(_removed_all_labelled)
 
                             # Two download columns
