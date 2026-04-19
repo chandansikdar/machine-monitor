@@ -2843,6 +2843,7 @@ with tab_analysis:
                                          _s3_pass["phase_3_current"]) / 3.0
                                 _keep4 = pd.Series(True, index=_s3_pass.index)
                                 _iqr_stats = {}
+                                _fail_flags = {}  # track which signals flagged each row
                                 for _sig, _sname in [(_pt4, "P_total"), (_ia4, "I_avg")]:
                                     _q25 = _sig.quantile(0.25); _q75 = _sig.quantile(0.75)
                                     _iqr = _q75 - _q25
@@ -2852,11 +2853,20 @@ with tab_analysis:
                                         "lower": round(_q25 - 1.5 * _iqr, 4),
                                         "upper": round(_q75 + 1.5 * _iqr, 4),
                                     }
-                                    _keep4 &= _sig.between(
+                                    _in_fence = _sig.between(
                                         _q25 - 1.5 * _iqr, _q75 + 1.5 * _iqr, inclusive="both"
                                     )
+                                    _fail_flags[_sname] = ~_in_fence
+                                    _keep4 &= _in_fence
                                 _s4_fail = _s3_pass[~_keep4].copy()
                                 _s4_fail["removed_at_step"] = "Step 4 - IQR outlier rejection"
+                                # Add which signal(s) triggered the removal
+                                def _iqr_reason(idx):
+                                    reasons = [s for s, f in _fail_flags.items() if f.get(idx, False)]
+                                    return " + ".join(reasons) if reasons else ""
+                                _s4_fail["iqr_trigger"] = [
+                                    _iqr_reason(i) for i in _s4_fail.index
+                                ]
                                 for _sn, _sv in _iqr_stats.items():
                                     _s4_fail[f"{_sn}_Q25"]         = _sv["q25"]
                                     _s4_fail[f"{_sn}_Q75"]         = _sv["q75"]
