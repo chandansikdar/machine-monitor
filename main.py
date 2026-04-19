@@ -942,39 +942,6 @@ def render_assessment(record: AssessmentRecord):
     if record.zone4:
         render_zone4(record.zone4)
 
-    # Baseline bin report — all 100 bins with qualify/disqualify status
-    _bl_bands = getattr(record, "baseline_bands", None) or []
-    if _bl_bands:
-        import pandas as _pd2
-        with st.expander(
-            f"\U0001f4cb Baseline PF bins \u2014 all {len(_bl_bands)} bins",
-            expanded=False,
-        ):
-            st.caption(
-                "All bins computed from the baseline data (bin width = 1% of operating range). "
-                "Bins with \u22655 baseline samples qualify for PF drift detection. "
-                "Bins below this threshold are shown for reference only."
-            )
-            _bl_rows = []
-            for _b in _bl_bands:
-                _qualifies = _b.n_baseline >= 5
-                _bl_rows.append({
-                    "Low (kW)":       f"{_b.low_kw / 1000:.3f}",
-                    "Centre (kW)":    f"{_b.centre_kw / 1000:.3f}",
-                    "High (kW)":      f"{_b.high_kw / 1000:.3f}",
-                    "n baseline":     _b.n_baseline,
-                    "Baseline PF":    f"{_b.mean_pf_baseline:.4f}" if _b.n_baseline > 0 else "\u2014",
-                    "Qualifies":      "\u2705 Yes" if _qualifies else "\u274c No (<5 samples)",
-                })
-            _bl_df = _pd2.DataFrame(_bl_rows)
-            st.dataframe(_bl_df, use_container_width=True, hide_index=True)
-            _n_qualify = sum(1 for b in _bl_bands if b.n_baseline >= 5)
-            _n_total   = len(_bl_bands)
-            st.caption(
-                f"{_n_qualify} of {_n_total} bins qualify (\u22655 samples). "
-                f"{_n_total - _n_qualify} bins excluded from PF drift calculation."
-            )
-
 
 
 # ---------------------------------------------------------------------------
@@ -2399,108 +2366,105 @@ with tab_analysis:
                         db.delete_baseline(selected_id)
                         st.rerun()
 
-                    # PF band histogram — bands computed at last assessment time
-                    _last_rec = st.session_state.get("last_assessment")
-                    _hist_bands_raw = []
-                    if _last_rec and isinstance(_last_rec, dict):
-                        _hist_bands_raw = _last_rec.get("bands", []) or []
-                    # Fall back to stored baseline bands for backwards compat
-                    if not _hist_bands_raw:
-                        _hist_bands_raw = _stored_bl_dict.get("bands") or []
-                    if _hist_bands_raw:
-                        with st.expander(
-                            f"\U0001f4ca PF band histogram ({len(_hist_bands_raw)} bands)",
-                            expanded=False,
-                        ):
-                            if _last_rec:
-                                st.caption("\u2139\ufe0f Bands computed from last assessment using current rated power.")
-                            else:
-                                st.info("\u2139\ufe0f Run an assessment to see bands computed with current rated power.")
-                            st.caption(
-                                "Each bar is one of 100 equal-width bins — bin width = 1% of "
-                                "the actual operating range (P_max \u2212 P_min) in the cleaned baseline. "
-                                "Outliers already removed by the cleaning pipeline. "
-                                "Height = baseline samples in bin. Colour = mean baseline PF. "
-                                "Only bins with \u22655 samples qualify for PF drift detection."
+                    # ── Total power baseline PF bins (computed from cleaned baseline) ──
+                    if _stored_bl_dict and meta:
+                        try:
+                            _bl_ts_h1 = pd.Timestamp(_stored_bl_dict.get("timestamp_start", ""))
+                            _bl_ts_h2 = pd.Timestamp(_stored_bl_dict.get("timestamp_end", ""))
+                            _bl_raw_h  = data.loc[
+                                (_bl_ts_h1 <= data.index) & (data.index <= _bl_ts_h2)
+                            ].reset_index()
+                            _bl_w_h   = scale_power_to_watts(_bl_raw_h, meta.get("power_unit", "W"))
+                            _bl_cl_h, _ = clean_samples(
+                                _bl_w_h, meta, _stored_bl_dict.get("user_filter_expr")
                             )
-                            _bands_df = pd.DataFrame([
-                                {
-                                    "centre_kw":        round(b["centre_kw"] / 1000, 2),
-                                    "low_kw":           round(b.get("low_kw",  b["centre_kw"]) / 1000, 2),
-                                    "high_kw":          round(b.get("high_kw", b["centre_kw"]) / 1000, 2),
-                                    "n_baseline":       b["n_baseline"],
-                                    "mean_pf_baseline": round(b["mean_pf_baseline"], 4),
-                                }
-                                for b in _hist_bands_raw
-                            ]).sort_values("centre_kw")
+                            if not _bl_cl_h.empty:
+                                _tot_all_bins = select_pf_bands(_bl_cl_h, min_samples=0)
+                                _tot_qual = [b for b in _tot_all_bins if b.n_baseline >= 5]
+                                if _tot_all_bins:
+                                    import plotly.graph_objects as _go2
+                                    with st.expander(
+                                        f"\U0001f4ca Total power baseline PF bins "
+                                        f"({len(_tot_qual)} qualifying of {len(_tot_all_bins)} total)",
+                                        expanded=False,
+                                    ):
+                                        st.caption(
+                                            "Bins by P_total, 1% of operating range (100 bins). "
+                                            "Computed from cleaned baseline data. "
+                                            "Colour = mean baseline PF. "
+                                            "Only bins with \u22655 samples qualify for PF drift detection."
+                                        )
+                                        _bands_df = pd.DataFrame([
+                                            {
+                                                "centre_kw":        round(b.centre_kw / 1000, 3),
+                                                "low_kw":           round(b.low_kw     / 1000, 3),
+                                                "high_kw":          round(b.high_kw    / 1000, 3),
+                                                "n_baseline":       b.n_baseline,
+                                                "mean_pf_baseline": round(b.mean_pf_baseline, 4),
+                                                "qualifies":        b.n_baseline >= 5,
+                                            }
+                                            for b in _tot_all_bins
+                                        ]).sort_values("centre_kw")
 
-                            import plotly.graph_objects as _go2
-                            _fig_hist = _go2.Figure()
-
-                            # Bar chart — height = sample count, colour = PF
-                            _pf_min = _bands_df["mean_pf_baseline"].min()
-                            _pf_max = _bands_df["mean_pf_baseline"].max()
-                            _pf_range = max(_pf_max - _pf_min, 0.01)
-
-                            _colors = [
-                                f"rgba({int(5 + 200*(1 - (pf - _pf_min)/_pf_range))}, "
-                                f"{int(77 + 150*((pf - _pf_min)/_pf_range))}, "
-                                f"{int(95 + 100*((pf - _pf_min)/_pf_range))}, 0.85)"
-                                for pf in _bands_df["mean_pf_baseline"]
-                            ]
-
-                            _fig_hist.add_trace(_go2.Bar(
-                                x=_bands_df["centre_kw"],
-                                y=_bands_df["n_baseline"],
-                                width=(_bands_df["high_kw"] - _bands_df["low_kw"]) * 0.9,
-                                marker_color=_colors,
-                                customdata=list(zip(
-                                    _bands_df["mean_pf_baseline"],
-                                    _bands_df["low_kw"],
-                                    _bands_df["high_kw"],
-                                    _bands_df["n_baseline"],
-                                )),
-                                hovertemplate=(
-                                    "Band: %{customdata[1]:.1f} \u2013 %{customdata[2]:.1f} kW<br>"
-                                    "Samples: %{customdata[3]}<br>"
-                                    "Baseline PF: %{customdata[0]:.4f}<extra></extra>"
-                                ),
-                            ))
-
-                            # Minimum sample threshold line
-                            _fig_hist.add_hline(
-                                y=5, line_dash="dash", line_color="#C8A84B",
-                                line_width=1.5,
-                                annotation_text="Min 5 samples",
-                                annotation_position="top right",
-                                annotation_font_size=10,
-                            )
-
-                            _fig_hist.update_layout(
-                                xaxis_title="Band centre (kW)",
-                                yaxis_title="Baseline samples",
-                                height=300,
-                                plot_bgcolor="rgba(0,0,0,0)",
-                                paper_bgcolor="rgba(0,0,0,0)",
-                                margin=dict(l=40, r=20, t=30, b=40),
-                                font=dict(size=11),
-                                showlegend=False,
-                                bargap=0.05,
-                            )
-                            st.plotly_chart(_fig_hist, use_container_width=True)
-
-                            # Table below the chart
-                            st.dataframe(
-                                _bands_df.rename(columns={
-                                    "centre_kw":        "Centre (kW)",
-                                    "low_kw":           "Low (kW)",
-                                    "high_kw":          "High (kW)",
-                                    "n_baseline":       "Baseline samples",
-                                    "mean_pf_baseline": "Baseline PF",
-                                }),
-                                use_container_width=True,
-                                hide_index=True,
-                            )
+                                        _pf_min = _bands_df["mean_pf_baseline"].min()
+                                        _pf_max = _bands_df["mean_pf_baseline"].max()
+                                        _pf_rng = max(_pf_max - _pf_min, 0.01)
+                                        _colors = [
+                                            f"rgba({int(5+200*(1-(pf-_pf_min)/_pf_rng))},"
+                                            f"{int(77+150*((pf-_pf_min)/_pf_rng))},"
+                                            f"{int(95+100*((pf-_pf_min)/_pf_rng))},0.85)"
+                                            for pf in _bands_df["mean_pf_baseline"]
+                                        ]
+                                        _fig_h = _go2.Figure()
+                                        _fig_h.add_trace(_go2.Bar(
+                                            x=_bands_df["centre_kw"],
+                                            y=_bands_df["n_baseline"],
+                                            width=(_bands_df["high_kw"] - _bands_df["low_kw"]) * 0.9,
+                                            marker_color=_colors,
+                                            customdata=list(zip(
+                                                _bands_df["mean_pf_baseline"],
+                                                _bands_df["low_kw"],
+                                                _bands_df["high_kw"],
+                                                _bands_df["n_baseline"],
+                                            )),
+                                            hovertemplate=(
+                                                "Band: %{customdata[1]:.3f} \u2013 %{customdata[2]:.3f} kW<br>"
+                                                "Samples: %{customdata[3]}<br>"
+                                                "Baseline PF: %{customdata[0]:.4f}<extra></extra>"
+                                            ),
+                                        ))
+                                        _fig_h.add_hline(
+                                            y=5, line_dash="dash", line_color="#C8A84B",
+                                            line_width=1.5,
+                                            annotation_text="Min 5 samples",
+                                            annotation_position="top right",
+                                            annotation_font_size=10,
+                                        )
+                                        _fig_h.update_layout(
+                                            xaxis_title="Band centre (kW)",
+                                            yaxis_title="Baseline samples",
+                                            height=300,
+                                            plot_bgcolor="rgba(0,0,0,0)",
+                                            paper_bgcolor="rgba(0,0,0,0)",
+                                            margin=dict(l=40, r=20, t=30, b=40),
+                                            font=dict(size=11),
+                                            showlegend=False, bargap=0.05,
+                                        )
+                                        st.plotly_chart(_fig_h, use_container_width=True)
+                                        st.dataframe(
+                                            _bands_df.rename(columns={
+                                                "centre_kw":        "Centre (kW)",
+                                                "low_kw":           "Low (kW)",
+                                                "high_kw":          "High (kW)",
+                                                "n_baseline":       "Baseline samples",
+                                                "mean_pf_baseline": "Baseline PF",
+                                                "qualifies":        "Qualifies",
+                                            }),
+                                            use_container_width=True,
+                                            hide_index=True,
+                                        )
+                        except Exception:
+                            pass
                 else:
                     st.info("No baseline ingested yet.")
 
