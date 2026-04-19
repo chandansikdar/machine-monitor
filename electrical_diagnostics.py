@@ -133,7 +133,8 @@ PF_DRIFT_ALERT: float = -0.02   # \u2192 alert
 PF_DRIFT_ACTION: float = -0.03  # \u2192 action
 
 # Data cleaning
-LOAD_PRECONDITION_FRACTION: float = 0.20  # fraction of p_rated_elec minimum
+LOAD_PRECONDITION_FRACTION: float = 0.20  # fraction of p_rated_elec minimum — v0.7
+_DIAG_VERSION = "v0.7-load20pct"  # bump this to force Streamlit module reload
 IQR_MULTIPLIER: float = 1.5               # standard Tukey fence
 
 # Multi-band PF comparison
