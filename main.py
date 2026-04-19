@@ -2832,7 +2832,7 @@ with tab_analysis:
                                 _s3_pass = _s2_pass.copy()
                                 _s3_fail = pd.DataFrame(columns=_s2_pass.columns)
 
-                            # Step 4 — IQR rejection
+                            # Step 4 — IQR rejection (P_total and I_avg only — PF is derived)
                             _s4_fail = pd.DataFrame(columns=_s3_pass.columns)
                             if len(_s3_pass) >= 4:
                                 _pt4  = (_s3_pass["phase_1_active_power"] +
@@ -2841,14 +2841,9 @@ with tab_analysis:
                                 _ia4  = (_s3_pass["phase_1_current"] +
                                          _s3_pass["phase_2_current"] +
                                          _s3_pass["phase_3_current"]) / 3.0
-                                _ss4  = (_s3_pass["phase_1_voltage"] * _s3_pass["phase_1_current"] +
-                                         _s3_pass["phase_2_voltage"] * _s3_pass["phase_2_current"] +
-                                         _s3_pass["phase_3_voltage"] * _s3_pass["phase_3_current"])
-                                _pf4  = _pt4 / _ss4.replace(0, float("nan"))
                                 _keep4 = pd.Series(True, index=_s3_pass.index)
-                                # Store IQR stats per signal for the removed rows CSV
                                 _iqr_stats = {}
-                                for _sig, _sname in [(_pt4, "P_total"), (_ia4, "I_avg"), (_pf4, "PF")]:
+                                for _sig, _sname in [(_pt4, "P_total"), (_ia4, "I_avg")]:
                                     _q25 = _sig.quantile(0.25); _q75 = _sig.quantile(0.75)
                                     _iqr = _q75 - _q25
                                     _iqr_stats[_sname] = {
@@ -2862,11 +2857,10 @@ with tab_analysis:
                                     )
                                 _s4_fail = _s3_pass[~_keep4].copy()
                                 _s4_fail["removed_at_step"] = "Step 4 - IQR outlier rejection"
-                                # Add IQR reference columns
                                 for _sn, _sv in _iqr_stats.items():
-                                    _s4_fail[f"{_sn}_Q25"]   = _sv["q25"]
-                                    _s4_fail[f"{_sn}_Q75"]   = _sv["q75"]
-                                    _s4_fail[f"{_sn}_IQR"]   = _sv["iqr"]
+                                    _s4_fail[f"{_sn}_Q25"]         = _sv["q25"]
+                                    _s4_fail[f"{_sn}_Q75"]         = _sv["q75"]
+                                    _s4_fail[f"{_sn}_IQR"]         = _sv["iqr"]
                                     _s4_fail[f"{_sn}_lower_fence"] = _sv["lower"]
                                     _s4_fail[f"{_sn}_upper_fence"] = _sv["upper"]
 
