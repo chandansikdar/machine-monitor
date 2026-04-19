@@ -2977,6 +2977,102 @@ with tab_analysis:
                                 )
                                 st.dataframe(_dl_cleaned.head(5), use_container_width=True, hide_index=True)
 
+                    # ── Operating zone report ───────────────────────────────
+                    _oz_raw = st.session_state.get("last_data")
+                    if _oz_raw is not None and meta:
+                        _oz_raw_w = scale_power_to_watts(
+                            _oz_raw.reset_index(), meta.get("power_unit", "W")
+                        )
+                        _oz_pt = (_oz_raw_w["phase_1_active_power"] +
+                                  _oz_raw_w["phase_2_active_power"] +
+                                  _oz_raw_w["phase_3_active_power"])
+                        _oz_n_total = len(_oz_pt)
+
+                        # Derive rated electrical power (same as clean_samples)
+                        _oz_p_shaft = float(meta.get("p_rated_shaft_kw", 0) or 0)
+                        _oz_eta     = float(meta.get("eta_rated", 0.9) or 0.9)
+                        if _oz_p_shaft > 0 and _oz_eta > 0:
+                            _oz_p_rated_w = (_oz_p_shaft / _oz_eta) * 1000.0
+                        else:
+                            _oz_p95 = float(_oz_pt[_oz_pt > 0].quantile(0.95)) if (_oz_pt > 0).any() else 1.0
+                            _oz_p_rated_w = _oz_p95 / 0.95
+
+                        # Zone boundaries as % of rated electrical input
+                        _oz_zones = [
+                            ("< 20%",    0,    0.20),
+                            ("20–40%",   0.20, 0.40),
+                            ("40–60%",   0.40, 0.60),
+                            ("60–80%",   0.60, 0.80),
+                            ("80–100%",  0.80, 1.00),
+                            ("> 100%",   1.00, float("inf")),
+                        ]
+
+                        _oz_rows = []
+                        for _zname, _zlo, _zhi in _oz_zones:
+                            _lo_w = _zlo * _oz_p_rated_w
+                            _hi_w = _zhi * _oz_p_rated_w
+                            _mask = (_oz_pt >= _lo_w) & (_oz_pt < _hi_w)
+                            _cnt  = int(_mask.sum())
+                            _pct  = _cnt / _oz_n_total * 100 if _oz_n_total > 0 else 0.0
+                            _oz_rows.append({
+                                "Zone":              _zname,
+                                "P range (kW)":      (
+                                    f"{_lo_w/1000:.1f} – {_hi_w/1000:.1f}"
+                                    if _zhi != float("inf")
+                                    else f"> {_lo_w/1000:.1f}"
+                                ),
+                                "Samples":           _cnt,
+                                "% Operating time":  f"{_pct:.1f}%",
+                            })
+
+                        import plotly.graph_objects as _go_oz
+                        with st.expander(
+                            "\U0001f4ca Operating zone distribution", expanded=False
+                        ):
+                            st.caption(
+                                f"Distribution of all assessment samples (post-integrity, {_oz_n_total:,} rows) "
+                                f"across load zones relative to rated electrical input "
+                                f"({_oz_p_rated_w/1000:.1f} kW). "
+                                f"Best operating zone: **80–100%**."
+                            )
+                            _oz_df = pd.DataFrame(_oz_rows)
+
+                            # Bar chart
+                            _oz_colors = [
+                                "#C0392B",  # <20% — stopped/very light
+                                "#E67E22",  # 20-40% — light load
+                                "#F1C40F",  # 40-60% — medium-light
+                                "#2ECC71",  # 60-80% — good
+                                "#27AE60",  # 80-110% — optimal
+                                "#8E44AD",  # >110% — overload
+                            ]
+                            _fig_oz = _go_oz.Figure()
+                            _fig_oz.add_trace(_go_oz.Bar(
+                                x=[r["Zone"] for r in _oz_rows],
+                                y=[r["Samples"] for r in _oz_rows],
+                                marker_color=_oz_colors,
+                                text=[r["% Operating time"] for r in _oz_rows],
+                                textposition="outside",
+                                hovertemplate=(
+                                    "<b>%{x}</b><br>"
+                                    "Samples: %{y:,}<br>"
+                                    "% Time: %{text}<extra></extra>"
+                                ),
+                            ))
+                            _fig_oz.update_layout(
+                                xaxis_title="Load zone",
+                                yaxis_title="Samples",
+                                height=320,
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                margin=dict(l=40, r=20, t=40, b=40),
+                                font=dict(size=11),
+                                showlegend=False,
+                                bargap=0.15,
+                            )
+                            st.plotly_chart(_fig_oz, use_container_width=True)
+                            st.dataframe(_oz_df, use_container_width=True, hide_index=True)
+
                     # ── PF Drift Excel export ────────────────────────────────
                     _cleaned_for_xl = st.session_state.get("last_cleaned_data")
                     if _cleaned_for_xl is not None and not _cleaned_for_xl.empty and record:
