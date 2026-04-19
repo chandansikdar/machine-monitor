@@ -2917,73 +2917,102 @@ with tab_analysis:
                             _n_removed = len(_removed_all_labelled)
 
                             # Two download columns
-                            # Compute integrity-removed rows (in raw but not in post-integrity)
-                            _dl_post_ic  = _to_dl_unit(_raw_w)
-                            _n_ic_excl   = len(_dl_raw) - len(_dl_post_ic)
-                            if _n_ic_excl > 0 and "timestamp" in _dl_raw.columns and "timestamp" in _dl_post_ic.columns:
-                                _ic_pass_ts  = set(_dl_post_ic["timestamp"].astype(str))
-                                _dl_ic_removed = _dl_raw[
-                                    ~_dl_raw["timestamp"].astype(str).isin(_ic_pass_ts)
+                            # ── Derive each stage sequentially ───────────────
+                            # _raw_w = assessment period, post-integrity, scaled to Watts
+                            # Reconstruct true assessment-period raw by adding back
+                            # integrity-excluded rows using the same date range
+                            _assess_start = _raw_w["timestamp"].min() if "timestamp" in _raw_w.columns else None
+                            _assess_end   = _raw_w["timestamp"].max() if "timestamp" in _raw_w.columns else None
+
+                            if _assess_start is not None:
+                                _raw_assess = data.loc[
+                                    (pd.Timestamp(_assess_start) <= data.index) &
+                                    (data.index <= pd.Timestamp(_assess_end))
+                                ].reset_index()
+                                _raw_assess = scale_power_to_watts(
+                                    _raw_assess, meta.get("power_unit", "W")
+                                )
+                            else:
+                                _raw_assess = _raw_w.copy()
+
+                            _dl_raw_assess = _to_dl_unit(_raw_assess)
+
+                            # Integrity-removed rows = raw - post-integrity
+                            _dl_post_ic = _to_dl_unit(_raw_w)
+                            if "timestamp" in _dl_raw_assess.columns and "timestamp" in _dl_post_ic.columns:
+                                _ic_pass_ts_set = set(_dl_post_ic["timestamp"].astype(str))
+                                _dl_ic_removed  = _dl_raw_assess[
+                                    ~_dl_raw_assess["timestamp"].astype(str).isin(_ic_pass_ts_set)
                                 ].copy()
                             else:
-                                _dl_ic_removed = pd.DataFrame(columns=_dl_raw.columns)
+                                _dl_ic_removed = pd.DataFrame(columns=_dl_raw_assess.columns)
 
-                            _row1_c1, _row1_c2 = st.columns(2)
-                            _row2_c1, _row2_c2 = st.columns(2)
+                            _n_ic_excl   = len(_dl_ic_removed)
+                            _dl_removed  = _to_dl_unit(_removed_all_labelled)
+                            _dl_cleaned  = _to_dl_unit(
+                                _cleaned if "timestamp" in _cleaned.columns
+                                else _cleaned.reset_index()
+                            )
 
-                            with _row1_c1:
-                                st.markdown(f"**\U0001f4e5 Raw ({len(_dl_raw):,} rows)**")
-                                st.download_button(
-                                    label=f"\u2b07\ufe0f Download raw rows (CSV)",
-                                    data=_dl_raw.to_csv(index=False).encode("utf-8"),
-                                    file_name=f"raw_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
-                                    mime="text/csv", use_container_width=True,
-                                )
-                                st.dataframe(_dl_raw.head(10), use_container_width=True, hide_index=True)
+                            # ── Sequential display ────────────────────────────
+                            st.markdown("---")
+                            # Stage 1: Raw assessment data
+                            st.markdown(f"**\U0001f4e5 1. Raw assessment data — {len(_dl_raw_assess):,} rows**")
+                            st.download_button(
+                                label=f"\u2b07\ufe0f Download raw assessment data ({len(_dl_raw_assess):,} rows, CSV)",
+                                data=_dl_raw_assess.to_csv(index=False).encode("utf-8"),
+                                file_name=f"raw_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
+                                mime="text/csv", use_container_width=True, key="dl_raw_assess",
+                            )
+                            st.dataframe(_dl_raw_assess.head(5), use_container_width=True, hide_index=True)
 
-                            with _row1_c2:
-                                st.markdown(f"**\U0001f6e1\ufe0f After integrity ({len(_dl_post_ic):,} rows)**")
-                                st.download_button(
-                                    label=f"\u2b07\ufe0f Download post-integrity rows (CSV)",
-                                    data=_dl_post_ic.to_csv(index=False).encode("utf-8"),
-                                    file_name=f"post_integrity_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
-                                    mime="text/csv", use_container_width=True,
-                                )
+                            st.markdown("---")
+                            # Stage 2: Removed by integrity check
+                            _ic_col1, _ic_col2 = st.columns(2)
+                            with _ic_col1:
+                                st.markdown(f"**\U0001f6e1\ufe0f 2. Removed by integrity check — {_n_ic_excl:,} rows**")
                                 if _n_ic_excl > 0:
                                     st.download_button(
-                                        label=f"\u2b07\ufe0f Download {_n_ic_excl:,} integrity-removed rows (CSV)",
+                                        label=f"\u2b07\ufe0f Download integrity-removed rows ({_n_ic_excl:,} rows, CSV)",
                                         data=_dl_ic_removed.to_csv(index=False).encode("utf-8"),
                                         file_name=f"integrity_removed_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
-                                        mime="text/csv", use_container_width=True,
+                                        mime="text/csv", use_container_width=True, key="dl_ic_removed",
                                     )
+                                    st.dataframe(_dl_ic_removed.head(5), use_container_width=True, hide_index=True)
                                 else:
                                     st.caption("\u2705 No rows removed by integrity check")
-                                st.dataframe(_dl_post_ic.head(10), use_container_width=True, hide_index=True)
-
-                            with _row2_c1:
-                                st.markdown(f"**\u2705 Cleaned ({_n_cleaned:,} rows)**")
-                                _dl_cleaned = _to_dl_unit(
-                                    _cleaned if "timestamp" in _cleaned.columns
-                                    else _cleaned.reset_index()
-                                )
+                            with _ic_col2:
+                                # Stage 3: After integrity check
+                                st.markdown(f"**\u2705 3. After integrity check — {len(_dl_post_ic):,} rows**")
                                 st.download_button(
-                                    label=f"\u2b07\ufe0f Download cleaned rows (CSV)",
-                                    data=_dl_cleaned.to_csv(index=False).encode("utf-8"),
-                                    file_name=f"cleaned_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
-                                    mime="text/csv", use_container_width=True,
+                                    label=f"\u2b07\ufe0f Download post-integrity data ({len(_dl_post_ic):,} rows, CSV)",
+                                    data=_dl_post_ic.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"post_integrity_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
+                                    mime="text/csv", use_container_width=True, key="dl_post_ic",
                                 )
-                                st.dataframe(_dl_cleaned.head(10), use_container_width=True, hide_index=True)
+                                st.dataframe(_dl_post_ic.head(5), use_container_width=True, hide_index=True)
 
-                            with _row2_c2:
-                                st.markdown(f"**\u274c Cleaning removed ({_n_removed:,} rows)**")
-                                _dl_removed = _to_dl_unit(_removed_all_labelled)
+                            st.markdown("---")
+                            # Stage 4 & 5: Cleaning removed and final cleaned
+                            _cl_col1, _cl_col2 = st.columns(2)
+                            with _cl_col1:
+                                st.markdown(f"**\u274c 4. Removed by cleaning — {_n_removed:,} rows**")
                                 st.download_button(
-                                    label=f"\u2b07\ufe0f Download cleaning-removed rows (CSV)",
+                                    label=f"\u2b07\ufe0f Download cleaning-removed rows ({_n_removed:,} rows, CSV)",
                                     data=_dl_removed.to_csv(index=False).encode("utf-8"),
                                     file_name=f"removed_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
-                                    mime="text/csv", use_container_width=True,
+                                    mime="text/csv", use_container_width=True, key="dl_cleaning_removed",
                                 )
-                                st.dataframe(_dl_removed.head(10), use_container_width=True, hide_index=True)
+                                st.dataframe(_dl_removed.head(5), use_container_width=True, hide_index=True)
+                            with _cl_col2:
+                                st.markdown(f"**\U0001f4ca 5. Final data for analysis — {_n_cleaned:,} rows**")
+                                st.download_button(
+                                    label=f"\u2b07\ufe0f Download cleaned data ({_n_cleaned:,} rows, CSV)",
+                                    data=_dl_cleaned.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"cleaned_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
+                                    mime="text/csv", use_container_width=True, key="dl_cleaned_final",
+                                )
+                                st.dataframe(_dl_cleaned.head(5), use_container_width=True, hide_index=True)
 
                     # ── PF Drift Excel export ────────────────────────────────
                     _cleaned_for_xl = st.session_state.get("last_cleaned_data")
