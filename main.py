@@ -2850,7 +2850,7 @@ with tab_analysis:
                                 "removed at each cleaning step."
                             )
 
-                            # Re-derive removed rows per step using same logic as clean_samples
+                            # Re-derive removed rows per step using same logic as run_assessment
                             _raw_w = scale_power_to_watts(
                                 (_raw_for_dl if _raw_for_dl is not None else
                                  data.loc[
@@ -2917,9 +2917,30 @@ with tab_analysis:
                             _n_removed = len(_removed_all_labelled)
 
                             # Two download columns
-                            _dc1, _dc2 = st.columns(2)
+                            _dc1, _dc2, _dc3 = st.columns(3)
 
                             with _dc1:
+                                # True raw: slice from data before integrity filter
+                                _truly_raw = data.loc[
+                                    (pd.Timestamp(date_range[0]) <= data.index) &
+                                    (data.index <= pd.Timestamp(date_range[1]) +
+                                     pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+                                ].reset_index()
+                                _truly_raw = scale_power_to_watts(
+                                    _truly_raw, meta.get("power_unit", "W")
+                                )
+                                _dl_raw = _to_dl_unit(_truly_raw)
+                                st.markdown(f"**\U0001f4e5 Raw ({len(_dl_raw):,} rows)**")
+                                st.download_button(
+                                    label=f"\u2b07\ufe0f Download {len(_dl_raw):,} raw rows (CSV)",
+                                    data=_dl_raw.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"raw_{selected_id}_{date_range[0]}_to_{date_range[1]}.csv",
+                                    mime="text/csv", use_container_width=True,
+                                )
+                                st.dataframe(_dl_raw.head(10), use_container_width=True,
+                                             hide_index=True)
+
+                            with _dc2:
                                 st.markdown(f"**\u2705 Cleaned ({_n_cleaned:,} rows)**")
                                 _dl_cleaned = _to_dl_unit(
                                     _cleaned if "timestamp" in _cleaned.columns
@@ -2934,7 +2955,7 @@ with tab_analysis:
                                 st.dataframe(_dl_cleaned.head(10), use_container_width=True,
                                              hide_index=True)
 
-                            with _dc2:
+                            with _dc3:
                                 st.markdown(f"**\u274c Removed ({_n_removed:,} rows)**")
                                 _dl_removed = _to_dl_unit(_removed_all_labelled)
                                 st.download_button(
