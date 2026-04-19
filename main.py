@@ -2315,138 +2315,117 @@ with tab_analysis:
                                     f"Data available: {data.index.min().date()} to {data.index.max().date()}"
                                 )
                             else:
-                                _n_bl_rows = len(_bl_view_data)
-                                st.caption(
-                                    f"{_n_bl_rows:,} rows (integrity-passed)  |  "
-                                    f"{_bl_view_data.index.min().strftime('%Y-%m-%d %H:%M')} "
-                                    f"to {_bl_view_data.index.max().strftime('%Y-%m-%d %H:%M')}"
-                                )
-                                st.dataframe(
-                                    _bl_view_data.head(100),
-                                    use_container_width=True,
-                                    height=250,
-                                )
-                                _bl_dl = _bl_view_data.reset_index()
-                                _bl_dl = _bl_dl[[c for c in _bl_dl.columns if not c.startswith("_")]]
-                                st.download_button(
-                                    label=f"\u2b07\ufe0f Download baseline data ({_n_bl_rows:,} rows, CSV)",
-                                    data=_bl_dl.to_csv(index=False).encode("utf-8"),
-                                    file_name=f"baseline_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
-                                    mime="text/csv",
-                                    use_container_width=True,
-                                )
-                                # Cleaned baseline download (after all 4 cleaning steps)
-                                try:
-                                    _bl_raw_w = scale_power_to_watts(
-                                        _bl_view_data.reset_index(),
-                                        meta.get("power_unit", "W") if meta else "W"
-                                    )
-                                    _bl_user_filter = _stored_bl_dict.get("user_filter_expr")
-                                    _bl_cleaned, _bl_cr = clean_samples(
-                                        _bl_raw_w, meta, _bl_user_filter
-                                    ) if meta else (pd.DataFrame(), None)
-                                    if not _bl_cleaned.empty:
-                                        _bl_cl_dl = _bl_cleaned.copy()
-                                        _bl_cl_dl = _bl_cl_dl[[
-                                            c for c in _bl_cl_dl.columns
-                                            if not c.startswith("_")
-                                        ]]
-                                        # Convert power back to original unit
-                                        _dl_unit = meta.get("power_unit", "W").upper() if meta else "W"
-                                        if _dl_unit == "KW":
-                                            for _pc in ["phase_1_active_power",
-                                                        "phase_2_active_power",
-                                                        "phase_3_active_power"]:
-                                                if _pc in _bl_cl_dl.columns:
-                                                    _bl_cl_dl[_pc] = (_bl_cl_dl[_pc] / 1000).round(6)
-                                        _n_bl_cl = len(_bl_cl_dl)
-                                        st.download_button(
-                                            label=f"\u2b07\ufe0f Download **cleaned** baseline ({_n_bl_cl:,} rows, CSV)",
-                                            data=_bl_cl_dl.to_csv(index=False).encode("utf-8"),
-                                            file_name=f"baseline_cleaned_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
-                                            mime="text/csv",
-                                            use_container_width=True,
-                                        )
-                                        st.caption(
-                                            f"\u2139\ufe0f Cleaned: {_n_bl_cl:,} rows "
-                                            f"({_n_bl_rows - _n_bl_cl:,} removed by cleaning pipeline)"
-                                        )
+                                _dl_unit = meta.get("power_unit", "W").upper() if meta else "W"
 
-                                    # ── Removed rows per step ──────────────────
-                                    _bl_pt_raw = (_bl_raw_w["phase_1_active_power"] +
-                                                  _bl_raw_w["phase_2_active_power"] +
-                                                  _bl_raw_w["phase_3_active_power"])
-                                    _bl_meta   = meta if meta else {}
-                                    _bl_p_shaft = float(_bl_meta.get("p_rated_shaft_kw", 0))
-                                    _bl_eta     = float(_bl_meta.get("eta_rated", 0.9))
-                                    _bl_p_rated_e = (_bl_p_shaft / _bl_eta) if _bl_eta > 0 else 0.0
-                                    # Estimate if not set
-                                    if _bl_p_rated_e <= 0:
-                                        _bl_p95 = float(_bl_pt_raw[_bl_pt_raw > 0].quantile(0.95)) if (_bl_pt_raw > 0).any() else 0.0
-                                        _bl_p_rated_e = (_bl_p95 / 0.95) if _bl_p95 > 0 else 0.0
-                                    _bl_load_min  = 0.20 * _bl_p_rated_e * 1000.0
-                                    _bl_cold_min  = 0.01 * _bl_p_rated_e * 1000.0
-
-                                    # Step 1
-                                    _bl_s1_pass = _bl_raw_w[_bl_pt_raw >= _bl_load_min].copy()
-                                    _bl_s1_fail = _bl_raw_w[_bl_pt_raw < _bl_load_min].copy()
-                                    _bl_s1_fail["removed_at_step"] = "Step 1 - Load precondition (<20% rated)"
-
-                                    # Step 2
-                                    _bl_s2_fail = pd.DataFrame(columns=_bl_s1_pass.columns)
-                                    _bl_cold_mask = _bl_pt_raw[_bl_s1_pass.index] < _bl_cold_min
-                                    _bl_cold_starts = _bl_cold_mask[_bl_cold_mask].index.tolist()
-                                    if _bl_cold_starts:
-                                        from electrical_diagnostics import COLD_START_TRANSIENT_SAMPLES as _bl_csts
-                                        _bl_transient_idx = set()
-                                        for _cs in _bl_cold_starts:
-                                            _loc = _bl_s1_pass.index.get_loc(_cs)
-                                            for _j in range(_loc, min(_loc + _bl_csts + 1, len(_bl_s1_pass))):
-                                                _bl_transient_idx.add(_bl_s1_pass.index[_j])
-                                        _bl_s2_fail = _bl_s1_pass.loc[list(_bl_transient_idx)].copy()
-                                        _bl_s2_fail["removed_at_step"] = "Step 2 - Start transient exclusion"
-                                        _bl_s2_pass = _bl_s1_pass.drop(index=list(_bl_transient_idx))
-                                    else:
-                                        _bl_s2_pass = _bl_s1_pass.copy()
-
-                                    # Step 3 — user filter
-                                    _bl_s3_fail = pd.DataFrame(columns=_bl_s2_pass.columns)
-                                    _bl_s3_pass = _bl_s2_pass.copy()
-                                    if _bl_user_filter:
-                                        try:
-                                            _bl_mask3 = _bl_s2_pass.eval(_bl_user_filter)
-                                            _bl_s3_pass = _bl_s2_pass[_bl_mask3].copy()
-                                            _bl_s3_fail = _bl_s2_pass[~_bl_mask3].copy()
-                                            _bl_s3_fail["removed_at_step"] = "Step 3 - User filter"
-                                        except Exception:
-                                            pass
-
-                                    # Step 4 — IQR removed (no longer applied)
-                                    _bl_s4_fail = pd.DataFrame(columns=_bl_s3_pass.columns)
-
-                                    _bl_removed = pd.concat(
-                                        [_bl_s1_fail, _bl_s2_fail, _bl_s3_fail, _bl_s4_fail],
-                                        ignore_index=True
-                                    )
-                                    _bl_removed = _bl_removed[[
-                                        c for c in _bl_removed.columns if not c.startswith("_")
-                                    ]]
+                                def _bl_to_unit(df):
+                                    df = df.copy()
                                     if _dl_unit == "KW":
                                         for _pc in ["phase_1_active_power",
                                                     "phase_2_active_power",
                                                     "phase_3_active_power"]:
-                                            if _pc in _bl_removed.columns:
-                                                _bl_removed[_pc] = (_bl_removed[_pc] / 1000).round(6)
-                                    if not _bl_removed.empty:
+                                            if _pc in df.columns:
+                                                df[_pc] = (df[_pc] / 1000).round(6)
+                                    return df[[c for c in df.columns if not c.startswith("_")]]
+
+                                # Stage 1: Raw baseline
+                                _bl_raw_all = data.loc[
+                                    (_bl_start_ts2 <= data.index) & (data.index <= _bl_end_ts2)
+                                ].reset_index()
+                                _bl_raw_all_w = scale_power_to_watts(
+                                    _bl_raw_all, meta.get("power_unit", "W") if meta else "W"
+                                )
+                                _dl_bl_raw = _bl_to_unit(_bl_raw_all_w)
+
+                                # Stage 3: Post-integrity (already have _bl_view_data)
+                                _bl_raw_w_seq = scale_power_to_watts(
+                                    _bl_view_data.reset_index(),
+                                    meta.get("power_unit", "W") if meta else "W"
+                                )
+                                _dl_bl_post_ic = _bl_to_unit(_bl_raw_w_seq)
+
+                                # Stage 2: Integrity-removed
+                                _bl_ic_pass_ts = set(_dl_bl_post_ic["timestamp"].astype(str)) if "timestamp" in _dl_bl_post_ic.columns else set()
+                                _dl_bl_ic_removed = _dl_bl_raw[
+                                    ~_dl_bl_raw["timestamp"].astype(str).isin(_bl_ic_pass_ts)
+                                ].copy() if "timestamp" in _dl_bl_raw.columns else pd.DataFrame()
+                                _bl_n_ic_excl = len(_dl_bl_ic_removed)
+
+                                # Stage 5: Cleaned baseline via clean_samples (same as ingest)
+                                _bl_user_filter = _stored_bl_dict.get("user_filter_expr")
+                                _bl_cleaned_seq = pd.DataFrame()
+                                _bl_removed_seq = pd.DataFrame()
+                                if meta:
+                                    try:
+                                        _bl_cleaned_seq, _ = clean_samples(_bl_raw_w_seq, meta, _bl_user_filter)
+                                        _bl_cl_ts = set(_bl_cleaned_seq["timestamp"].astype(str)) if "timestamp" in _bl_cleaned_seq.columns else set()
+                                        _bl_removed_seq = _bl_raw_w_seq[
+                                            ~_bl_raw_w_seq["timestamp"].astype(str).isin(_bl_cl_ts)
+                                        ].copy() if "timestamp" in _bl_raw_w_seq.columns else pd.DataFrame()
+                                    except Exception as _e:
+                                        st.caption(f"Could not compute cleaned baseline: {_e}")
+
+                                _dl_bl_cleaned = _bl_to_unit(_bl_cleaned_seq) if not _bl_cleaned_seq.empty else pd.DataFrame()
+                                _dl_bl_removed = _bl_to_unit(_bl_removed_seq) if not _bl_removed_seq.empty else pd.DataFrame()
+
+                                # ── Sequential display ────────────────────────
+                                st.markdown("---")
+                                st.markdown(f"**\U0001f4e5 1. Raw baseline data — {len(_dl_bl_raw):,} rows**")
+                                st.download_button(
+                                    label=f"\u2b07\ufe0f Download raw baseline ({len(_dl_bl_raw):,} rows, CSV)",
+                                    data=_dl_bl_raw.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"baseline_raw_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                    mime="text/csv", use_container_width=True, key="dl_bl_raw",
+                                )
+                                st.dataframe(_dl_bl_raw.head(5), use_container_width=True, hide_index=True)
+
+                                st.markdown("---")
+                                _bl_ic_c1, _bl_ic_c2 = st.columns(2)
+                                with _bl_ic_c1:
+                                    st.markdown(f"**\U0001f6e1\ufe0f 2. Removed by integrity — {_bl_n_ic_excl:,} rows**")
+                                    if _bl_n_ic_excl > 0:
                                         st.download_button(
-                                            label=f"\u2b07\ufe0f Download **removed** baseline rows ({len(_bl_removed):,} rows, CSV)",
-                                            data=_bl_removed.to_csv(index=False).encode("utf-8"),
-                                            file_name=f"baseline_removed_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
-                                            mime="text/csv",
-                                            use_container_width=True,
+                                            label=f"\u2b07\ufe0f Download integrity-removed ({_bl_n_ic_excl:,} rows, CSV)",
+                                            data=_dl_bl_ic_removed.to_csv(index=False).encode("utf-8"),
+                                            file_name=f"baseline_integrity_removed_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                            mime="text/csv", use_container_width=True, key="dl_bl_ic_rm",
                                         )
-                                except Exception as _bl_cl_e:
-                                    st.caption(f"Could not generate cleaned baseline: {_bl_cl_e}")
+                                        st.dataframe(_dl_bl_ic_removed.head(5), use_container_width=True, hide_index=True)
+                                    else:
+                                        st.caption("\u2705 No rows removed by integrity check")
+                                with _bl_ic_c2:
+                                    st.markdown(f"**\u2705 3. After integrity — {len(_dl_bl_post_ic):,} rows**")
+                                    st.download_button(
+                                        label=f"\u2b07\ufe0f Download post-integrity ({len(_dl_bl_post_ic):,} rows, CSV)",
+                                        data=_dl_bl_post_ic.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"baseline_post_integrity_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                        mime="text/csv", use_container_width=True, key="dl_bl_post_ic",
+                                    )
+                                    st.dataframe(_dl_bl_post_ic.head(5), use_container_width=True, hide_index=True)
+
+                                st.markdown("---")
+                                _bl_cl_c1, _bl_cl_c2 = st.columns(2)
+                                with _bl_cl_c1:
+                                    st.markdown(f"**\u274c 4. Removed by cleaning — {len(_dl_bl_removed):,} rows**")
+                                    if not _dl_bl_removed.empty:
+                                        st.download_button(
+                                            label=f"\u2b07\ufe0f Download cleaning-removed ({len(_dl_bl_removed):,} rows, CSV)",
+                                            data=_dl_bl_removed.to_csv(index=False).encode("utf-8"),
+                                            file_name=f"baseline_removed_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                            mime="text/csv", use_container_width=True, key="dl_bl_cl_rm",
+                                        )
+                                        st.dataframe(_dl_bl_removed.head(5), use_container_width=True, hide_index=True)
+                                    else:
+                                        st.caption("\u2705 No rows removed by cleaning")
+                                with _bl_cl_c2:
+                                    st.markdown(f"**\U0001f4ca 5. Final baseline for analysis — {len(_dl_bl_cleaned):,} rows**")
+                                    if not _dl_bl_cleaned.empty:
+                                        st.download_button(
+                                            label=f"\u2b07\ufe0f Download cleaned baseline ({len(_dl_bl_cleaned):,} rows, CSV)",
+                                            data=_dl_bl_cleaned.to_csv(index=False).encode("utf-8"),
+                                            file_name=f"baseline_cleaned_{selected_id}_{_bl_start}_to_{_bl_end}.csv",
+                                            mime="text/csv", use_container_width=True, key="dl_bl_cleaned",
+                                        )
+                                        st.dataframe(_dl_bl_cleaned.head(5), use_container_width=True, hide_index=True)
                         except Exception as _bl_e:
                             st.error(f"Could not load baseline data: {_bl_e}")
 
