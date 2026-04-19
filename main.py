@@ -576,7 +576,7 @@ def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning")
             ("Step 2 \u2014 Start transient",        getattr(report, "n_after_start_transient",
                                                      report.n_after_load_precondition)),
             ("Step 3 \u2014 User filter",            report.n_after_user_filter),
-            ("Step 4 \u2014 IQR rejection",          report.n_cleaned),
+            ("Step 4 \u2014 IQR rejection (removed)",  report.n_cleaned),
         ]
         rows_html = ""
         prev = None
@@ -2421,47 +2421,8 @@ with tab_analysis:
                                         except Exception:
                                             pass
 
-                                    # Step 4 — IQR (P_total and I_avg only)
+                                    # Step 4 — IQR removed (no longer applied)
                                     _bl_s4_fail = pd.DataFrame(columns=_bl_s3_pass.columns)
-                                    if len(_bl_s3_pass) >= 4:
-                                        _bl_pt4 = (_bl_s3_pass["phase_1_active_power"] +
-                                                   _bl_s3_pass["phase_2_active_power"] +
-                                                   _bl_s3_pass["phase_3_active_power"])
-                                        _bl_ia4 = (_bl_s3_pass["phase_1_current"] +
-                                                   _bl_s3_pass["phase_2_current"] +
-                                                   _bl_s3_pass["phase_3_current"]) / 3.0
-                                        _bl_keep4 = pd.Series(True, index=_bl_s3_pass.index)
-                                        _bl_iqr_stats = {}
-                                        _bl_fail_flags = {}
-                                        for _bl_sig, _bl_sn in [(_bl_pt4, "P_total"), (_bl_ia4, "I_avg")]:
-                                            _bl_q25 = _bl_sig.quantile(0.25)
-                                            _bl_q75 = _bl_sig.quantile(0.75)
-                                            _bl_iqr = _bl_q75 - _bl_q25
-                                            _bl_iqr_stats[_bl_sn] = {
-                                                "q25": round(_bl_q25, 4), "q75": round(_bl_q75, 4),
-                                                "iqr": round(_bl_iqr, 4),
-                                                "lower": round(_bl_q25 - 1.5 * _bl_iqr, 4),
-                                                "upper": round(_bl_q75 + 1.5 * _bl_iqr, 4),
-                                            }
-                                            _bl_in_fence = _bl_sig.between(
-                                                _bl_q25 - 1.5 * _bl_iqr,
-                                                _bl_q75 + 1.5 * _bl_iqr,
-                                                inclusive="both"
-                                            )
-                                            _bl_fail_flags[_bl_sn] = ~_bl_in_fence
-                                            _bl_keep4 &= _bl_in_fence
-                                        _bl_s4_fail = _bl_s3_pass[~_bl_keep4].copy()
-                                        _bl_s4_fail["removed_at_step"] = "Step 4 - IQR outlier rejection"
-                                        _bl_s4_fail["iqr_trigger"] = [
-                                            " + ".join(s for s, f in _bl_fail_flags.items() if f.get(i, False))
-                                            for i in _bl_s4_fail.index
-                                        ]
-                                        for _bl_sn, _bl_sv in _bl_iqr_stats.items():
-                                            _bl_s4_fail[f"{_bl_sn}_Q25"]         = _bl_sv["q25"]
-                                            _bl_s4_fail[f"{_bl_sn}_Q75"]         = _bl_sv["q75"]
-                                            _bl_s4_fail[f"{_bl_sn}_IQR"]         = _bl_sv["iqr"]
-                                            _bl_s4_fail[f"{_bl_sn}_lower_fence"] = _bl_sv["lower"]
-                                            _bl_s4_fail[f"{_bl_sn}_upper_fence"] = _bl_sv["upper"]
 
                                     _bl_removed = pd.concat(
                                         [_bl_s1_fail, _bl_s2_fail, _bl_s3_fail, _bl_s4_fail],
@@ -2945,47 +2906,8 @@ with tab_analysis:
                                 _s3_pass = _s2_pass.copy()
                                 _s3_fail = pd.DataFrame(columns=_s2_pass.columns)
 
-                            # Step 4 — IQR rejection (P_total and I_avg only — PF is derived)
+                            # Step 4 — IQR removed (no longer applied)
                             _s4_fail = pd.DataFrame(columns=_s3_pass.columns)
-                            if len(_s3_pass) >= 4:
-                                _pt4  = (_s3_pass["phase_1_active_power"] +
-                                         _s3_pass["phase_2_active_power"] +
-                                         _s3_pass["phase_3_active_power"])
-                                _ia4  = (_s3_pass["phase_1_current"] +
-                                         _s3_pass["phase_2_current"] +
-                                         _s3_pass["phase_3_current"]) / 3.0
-                                _keep4 = pd.Series(True, index=_s3_pass.index)
-                                _iqr_stats = {}
-                                _fail_flags = {}  # track which signals flagged each row
-                                for _sig, _sname in [(_pt4, "P_total"), (_ia4, "I_avg")]:
-                                    _q25 = _sig.quantile(0.25); _q75 = _sig.quantile(0.75)
-                                    _iqr = _q75 - _q25
-                                    _iqr_stats[_sname] = {
-                                        "q25": round(_q25, 4), "q75": round(_q75, 4),
-                                        "iqr": round(_iqr, 4),
-                                        "lower": round(_q25 - 1.5 * _iqr, 4),
-                                        "upper": round(_q75 + 1.5 * _iqr, 4),
-                                    }
-                                    _in_fence = _sig.between(
-                                        _q25 - 1.5 * _iqr, _q75 + 1.5 * _iqr, inclusive="both"
-                                    )
-                                    _fail_flags[_sname] = ~_in_fence
-                                    _keep4 &= _in_fence
-                                _s4_fail = _s3_pass[~_keep4].copy()
-                                _s4_fail["removed_at_step"] = "Step 4 - IQR outlier rejection"
-                                # Add which signal(s) triggered the removal
-                                def _iqr_reason(idx):
-                                    reasons = [s for s, f in _fail_flags.items() if f.get(idx, False)]
-                                    return " + ".join(reasons) if reasons else ""
-                                _s4_fail["iqr_trigger"] = [
-                                    _iqr_reason(i) for i in _s4_fail.index
-                                ]
-                                for _sn, _sv in _iqr_stats.items():
-                                    _s4_fail[f"{_sn}_Q25"]         = _sv["q25"]
-                                    _s4_fail[f"{_sn}_Q75"]         = _sv["q75"]
-                                    _s4_fail[f"{_sn}_IQR"]         = _sv["iqr"]
-                                    _s4_fail[f"{_sn}_lower_fence"] = _sv["lower"]
-                                    _s4_fail[f"{_sn}_upper_fence"] = _sv["upper"]
 
                             # Combine all removed rows
                             _removed_all_labelled = pd.concat(
@@ -3435,4 +3357,3 @@ with tab_logs:
                 if st.button("Delete", key=f"tlog_del_{log['filename']}_{log['uploaded_at']}"):
                     db.delete_log(selected_id, log["filename"])
                     st.rerun()
-        
