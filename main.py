@@ -2617,17 +2617,24 @@ with tab_analysis:
                             st.session_state["last_data"]         = _recent
                             st.session_state["last_cleaned_data"] = _cleaned_df
                             # Compute per-phase PF drift bands (phase-specific bins)
+                            # Use cleaned data for both baseline and assessment
+                            _user_filter = _bm_loaded.user_filter_expr if _bm_loaded else None
+                            _cleaned_bl_for_phase = None
                             if _raw_bl_for_assess is not None:
+                                _cleaned_bl_for_phase, _ = clean_samples(
+                                    _raw_bl_for_assess, meta, _user_filter
+                                )
+                            if _cleaned_bl_for_phase is not None and len(_cleaned_bl_for_phase) > 0:
                                 _ph_bands = {}
                                 for _ph in (1, 2, 3):
-                                    # Build phase-specific baseline bands
+                                    # Build phase-specific baseline bands from cleaned baseline
                                     _ph_bl_bands = select_pf_bands_phase(
-                                        _raw_bl_for_assess, _ph
+                                        _cleaned_bl_for_phase, _ph
                                     )
-                                    # Compute drift using phase bands
+                                    # Compute drift using cleaned assessment data
                                     _ph_bands[_ph] = compute_pf_drift_phase(
-                                        _raw_reset, _ph_bl_bands,
-                                        _ph, _raw_bl_for_assess
+                                        _cleaned_df, _ph_bl_bands,
+                                        _ph, _cleaned_bl_for_phase
                                     )
                                 st.session_state["last_phase_bands"] = _ph_bands
                             else:
