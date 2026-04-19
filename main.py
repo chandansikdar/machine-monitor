@@ -716,9 +716,9 @@ def render_motor_side(m: MotorSideResult):
                 else:
                     status = "\U0001f7e2 Normal"
                 rows.append({
-                    "Low (kW)":          f"{b.low_kw / 1000:.1f}" if b.low_kw else "\u2014",
-                    "Centre (kW)":       f"{b.centre_kw / 1000:.1f}",
-                    "High (kW)":         f"{b.high_kw / 1000:.1f}" if b.high_kw else "\u2014",
+                    "Low (kW)":          f"{b.low_kw / 1000:.3f}" if b.low_kw else "\u2014",
+                    "Centre (kW)":       f"{b.centre_kw / 1000:.3f}",
+                    "High (kW)":         f"{b.high_kw / 1000:.3f}" if b.high_kw else "\u2014",
                     "Baseline PF":       f"{b.mean_pf_baseline:.4f}",
                     "Baseline \u03c3":   f"{b.std_pf_baseline:.5f}",
                     "Recent PF":         f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent is not None else "\u2014",
@@ -841,9 +841,9 @@ def render_motor_side(m: MotorSideResult):
                 elif drift <= PF_DRIFT_WATCH:  status = "\U0001f7e1 Watch"
                 else:                          status = "\U0001f7e2 Normal"
                 _ph_rows.append({
-                    "Low (kW)":        f"{b.low_kw / 1000:.1f}",
-                    "Centre (kW)":     f"{b.centre_kw / 1000:.1f}",
-                    "High (kW)":       f"{b.high_kw / 1000:.1f}",
+                    "Low (kW)":        f"{b.low_kw / 1000:.3f}",
+                    "Centre (kW)":     f"{b.centre_kw / 1000:.3f}",
+                    "High (kW)":       f"{b.high_kw / 1000:.3f}",
                     "Baseline PF":     f"{b.mean_pf_baseline:.4f}",
                     "Baseline \u03c3": f"{b.std_pf_baseline:.5f}",
                     "Recent PF":       f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent is not None else "\u2014",
@@ -959,9 +959,9 @@ def render_assessment(record: AssessmentRecord):
             for _b in _bl_bands:
                 _qualifies = _b.n_baseline >= 5
                 _bl_rows.append({
-                    "Low (kW)":       f"{_b.low_kw / 1000:.1f}",
-                    "Centre (kW)":    f"{_b.centre_kw / 1000:.1f}",
-                    "High (kW)":      f"{_b.high_kw / 1000:.1f}",
+                    "Low (kW)":       f"{_b.low_kw / 1000:.3f}",
+                    "Centre (kW)":    f"{_b.centre_kw / 1000:.3f}",
+                    "High (kW)":      f"{_b.high_kw / 1000:.3f}",
                     "n baseline":     _b.n_baseline,
                     "Baseline PF":    f"{_b.mean_pf_baseline:.4f}" if _b.n_baseline > 0 else "\u2014",
                     "Qualifies":      "\u2705 Yes" if _qualifies else "\u274c No (<5 samples)",
@@ -994,9 +994,9 @@ def render_assessment(record: AssessmentRecord):
             for _b in _ph_all:
                 _q = _b.n_baseline >= 5
                 _ph_rows.append({
-                    "Low (kW)":       f"{_b.low_kw  / 1000:.2f}",
-                    "Centre (kW)":    f"{_b.centre_kw / 1000:.2f}",
-                    "High (kW)":      f"{_b.high_kw  / 1000:.2f}",
+                    "Low (kW)":       f"{_b.low_kw  / 1000:.3f}",
+                    "Centre (kW)":    f"{_b.centre_kw / 1000:.3f}",
+                    "High (kW)":      f"{_b.high_kw  / 1000:.3f}",
                     "n baseline":     _b.n_baseline,
                     "Baseline PF":    f"{_b.mean_pf_baseline:.4f}" if _b.n_baseline > 0 else "\u2014",
                     "Baseline \u03c3": f"{_b.std_pf_baseline:.5f}" if _b.n_baseline > 0 else "\u2014",
