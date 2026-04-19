@@ -41,6 +41,7 @@ from electrical_diagnostics import (
     ingest_baseline,
     run_assessment,
     compute_pf_drift_phase,
+    select_pf_bands,
     select_pf_bands_phase,
     assessment_summary,
 )
@@ -2463,8 +2464,8 @@ with tab_analysis:
                                             use_container_width=True,
                                             hide_index=True,
                                         )
-                        except Exception:
-                            pass
+                        except Exception as _tot_e:
+                            st.caption(f"\u26a0\ufe0f Could not compute total power bins: {_tot_e}")
                 else:
                     st.info("No baseline ingested yet.")
 
