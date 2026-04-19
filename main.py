@@ -2846,14 +2846,29 @@ with tab_analysis:
                                          _s3_pass["phase_3_voltage"] * _s3_pass["phase_3_current"])
                                 _pf4  = _pt4 / _ss4.replace(0, float("nan"))
                                 _keep4 = pd.Series(True, index=_s3_pass.index)
-                                for _sig in (_pt4, _ia4, _pf4):
+                                # Store IQR stats per signal for the removed rows CSV
+                                _iqr_stats = {}
+                                for _sig, _sname in [(_pt4, "P_total"), (_ia4, "I_avg"), (_pf4, "PF")]:
                                     _q25 = _sig.quantile(0.25); _q75 = _sig.quantile(0.75)
                                     _iqr = _q75 - _q25
+                                    _iqr_stats[_sname] = {
+                                        "q25": round(_q25, 4), "q75": round(_q75, 4),
+                                        "iqr": round(_iqr, 4),
+                                        "lower": round(_q25 - 1.5 * _iqr, 4),
+                                        "upper": round(_q75 + 1.5 * _iqr, 4),
+                                    }
                                     _keep4 &= _sig.between(
                                         _q25 - 1.5 * _iqr, _q75 + 1.5 * _iqr, inclusive="both"
                                     )
                                 _s4_fail = _s3_pass[~_keep4].copy()
                                 _s4_fail["removed_at_step"] = "Step 4 - IQR outlier rejection"
+                                # Add IQR reference columns
+                                for _sn, _sv in _iqr_stats.items():
+                                    _s4_fail[f"{_sn}_Q25"]   = _sv["q25"]
+                                    _s4_fail[f"{_sn}_Q75"]   = _sv["q75"]
+                                    _s4_fail[f"{_sn}_IQR"]   = _sv["iqr"]
+                                    _s4_fail[f"{_sn}_lower_fence"] = _sv["lower"]
+                                    _s4_fail[f"{_sn}_upper_fence"] = _sv["upper"]
 
                             # Combine all removed rows
                             _removed_all_labelled = pd.concat(
