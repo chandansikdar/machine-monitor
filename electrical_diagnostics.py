@@ -133,8 +133,8 @@ PF_DRIFT_ALERT: float = -0.02   # \u2192 alert
 PF_DRIFT_ACTION: float = -0.03  # \u2192 action
 
 # Data cleaning
-LOAD_PRECONDITION_FRACTION: float = 0.20  # fraction of p_rated_elec minimum — v0.7
-_DIAG_VERSION = "v0.7-load20pct"  # bump this to force Streamlit module reload
+LOAD_PRECONDITION_FRACTION: float = 0.20  # fraction of p_rated_elec minimum — v0.8
+_DIAG_VERSION = "v0.8-no-iqr"  # bump this to force Streamlit module reload
 IQR_MULTIPLIER: float = 1.5               # standard Tukey fence
 
 # Multi-band PF comparison
@@ -502,10 +502,6 @@ def clean_samples(
     3. User operating-condition filter (optional)
        If a pandas query string was stored at baseline ingestion it is applied
        here identically at assessment time.
-
-    4. IQR outlier rejection
-       Removes samples where P_total, I_avg, or PF_machine fall outside
-       IQR_MULTIPLIER × IQR beyond the 25th / 75th percentile.
 
     Parameters
     ----------
@@ -1630,7 +1626,7 @@ def assessment_summary(record: AssessmentRecord) -> str:
             f" \u2192 {r.n_after_load_precondition} load 226520%"
             f" \u2192 {r.n_after_start_transient} start-transient"
             f" \u2192 {r.n_after_user_filter} user-filter"
-            f" \u2192 {r.n_cleaned} IQR-cleaned"
+            f" \u2192 {r.n_cleaned} cleaned"
             f" ({r.fraction_retained*100:.0f}% retained)"
         )
 
@@ -1663,4 +1659,3 @@ def assessment_summary(record: AssessmentRecord) -> str:
             lines.append("Zone 4: no data")
 
     return "\n".join(lines)
-    
