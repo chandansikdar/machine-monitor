@@ -975,43 +975,6 @@ def render_assessment(record: AssessmentRecord):
                 f"{_n_total - _n_qualify} bins excluded from PF drift calculation."
             )
 
-    # Per-phase baseline bin reports
-    _ph_bl_all = st.session_state.get("last_phase_bl_all_bins") or {}
-    for _ph in (1, 2, 3):
-        _ph_all = _ph_bl_all.get(_ph, [])
-        if not _ph_all:
-            continue
-        with st.expander(
-            f"\U0001f4cb Phase {_ph} baseline PF bins \u2014 all {len(_ph_all)} bins",
-            expanded=False,
-        ):
-            _ph_p_min = _ph_all[0].low_kw  / 1000 if _ph_all else 0
-            _ph_p_max = _ph_all[-1].high_kw / 1000 if _ph_all else 0
-            st.caption(
-                f"All bins for Phase {_ph} computed from **cleaned baseline** "
-                f"(bin width = 1% of P_{_ph} operating range). "
-                f"Baseline range: **{_ph_p_min:.3f} – {_ph_p_max:.3f} kW**. "
-                f"Assessment samples outside this range are not compared. "
-                f"Bins with \u22655 samples qualify for PF drift detection."
-            )
-            _ph_rows = []
-            for _b in _ph_all:
-                _q = _b.n_baseline >= 5
-                _ph_rows.append({
-                    "Low (kW)":       f"{_b.low_kw  / 1000:.3f}",
-                    "Centre (kW)":    f"{_b.centre_kw / 1000:.3f}",
-                    "High (kW)":      f"{_b.high_kw  / 1000:.3f}",
-                    "n baseline":     _b.n_baseline,
-                    "Baseline PF":    f"{_b.mean_pf_baseline:.4f}" if _b.n_baseline > 0 else "\u2014",
-                    "Baseline \u03c3": f"{_b.std_pf_baseline:.5f}" if _b.n_baseline > 0 else "\u2014",
-                    "Qualifies":      "\u2705 Yes" if _q else "\u274c No (<5 samples)",
-                })
-            st.dataframe(pd.DataFrame(_ph_rows), use_container_width=True, hide_index=True)
-            _nq = sum(1 for b in _ph_all if b.n_baseline >= 5)
-            st.caption(
-                f"{_nq} of {len(_ph_all)} bins qualify. "
-                f"{len(_ph_all) - _nq} bins excluded."
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -2540,6 +2503,61 @@ with tab_analysis:
                             )
                 else:
                     st.info("No baseline ingested yet.")
+
+                    # ── Per-phase baseline PF bins ────────────────────────────
+                # Compute and show phase baseline bins directly from stored baseline data
+                if _stored_bl_dict and meta:
+                    try:
+                        _bl_ts1_ph = pd.Timestamp(_stored_bl_dict.get("timestamp_start", ""))
+                        _bl_ts2_ph = pd.Timestamp(_stored_bl_dict.get("timestamp_end", ""))
+                        _bl_raw_ph = data.loc[
+                            (_bl_ts1_ph <= data.index) & (data.index <= _bl_ts2_ph)
+                        ].reset_index()
+                        _bl_w_ph = scale_power_to_watts(_bl_raw_ph, meta.get("power_unit", "W"))
+                        _bl_cl_ph, _ = clean_samples(
+                            _bl_w_ph, meta,
+                            _stored_bl_dict.get("user_filter_expr")
+                        )
+                        if not _bl_cl_ph.empty:
+                            for _ph in (1, 2, 3):
+                                _ph_all_bl = select_pf_bands_phase(
+                                    _bl_cl_ph, _ph, min_samples=0
+                                )
+                                if not _ph_all_bl:
+                                    continue
+                                _nq_ph = sum(1 for b in _ph_all_bl if b.n_baseline >= 5)
+                                with st.expander(
+                                    f"\U0001f4ca Phase {_ph} baseline PF bins "
+                                    f"({_nq_ph} qualifying of {len(_ph_all_bl)} total)",
+                                    expanded=False,
+                                ):
+                                    st.caption(
+                                        f"Bins by P_{_ph} power, 1% of phase operating range. "
+                                        f"Bins with \u22655 samples qualify for PF drift detection."
+                                    )
+                                    _ph_bl_rows = []
+                                    for _b in _ph_all_bl:
+                                        _q = _b.n_baseline >= 5
+                                        _ph_bl_rows.append({
+                                            "Low (kW)":        f"{_b.low_kw  / 1000:.3f}",
+                                            "Centre (kW)":     f"{_b.centre_kw / 1000:.3f}",
+                                            "High (kW)":       f"{_b.high_kw  / 1000:.3f}",
+                                            "n baseline":      _b.n_baseline,
+                                            "Baseline PF":     f"{_b.mean_pf_baseline:.4f}" if _b.n_baseline > 0 else "\u2014",
+                                            "Baseline \u03c3": f"{_b.std_pf_baseline:.5f}" if _b.n_baseline > 0 else "\u2014",
+                                            "Qualifies":       "\u2705 Yes" if _q else "\u274c No (<5)",
+                                        })
+                                    st.dataframe(
+                                        pd.DataFrame(_ph_bl_rows),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                    )
+                                    st.caption(
+                                        f"{_nq_ph} of {len(_ph_all_bl)} bins qualify. "
+                                        f"{len(_ph_all_bl) - _nq_ph} excluded."
+                                    )
+                    except Exception:
+                        pass  # silently skip if baseline data unavailable
 
                 with st.expander("Baseline period", expanded=not bool(_stored_bl_dict)):
                     st.caption(
