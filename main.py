@@ -1074,6 +1074,18 @@ def build_assessment_charts(
             record.zone4.p_baseline_avg_kw, "#054D5F", "dashdot",
             f"Baseline avg {record.zone4.p_baseline_avg_kw:.1f} kW",
         ))
+    # Assessment period average from cleaned data
+    if cleaned_data is not None and not cleaned_data.empty:
+        _p_cols = ["phase_1_active_power", "phase_2_active_power", "phase_3_active_power"]
+        if all(c in cleaned_data.columns for c in _p_cols):
+            _assess_avg_kw = float(
+                (cleaned_data[_p_cols[0]] + cleaned_data[_p_cols[1]] + cleaned_data[_p_cols[2]]).mean()
+            ) / 1000.0
+            if _assess_avg_kw > 0:
+                p_hlines.append((
+                    _assess_avg_kw, "#C8A84B", "dash",
+                    f"Assessment avg {_assess_avg_kw:.1f} kW",
+                ))
     # 40% load precondition threshold — derive from meta or estimate from data
     _p40_kw = None
     if meta:
