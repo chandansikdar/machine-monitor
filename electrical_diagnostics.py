@@ -133,7 +133,7 @@ PF_DRIFT_ALERT: float = -0.02   # \u2192 alert
 PF_DRIFT_ACTION: float = -0.03  # \u2192 action
 
 # Data cleaning
-LOAD_PRECONDITION_FRACTION: float = 0.40  # fraction of p_rated_elec minimum
+LOAD_PRECONDITION_FRACTION: float = 0.20  # fraction of p_rated_elec minimum
 IQR_MULTIPLIER: float = 1.5               # standard Tukey fence
 
 # Multi-band PF comparison
@@ -484,7 +484,7 @@ def clean_samples(
 
     Step order
     ----------
-    1. Load precondition (≥40 % of P_rated_elec)
+    1. Load precondition (≥20 % of P_rated_elec)
        Removes shutdown / stopped samples AND low-load samples where CT class
        tolerance errors become significant relative to the small active current
        component, producing apparent IUF on a healthy motor.
@@ -528,7 +528,7 @@ def clean_samples(
     load_min_w   = LOAD_PRECONDITION_FRACTION * p_rated_elec * 1000.0
     cold_min_w   = COLD_START_THRESHOLD_FRACTION * p_rated_elec * 1000.0
 
-    # ── Step 1: Load precondition (≥ 40 % of rated electrical input) ────────
+    # ── Step 1: Load precondition (≥ 20 % of rated electrical input) ────────
     df = raw.copy()
     if len(df) > 0:
         p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
@@ -1646,7 +1646,7 @@ def assessment_summary(record: AssessmentRecord) -> str:
     if r:
         lines.append(
             f"Data cleaning: {r.n_raw} raw"
-            f" \u2192 {r.n_after_load_precondition} load \u226540%"
+            f" \u2192 {r.n_after_load_precondition} load 226520%"
             f" \u2192 {r.n_after_start_transient} start-transient"
             f" \u2192 {r.n_after_user_filter} user-filter"
             f" \u2192 {r.n_cleaned} IQR-cleaned"
