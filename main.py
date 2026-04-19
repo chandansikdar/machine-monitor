@@ -39,7 +39,8 @@ from electrical_diagnostics import (
     integrity_gate,
     clean_samples,
     ingest_baseline,
-    run_assessment,
+    compute_pf_drift_phase,
+    select_pf_bands_phase,
     assessment_summary,
 )
 
@@ -809,6 +810,55 @@ def render_motor_side(m: MotorSideResult):
             + ", ".join(f"{b.centre_kw:.1f} kW" for b in suppressed_bands)
         )
 
+    # Per-phase PF drift tables
+    _ph_bands_all = st.session_state.get("last_phase_bands") or {}
+    for _ph in (1, 2, 3):
+        _ph_bands = _ph_bands_all.get(_ph, [])
+        _ph_active = [b for b in _ph_bands if not b.suppressed and b.pf_drift is not None]
+        if not _ph_active:
+            continue
+        _ph_total = len(_ph_bands)
+        with st.expander(
+            f"Phase {_ph} PF Drift \u2014 {len(_ph_active)} active band(s) of {_ph_total} total",
+            expanded=False,
+        ):
+            st.caption(
+                f"Bins defined by Phase {_ph} power P_{_ph} (1% of phase operating range → 100 bins). "
+                f"PF = P_{_ph} / (V_{_ph} \u00d7 I_{_ph}). Fully independent of other phases. "
+                "**p-value** = Welch\u2019s t-test. "
+                "**Significant** = Yes if p < 0.05.  \n"
+                f"\U0001f7e1 Watch: \u2264 {PF_DRIFT_WATCH*100:.0f}%  \u2002"
+                f"\U0001f7e0 Alert: \u2264 {PF_DRIFT_ALERT*100:.0f}%  \u2002"
+                f"\U0001f534 Action: \u2264 {PF_DRIFT_ACTION*100:.0f}%"
+            )
+            _ph_rows = []
+            for b in _ph_active:
+                drift = b.pf_drift
+                drift_pct = (drift / b.mean_pf_baseline * 100) if b.mean_pf_baseline else 0.0
+                if drift <= PF_DRIFT_ACTION:   status = "\U0001f534 Action"
+                elif drift <= PF_DRIFT_ALERT:  status = "\U0001f7e0 Alert"
+                elif drift <= PF_DRIFT_WATCH:  status = "\U0001f7e1 Watch"
+                else:                          status = "\U0001f7e2 Normal"
+                _ph_rows.append({
+                    "Low (kW)":        f"{b.low_kw / 1000:.1f}",
+                    "Centre (kW)":     f"{b.centre_kw / 1000:.1f}",
+                    "High (kW)":       f"{b.high_kw / 1000:.1f}",
+                    "Baseline PF":     f"{b.mean_pf_baseline:.4f}",
+                    "Baseline \u03c3": f"{b.std_pf_baseline:.5f}",
+                    "Recent PF":       f"{b.mean_pf_recent:.4f}" if b.mean_pf_recent is not None else "\u2014",
+                    "Recent \u03c3":   f"{b.std_pf_recent:.5f}"  if b.std_pf_recent  is not None else "\u2014",
+                    "Drift":           f"{drift:+.4f}",
+                    "Drift %":         f"{drift_pct:+.2f}%",
+                    "p-value":         f"{b.p_value:.4f}" if b.p_value is not None else "\u2014",
+                    "Significant":     ("\u2705 Yes" if b.drift_significant
+                                        else ("\u274c No" if b.drift_significant is False
+                                              else "\u2753 n/a")),
+                    "Status":          status,
+                    "n baseline":      b.n_baseline,
+                    "n recent":        b.n_recent,
+                })
+            st.dataframe(pd.DataFrame(_ph_rows), use_container_width=True, hide_index=True)
+
 
 def render_zone4(z: Zone4Result):
     if z.suppressed:
@@ -1137,6 +1187,7 @@ for _k, _v in [
     ("last_integrity_failure_summary", {}),
     ("effective_meta",           None),   # resolved meta per §2.5 — single source of truth
     ("_ep_just_saved",           False),  # flag to show save confirmation after rerun
+    ("last_phase_bands",         {}),     # {1: [BandRecord], 2: [...], 3: [...]}
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -2564,6 +2615,22 @@ with tab_analysis:
                             st.session_state["last_assessment"]   = _record
                             st.session_state["last_data"]         = _recent
                             st.session_state["last_cleaned_data"] = _cleaned_df
+                            # Compute per-phase PF drift bands (phase-specific bins)
+                            if _raw_bl_for_assess is not None:
+                                _ph_bands = {}
+                                for _ph in (1, 2, 3):
+                                    # Build phase-specific baseline bands
+                                    _ph_bl_bands = select_pf_bands_phase(
+                                        _raw_bl_for_assess, _ph
+                                    )
+                                    # Compute drift using phase bands
+                                    _ph_bands[_ph] = compute_pf_drift_phase(
+                                        _raw_reset, _ph_bl_bands,
+                                        _ph, _raw_bl_for_assess
+                                    )
+                                st.session_state["last_phase_bands"] = _ph_bands
+                            else:
+                                st.session_state["last_phase_bands"] = {}
                             st.rerun()
 
                 if _run_disabled:
