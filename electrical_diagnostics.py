@@ -655,6 +655,18 @@ def _pf_machine_series(df: pd.DataFrame) -> pd.Series:
     return p_total / s_sum.replace(0, np.nan)
 
 
+def _pf_phase_series(df: pd.DataFrame, phase: int) -> pd.Series:
+    """Per-phase PF = P_x / (V_x × I_x)."""
+    p = df[f"phase_{phase}_active_power"]
+    s = (df[f"phase_{phase}_voltage"] * df[f"phase_{phase}_current"]).replace(0, np.nan)
+    return p / s
+
+
+def _p_phase_series(df: pd.DataFrame, phase: int) -> pd.Series:
+    """Per-phase active power."""
+    return df[f"phase_{phase}_active_power"]
+
+
 def _p_total_series(df: pd.DataFrame) -> pd.Series:
     return df["phase_1_active_power"] + df["phase_2_active_power"] + df["phase_3_active_power"]
 
@@ -707,6 +719,56 @@ def select_pf_bands(cleaned_baseline: pd.DataFrame,
                 high_kw=round(hi, 3),
                 n_baseline=n,
                 mean_pf_baseline=round(mean_pf, 5) if n > 0 else 0.0,
+                std_pf_baseline=round(std_pf, 6),
+            ))
+
+    return bands
+
+
+def select_pf_bands_phase(
+    cleaned_baseline: pd.DataFrame,
+    phase: int,
+    min_samples: int | None = None,
+) -> list[BandRecord]:
+    """Build per-phase band structure from cleaned baseline.
+
+    Bins by phase power P_x (not P_total) with bin width = 1% of phase
+    operating range. PF computed as P_x / (V_x × I_x).
+    This ensures load effect on PF is controlled within each phase
+    independently, with no cross-phase dependency.
+    """
+    p_phase  = _p_phase_series(cleaned_baseline, phase)
+    pf_phase = _pf_phase_series(cleaned_baseline, phase)
+    _min     = min_samples if min_samples is not None else PF_BAND_MIN_SAMPLES
+
+    if len(p_phase) < PF_BAND_MIN_SAMPLES:
+        return []
+
+    p_min   = float(p_phase.min())
+    p_max   = float(p_phase.max())
+    p_range = max(p_max - p_min, 1.0)
+    bin_width = 0.01 * p_range   # 1% of phase operating range → 100 bins
+    edges = np.arange(p_min, p_max + bin_width, bin_width)
+    if len(edges) < 2:
+        return []
+
+    bands: list[BandRecord] = []
+    for i in range(len(edges) - 1):
+        lo = edges[i]
+        hi = edges[i + 1]
+        mask = (p_phase >= lo) & (p_phase < hi)
+        n = int(mask.sum())
+        if n >= _min:
+            pf_vals  = pf_phase[mask].dropna()
+            mean_pf  = float(pf_vals.mean()) if len(pf_vals) > 0 else 0.0
+            std_pf   = float(pf_vals.std(ddof=1)) if len(pf_vals) > 1 else 0.0
+            centre   = (lo + hi) / 2.0
+            bands.append(BandRecord(
+                centre_kw=round(centre, 3),
+                low_kw=round(lo, 3),
+                high_kw=round(hi, 3),
+                n_baseline=n,
+                mean_pf_baseline=round(mean_pf, 5),
                 std_pf_baseline=round(std_pf, 6),
             ))
 
@@ -849,6 +911,111 @@ def compute_pf_drift(
     total_weight = sum(active_weights)
     aggregated = sum(d * w for d, w in zip(active_drifts, active_weights)) / total_weight
     return round(aggregated, 5), updated, False, None
+
+
+def compute_pf_drift_phase(
+    cleaned_recent: pd.DataFrame,
+    stored_bands: list[BandRecord],
+    phase: int,
+    cleaned_baseline: pd.DataFrame | None = None,
+) -> list[BandRecord]:
+    """Compute per-band PF drift for a single phase using phase-specific bins.
+
+    Bins are defined by phase power P_x (not P_total) — the stored_bands
+    passed here should be the phase-specific bands from select_pf_bands_phase.
+    PF = P_x / (V_x × I_x). Welch's t-test per band.
+    """
+    if not stored_bands:
+        return []
+
+    p_phase  = _p_phase_series(cleaned_recent, phase)
+    pf_phase = _pf_phase_series(cleaned_recent, phase)
+
+    _bl_p    = _p_phase_series(cleaned_baseline, phase)    if cleaned_baseline is not None else None
+    _bl_pf   = _pf_phase_series(cleaned_baseline, phase)   if cleaned_baseline is not None else None
+
+    updated: list[BandRecord] = []
+
+    for band in stored_bands:
+        mask     = (p_phase >= band.low_kw) & (p_phase < band.high_kw)
+        n_recent = int(mask.sum())
+
+        # Baseline std from raw data
+        if _bl_p is not None and _bl_pf is not None:
+            bl_mask  = (_bl_p >= band.low_kw) & (_bl_p < band.high_kw)
+            _bl_n    = int(bl_mask.sum())
+            bl_vals  = _bl_pf[bl_mask].dropna()
+            _bl_mean = float(bl_vals.mean()) if len(bl_vals) > 0 else 0.0
+            _bl_std  = float(bl_vals.std(ddof=1)) if len(bl_vals) > 1 else 0.0
+        else:
+            _bl_n, _bl_mean, _bl_std = band.n_baseline, band.mean_pf_baseline, band.std_pf_baseline
+
+        b = BandRecord(
+            centre_kw=band.centre_kw,
+            low_kw=band.low_kw,
+            high_kw=band.high_kw,
+            n_baseline=_bl_n,
+            mean_pf_baseline=round(_bl_mean, 5),
+            std_pf_baseline=round(_bl_std, 6),
+        )
+        b.n_recent = n_recent
+
+        if n_recent < PF_BAND_MIN_SAMPLES:
+            b.suppressed = True
+            b.suppression_reason = f"Only {n_recent} recent samples"
+        else:
+            rc_vals          = pf_phase[mask].dropna()
+            b.mean_pf_recent = round(float(rc_vals.mean()), 5) if len(rc_vals) > 0 else None
+            b.std_pf_recent  = round(float(rc_vals.std(ddof=1)), 6) if len(rc_vals) > 1 else 0.0
+            b.pf_drift       = round(b.mean_pf_recent - _bl_mean, 5) if b.mean_pf_recent is not None else None
+
+            # Welch's t-test
+            if (_bl_std > 0 and b.std_pf_recent and b.std_pf_recent > 0
+                    and _bl_n > 1 and n_recent > 1 and b.pf_drift is not None):
+                try:
+                    _var1 = _bl_std**2 / _bl_n
+                    _var2 = b.std_pf_recent**2 / n_recent
+                    _se   = (_var1 + _var2) ** 0.5
+                    if _se > 0:
+                        _t  = abs(b.pf_drift / _se)
+                        _df = (_var1 + _var2)**2 / (
+                            _var1**2 / (_bl_n - 1) + _var2**2 / (n_recent - 1)
+                        )
+                        _x  = _df / (_df + _t**2)
+                        def _bi2(a, bv, x):
+                            if x <= 0: return 0.0
+                            if x >= 1: return 1.0
+                            lb = math.lgamma(a) + math.lgamma(bv) - math.lgamma(a + bv)
+                            fr = math.exp(math.log(x)*a + math.log(1-x)*bv - lb) / a
+                            f=1.0; c=1.0; d=1.0-(a+bv)*x/(a+1)
+                            if abs(d)<1e-30: d=1e-30
+                            d=1.0/d; f=d
+                            for m in range(1, 200):
+                                m2=2*m
+                                nu=m*(bv-m)*x/((a+m2-1)*(a+m2))
+                                d=1.0+nu*d; c=1.0+nu/c
+                                if abs(d)<1e-30: d=1e-30
+                                if abs(c)<1e-30: c=1e-30
+                                d=1.0/d; f*=c*d
+                                nu=-(a+m)*(a+bv+m)*x/((a+m2)*(a+m2+1))
+                                d=1.0+nu*d; c=1.0+nu/c
+                                if abs(d)<1e-30: d=1e-30
+                                if abs(c)<1e-30: c=1e-30
+                                d=1.0/d; dlt=c*d; f*=dlt
+                                if abs(dlt-1.0)<1e-10: break
+                            return fr*f
+                        _p = max(0.0, min(1.0, float(_bi2(_df/2, 0.5, _x))))
+                        b.p_value = round(_p, 4)
+                        b.drift_significant = _p < 0.05
+                    else:
+                        b.p_value = 1.0; b.drift_significant = False
+                except Exception:
+                    b.p_value = None; b.drift_significant = None
+            else:
+                b.p_value = None; b.drift_significant = None
+
+        updated.append(b)
+    return updated
 
 
 def _pf_drift_tier(drift: float) -> str | None:
