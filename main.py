@@ -956,13 +956,19 @@ def build_assessment_charts(
     record: AssessmentRecord,
     cleaned_data: pd.DataFrame | None = None,
     meta: dict | None = None,
+    phase_bands: dict | None = None,
 ) -> list:
-    """Build control charts for VUF, P_total and PF_machine.
+    """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
 
-    Shows cleaned samples (used for analysis) in solid blue.
-    Non-cleaned samples are shown as faded grey in the background so
-    the user can see the full time window without confusing stopped
-    periods with analysed data.
+    Time-series charts show cleaned samples (solid blue) against all raw
+    data (faded grey background).  The PF drift chart (last) plots per-band
+    drift vs. load for the machine level and each phase; marker size
+    indicates statistical significance (larger = p < 0.05).
+
+    Parameters
+    ----------
+    phase_bands : {1: [BandRecord], 2: [...], 3: [...]} from session state.
+                  Pass an empty dict if phase analysis was not run.
     """
     figs = []
     if data is None or data.empty:
@@ -1043,6 +1049,110 @@ def build_assessment_charts(
             margin=dict(l=40, r=20, t=45, b=40),
             hovermode="x unified", font=dict(size=11), height=300,
             legend=dict(orientation="h", yanchor="bottom", y=1.01,
+                        xanchor="left", x=0, font=dict(size=10)),
+        )
+        return fig
+
+    def _pf_drift_chart(machine_bands: list, phase_bands_dict: dict):
+        """Band-profile chart: PF drift vs. load band centre for machine + phases.
+
+        X axis  : band centre in kW
+        Y axis  : PF drift (recent mean PF − baseline mean PF)
+        Traces  : Machine, Phase 1, Phase 2, Phase 3
+        Markers : larger (size 8) = statistically significant (p < 0.05)
+                  smaller (size 4) = insufficient evidence / not significant
+        """
+        _COLOURS = {
+            "Machine":  "#185FA5",   # platform blue
+            "Phase 1":  "#E74C3C",   # red
+            "Phase 2":  "#27AE60",   # green
+            "Phase 3":  "#8E44AD",   # purple
+        }
+
+        fig = go.Figure()
+        has_data = False
+        all_active_drifts: list[float] = []
+
+        def _add_trace(bands, name):
+            nonlocal has_data
+            active = [
+                (b.centre_kw / 1000, b.pf_drift, bool(b.drift_significant))
+                for b in bands
+                if not b.suppressed and b.pf_drift is not None
+            ]
+            if not active:
+                return
+            has_data = True
+            xs, ys, sigs = zip(*active)
+            all_active_drifts.extend(ys)
+            colour = _COLOURS[name]
+            fig.add_trace(go.Scatter(
+                x=list(xs), y=list(ys),
+                mode="lines+markers",
+                name=name,
+                line=dict(color=colour, width=1.8),
+                marker=dict(
+                    color=colour,
+                    size=[8 if s else 4 for s in sigs],   # significance → marker size
+                    opacity=[1.0 if s else 0.45 for s in sigs],
+                ),
+                customdata=[[("Yes" if s else "No")] for s in sigs],
+                hovertemplate=(
+                    f"<b>{name}</b><br>"
+                    "Band centre: %{x:.3f} kW<br>"
+                    "Drift: %{y:+.4f}<br>"
+                    "Significant (p\u202f<\u202f0.05): %{customdata[0]}"
+                    "<extra></extra>"
+                ),
+            ))
+
+        _add_trace(machine_bands, "Machine")
+        for ph in (1, 2, 3):
+            _add_trace(phase_bands_dict.get(ph, []), f"Phase {ph}")
+
+        if not has_data:
+            return None
+
+        # Y-axis range: always show down to Action threshold for reference
+        y_lo = min(
+            min(all_active_drifts) * 1.35 if all_active_drifts else PF_DRIFT_ACTION * 1.5,
+            PF_DRIFT_ACTION * 1.5,
+        )
+        y_hi = max(
+            max(all_active_drifts) * 1.35 if max(all_active_drifts) > 0 else 0.005,
+            0.02,
+        )
+
+        # Zero reference
+        fig.add_hline(y=0, line_color="#AAAAAA", line_width=1, line_dash="dot")
+
+        # Threshold lines — annotations above each line so they stay visible in -ve region
+        for val, colour, label in [
+            (PF_DRIFT_WATCH,  "#F1C40F", f"Watch {PF_DRIFT_WATCH:+.2f}"),
+            (PF_DRIFT_ALERT,  "#E67E22", f"Alert {PF_DRIFT_ALERT:+.2f}"),
+            (PF_DRIFT_ACTION, "#A32D2D", f"Action {PF_DRIFT_ACTION:+.2f}"),
+        ]:
+            fig.add_hline(
+                y=val, line_color=colour, line_dash="dash", line_width=1.2,
+                annotation_text=label, annotation_position="top right",
+                annotation_font_size=9,
+            )
+
+        fig.update_layout(
+            title=dict(
+                text=(
+                    "PF Drift by Load Band \u2014 Machine & Phases"
+                    "<br><sup>Larger solid markers = statistically significant (p\u202f<\u202f0.05)"
+                    " \u2502 Only bands with \u22655 recent samples shown</sup>"
+                ),
+                font=dict(size=13),
+            ),
+            xaxis_title="Band centre (kW)",
+            yaxis=dict(title="PF drift", range=[y_lo, y_hi], tickformat="+.3f"),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=50, r=130, t=65, b=50),
+            hovermode="x unified", font=dict(size=11), height=360,
+            legend=dict(orientation="h", yanchor="bottom", y=1.08,
                         xanchor="left", x=0, font=dict(size=10)),
         )
         return fig
@@ -1133,6 +1243,13 @@ def build_assessment_charts(
         h_lines=pf_hlines or None,
         y_range=[0, 1.05],
     ))
+
+    # PF drift by load band — machine + per-phase
+    _machine_bands = record.motor_side.bands if record.motor_side else []
+    _phase_bands   = phase_bands or {}
+    _drift_fig = _pf_drift_chart(_machine_bands, _phase_bands)
+    if _drift_fig is not None:
+        figs.append(_drift_fig)
 
     return figs
 
@@ -3462,6 +3579,7 @@ with tab_analysis:
                             _chart_data_w, record,
                             cleaned_data=_cleaned_chart,
                             meta=meta,
+                            phase_bands=st.session_state.get("last_phase_bands") or {},
                         ):
                             st.plotly_chart(fig, use_container_width=True)
 
