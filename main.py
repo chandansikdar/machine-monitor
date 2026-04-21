@@ -1053,39 +1053,31 @@ def build_assessment_charts(
         )
         return fig
 
-    def _pf_drift_chart(machine_bands: list, phase_bands_dict: dict):
-        """Band-profile chart: PF drift vs. load band centre for machine + phases.
+    def _pf_drift_charts(machine_bands: list, phase_bands_dict: dict) -> list:
+        """One PF-drift band-profile chart per signal (Machine + Phase 1/2/3).
 
-        X axis  : band centre in kW
-        Y axis  : PF drift (recent mean PF − baseline mean PF)
-        Traces  : Machine, Phase 1, Phase 2, Phase 3
-        Markers : larger (size 8) = statistically significant (p < 0.05)
-                  smaller (size 4) = insufficient evidence / not significant
+        Each chart: X = band centre (kW), Y = PF drift.
+        Larger solid markers = statistically significant (p < 0.05).
         """
         _COLOURS = {
-            "Machine":  "#185FA5",   # platform blue
-            "Phase 1":  "#E74C3C",   # red
-            "Phase 2":  "#27AE60",   # green
-            "Phase 3":  "#8E44AD",   # purple
+            "Machine":  "#185FA5",
+            "Phase 1":  "#E74C3C",
+            "Phase 2":  "#27AE60",
+            "Phase 3":  "#8E44AD",
         }
 
-        fig = go.Figure()
-        has_data = False
-        all_active_drifts: list[float] = []
-
-        def _add_trace(bands, name):
-            nonlocal has_data
+        def _one(bands, name) -> go.Figure | None:
             active = [
                 (b.centre_kw / 1000, b.pf_drift, bool(b.drift_significant))
                 for b in bands
                 if not b.suppressed and b.pf_drift is not None
             ]
             if not active:
-                return
-            has_data = True
+                return None
             xs, ys, sigs = zip(*active)
-            all_active_drifts.extend(ys)
             colour = _COLOURS[name]
+
+            fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=list(xs), y=list(ys),
                 mode="lines+markers",
@@ -1093,7 +1085,7 @@ def build_assessment_charts(
                 line=dict(color=colour, width=1.8),
                 marker=dict(
                     color=colour,
-                    size=[8 if s else 4 for s in sigs],   # significance → marker size
+                    size=[8 if s else 4 for s in sigs],
                     opacity=[1.0 if s else 0.45 for s in sigs],
                 ),
                 customdata=[[("Yes" if s else "No")] for s in sigs],
@@ -1106,56 +1098,48 @@ def build_assessment_charts(
                 ),
             ))
 
-        _add_trace(machine_bands, "Machine")
-        for ph in (1, 2, 3):
-            _add_trace(phase_bands_dict.get(ph, []), f"Phase {ph}")
+            y_lo = min(min(ys) * 1.35, PF_DRIFT_ACTION * 1.5)
+            y_hi = max(max(ys) * 1.35 if max(ys) > 0 else 0.005, 0.02)
 
-        if not has_data:
-            return None
-
-        # Y-axis range: always show down to Action threshold for reference
-        y_lo = min(
-            min(all_active_drifts) * 1.35 if all_active_drifts else PF_DRIFT_ACTION * 1.5,
-            PF_DRIFT_ACTION * 1.5,
-        )
-        y_hi = max(
-            max(all_active_drifts) * 1.35 if max(all_active_drifts) > 0 else 0.005,
-            0.02,
-        )
-
-        # Zero reference
-        fig.add_hline(y=0, line_color="#AAAAAA", line_width=1, line_dash="dot")
-
-        # Threshold lines — annotations above each line so they stay visible in -ve region
-        for val, colour, label in [
-            (PF_DRIFT_WATCH,  "#F1C40F", f"Watch {PF_DRIFT_WATCH:+.2f}"),
-            (PF_DRIFT_ALERT,  "#E67E22", f"Alert {PF_DRIFT_ALERT:+.2f}"),
-            (PF_DRIFT_ACTION, "#A32D2D", f"Action {PF_DRIFT_ACTION:+.2f}"),
-        ]:
-            fig.add_hline(
-                y=val, line_color=colour, line_dash="dash", line_width=1.2,
-                annotation_text=label, annotation_position="top right",
-                annotation_font_size=9,
-            )
-
-        fig.update_layout(
-            title=dict(
-                text=(
-                    "PF Drift by Load Band \u2014 Machine & Phases"
-                    "<br><sup>Larger solid markers = statistically significant (p\u202f<\u202f0.05)"
-                    " \u2502 Only bands with \u22655 recent samples shown</sup>"
+            fig.add_hline(y=0, line_color="#AAAAAA", line_width=1, line_dash="dot")
+            for val, col, label in [
+                (PF_DRIFT_WATCH,  "#F1C40F", f"Watch {PF_DRIFT_WATCH:+.2f}"),
+                (PF_DRIFT_ALERT,  "#E67E22", f"Alert {PF_DRIFT_ALERT:+.2f}"),
+                (PF_DRIFT_ACTION, "#A32D2D", f"Action {PF_DRIFT_ACTION:+.2f}"),
+            ]:
+                fig.add_hline(
+                    y=val, line_color=col, line_dash="dash", line_width=1.2,
+                    annotation_text=label, annotation_position="top right",
+                    annotation_font_size=9,
+                )
+            fig.update_layout(
+                title=dict(
+                    text=(
+                        f"PF Drift by Load Band \u2014 {name}"
+                        "<br><sup>Larger solid markers = statistically significant"
+                        " (p\u202f<\u202f0.05)"
+                        " \u2502 Only bands with \u22655 recent samples shown</sup>"
+                    ),
+                    font=dict(size=13),
                 ),
-                font=dict(size=13),
-            ),
-            xaxis_title="Band centre (kW)",
-            yaxis=dict(title="PF drift", range=[y_lo, y_hi], tickformat="+.3f"),
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=50, r=130, t=65, b=50),
-            hovermode="x unified", font=dict(size=11), height=360,
-            legend=dict(orientation="h", yanchor="bottom", y=1.08,
-                        xanchor="left", x=0, font=dict(size=10)),
-        )
-        return fig
+                xaxis_title="Band centre (kW)",
+                yaxis=dict(title="PF drift", range=[y_lo, y_hi], tickformat="+.3f"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=50, r=130, t=65, b=50),
+                hovermode="x unified", font=dict(size=11), height=320,
+                showlegend=False,
+            )
+            return fig
+
+        out = []
+        f = _one(machine_bands, "Machine")
+        if f:
+            out.append(f)
+        for ph in (1, 2, 3):
+            f = _one(phase_bands_dict.get(ph, []), f"Phase {ph}")
+            if f:
+                out.append(f)
+        return out
 
     cl_idx = cleaned_data.index if has_cleaned else None
 
@@ -1244,12 +1228,10 @@ def build_assessment_charts(
         y_range=[0, 1.05],
     ))
 
-    # PF drift by load band — machine + per-phase
+    # PF drift by load band — one chart per signal (Machine + Phase 1/2/3)
     _machine_bands = record.motor_side.bands if record.motor_side else []
     _phase_bands   = phase_bands or {}
-    _drift_fig = _pf_drift_chart(_machine_bands, _phase_bands)
-    if _drift_fig is not None:
-        figs.append(_drift_fig)
+    figs.extend(_pf_drift_charts(_machine_bands, _phase_bands))
 
     return figs
 
