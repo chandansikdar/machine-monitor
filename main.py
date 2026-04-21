@@ -1002,17 +1002,22 @@ def build_assessment_charts(
     baseline = record.motor_side
 
     def _chart(raw_x, raw_y, cl_x, cl_y, title, y_label,
-               h_lines=None, y_range=None, show_cleaned=True):
+               h_lines=None, y_range=None, show_cleaned=True, show_raw=True):
         fig = go.Figure()
 
-        # Background: all raw data (faded grey)
-        fig.add_trace(go.Scatter(
-            x=raw_x, y=raw_y, mode="lines",
-            line=dict(color="rgba(180,180,180,0.45)", width=0.8),
-            name="All data (not analysed)",
-            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + y_label + ": %{y:.3f} (raw)<extra></extra>",
-            showlegend=True,
-        ))
+        # Background: all raw data (faded grey).
+        # show_raw=False suppresses this trace — used for the IUF chart where the
+        # raw series contains values near 100% at near-shutdown (tiny I_avg
+        # denominator), which poisons Plotly's autoscale when the user clicks
+        # the home / autorange button.
+        if show_raw:
+            fig.add_trace(go.Scatter(
+                x=raw_x, y=raw_y, mode="lines",
+                line=dict(color="rgba(180,180,180,0.45)", width=0.8),
+                name="All data (not analysed)",
+                hovertemplate="%{x|%Y-%m-%d %H:%M}<br>" + y_label + ": %{y:.3f} (raw)<extra></extra>",
+                showlegend=True,
+            ))
 
         # Foreground: cleaned / analysed data (solid blue)
         if show_cleaned and cl_x is not None and cl_y is not None:
@@ -1067,6 +1072,7 @@ def build_assessment_charts(
             (IUF_WATCH,    "#E67E22", "dash",   f"Watch {IUF_WATCH:.0f}%"),
         ],
         y_range=[0, max(iuf_max * 1.3, IUF_CRITICAL * 1.5)],
+        show_raw=False,   # cleaned only — raw values near shutdown break autoscale
     ))
 
     # P_total chart — baseline avg + 20% load precondition threshold
