@@ -3769,70 +3769,78 @@ with tab_analysis:
                             _gt_c1.markdown("**Voltage Imbalance (VUF)**")
                             _gt_c2.markdown("**Current Imbalance (IUF)**")
                             _gt_c3.markdown("**Power Factor (PF)**")
-                            _vuf_g_watch = _gt_c1.number_input(
+                            _gt_c1.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=10.0,
-                                value=float(VUF_WATCH),
+                                value=float(st.session_state.get("vuf_gauge_watch", VUF_WATCH)),
                                 step=0.1,
                                 key="vuf_gauge_watch",
                                 help=f"Default: {VUF_WATCH:.1f}% (VUF_WATCH)",
                             )
-                            _iuf_g_watch = _gt_c2.number_input(
+                            _gt_c2.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=50.0,
-                                value=float(IUF_WATCH),
+                                value=float(st.session_state.get("iuf_gauge_watch", IUF_WATCH)),
                                 step=0.5,
                                 key="iuf_gauge_watch",
                                 help=f"Default: {IUF_WATCH:.0f}% (IUF_WATCH)",
                             )
-                            _pf_g_watch = _gt_c3.number_input(
+                            _gt_c3.number_input(
                                 "Watch threshold (PF)",
                                 min_value=0.50, max_value=0.99,
-                                value=0.85,
+                                value=float(st.session_state.get("pf_gauge_watch", 0.85)),
                                 step=0.01,
                                 format="%.2f",
                                 key="pf_gauge_watch",
                                 help="PF below this value = amber. Default: 0.85",
                             )
-                            _vuf_g_crit = _gt_c1.number_input(
+                            _gt_c1.number_input(
                                 "Critical threshold (%)",
                                 min_value=0.1, max_value=20.0,
-                                value=float(VUF_CRITICAL),
+                                value=float(st.session_state.get("vuf_gauge_critical", VUF_CRITICAL)),
                                 step=0.1,
                                 key="vuf_gauge_critical",
                                 help=f"Default: {VUF_CRITICAL:.1f}% (VUF_CRITICAL)",
                             )
-                            _iuf_g_crit = _gt_c2.number_input(
+                            _gt_c2.number_input(
                                 "Critical threshold (%)",
                                 min_value=0.1, max_value=100.0,
-                                value=float(IUF_CRITICAL),
+                                value=float(st.session_state.get("iuf_gauge_critical", IUF_CRITICAL)),
                                 step=0.5,
                                 key="iuf_gauge_critical",
                                 help=f"Default: {IUF_CRITICAL:.0f}% (IUF_CRITICAL)",
                             )
-                            _pf_g_crit = _gt_c3.number_input(
+                            _gt_c3.number_input(
                                 "Critical threshold (PF)",
                                 min_value=0.30, max_value=0.98,
-                                value=0.75,
+                                value=float(st.session_state.get("pf_gauge_critical", 0.75)),
                                 step=0.01,
                                 format="%.2f",
                                 key="pf_gauge_critical",
                                 help="PF below this value = red. Default: 0.75",
                             )
-                            _warn_vuf = _vuf_g_watch >= _vuf_g_crit
-                            _warn_iuf = _iuf_g_watch >= _iuf_g_crit
-                            _warn_pf  = _pf_g_watch  <= _pf_g_crit
-                            if _warn_vuf or _warn_iuf or _warn_pf:
-                                st.warning("Invalid thresholds detected. Affected gauge(s) reset to defaults.")
-                            if _warn_vuf:
-                                _vuf_g_watch = float(VUF_WATCH)
-                                _vuf_g_crit  = float(VUF_CRITICAL)
-                            if _warn_iuf:
-                                _iuf_g_watch = float(IUF_WATCH)
-                                _iuf_g_crit  = float(IUF_CRITICAL)
-                            if _warn_pf:
-                                _pf_g_watch = 0.85
-                                _pf_g_crit  = 0.75
+
+                        # Read current widget values from session state
+                        _vuf_g_watch = float(st.session_state.get("vuf_gauge_watch",  VUF_WATCH))
+                        _vuf_g_crit  = float(st.session_state.get("vuf_gauge_critical", VUF_CRITICAL))
+                        _iuf_g_watch = float(st.session_state.get("iuf_gauge_watch",  IUF_WATCH))
+                        _iuf_g_crit  = float(st.session_state.get("iuf_gauge_critical", IUF_CRITICAL))
+                        _pf_g_watch  = float(st.session_state.get("pf_gauge_watch",  0.85))
+                        _pf_g_crit   = float(st.session_state.get("pf_gauge_critical", 0.75))
+                        _warn_vuf = _vuf_g_watch >= _vuf_g_crit
+                        _warn_iuf = _iuf_g_watch >= _iuf_g_crit
+                        _warn_pf  = _pf_g_watch  <= _pf_g_crit
+                        if _warn_vuf or _warn_iuf or _warn_pf:
+                            st.warning("Invalid thresholds detected. Affected gauge(s) reset to defaults.")
+                        if _warn_vuf:
+                            _vuf_g_watch = float(VUF_WATCH)
+                            _vuf_g_crit  = float(VUF_CRITICAL)
+                        if _warn_iuf:
+                            _iuf_g_watch = float(IUF_WATCH)
+                            _iuf_g_crit  = float(IUF_CRITICAL)
+                        if _warn_pf:
+                            _pf_g_watch = 0.85
+                            _pf_g_crit  = 0.75
                         for fig in build_assessment_charts(
                             _chart_data_w, record,
                             cleaned_data=_cleaned_chart,
