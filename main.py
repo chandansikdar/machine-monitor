@@ -3779,6 +3779,7 @@ with tab_analysis:
                             _gt_c1.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=10.0,
+                                value=st.session_state["vuf_gauge_watch"],
                                 step=0.1,
                                 key="vuf_gauge_watch",
                                 help=f"Default: {VUF_WATCH:.1f}% (VUF_WATCH)",
@@ -3786,6 +3787,7 @@ with tab_analysis:
                             _gt_c2.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=50.0,
+                                value=st.session_state["iuf_gauge_watch"],
                                 step=0.5,
                                 key="iuf_gauge_watch",
                                 help=f"Default: {IUF_WATCH:.0f}% (IUF_WATCH)",
@@ -3793,6 +3795,7 @@ with tab_analysis:
                             _gt_c3.number_input(
                                 "Watch threshold (PF)",
                                 min_value=0.50, max_value=0.99,
+                                value=st.session_state["pf_gauge_watch"],
                                 step=0.01,
                                 format="%.2f",
                                 key="pf_gauge_watch",
@@ -3801,6 +3804,7 @@ with tab_analysis:
                             _gt_c1.number_input(
                                 "Critical threshold (%)",
                                 min_value=0.1, max_value=20.0,
+                                value=st.session_state["vuf_gauge_critical"],
                                 step=0.1,
                                 key="vuf_gauge_critical",
                                 help=f"Default: {VUF_CRITICAL:.1f}% (VUF_CRITICAL)",
@@ -3808,6 +3812,7 @@ with tab_analysis:
                             _gt_c2.number_input(
                                 "Critical threshold (%)",
                                 min_value=0.1, max_value=100.0,
+                                value=st.session_state["iuf_gauge_critical"],
                                 step=0.5,
                                 key="iuf_gauge_critical",
                                 help=f"Default: {IUF_CRITICAL:.0f}% (IUF_CRITICAL)",
@@ -3815,6 +3820,7 @@ with tab_analysis:
                             _gt_c3.number_input(
                                 "Critical threshold (PF)",
                                 min_value=0.30, max_value=0.98,
+                                value=st.session_state["pf_gauge_critical"],
                                 step=0.01,
                                 format="%.2f",
                                 key="pf_gauge_critical",
