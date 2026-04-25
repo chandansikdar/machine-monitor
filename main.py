@@ -961,6 +961,8 @@ def build_assessment_charts(
     iuf_gauge_critical: float | None = None,
     vuf_gauge_watch: float | None = None,
     vuf_gauge_critical: float | None = None,
+    pf_gauge_watch: float | None = None,
+    pf_gauge_critical: float | None = None,
 ) -> list:
     """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
 
@@ -1147,15 +1149,12 @@ def build_assessment_charts(
 
     def _gauge(value: float, watch: float, critical: float,
                title: str, unit: str) -> go.Figure:
-        """Indicator gauge for a single scalar metric.
+        """Indicator gauge — high-is-bad (VUF, IUF).
 
         Colour bands:
           0 -> watch    : green  (#177E40)
           watch -> crit : amber  (#E67E22)
           crit -> max   : red    (#C0392B)
-
-        The axis max is 1.4x critical (minimum 15) so the red zone
-        has visible width even when the reading is healthy.
         """
         g_watch    = watch
         g_critical = critical
@@ -1208,11 +1207,71 @@ def build_assessment_charts(
         )
         return fig
 
+    def _gauge_inverted(value: float, watch: float, critical: float,
+                        title: str, unit: str) -> go.Figure:
+        """Indicator gauge — low-is-bad (PF).
+
+        Colour bands (axis runs 0 → 1):
+          0 -> critical  : red    (#C0392B)
+          critical->watch: amber  (#E67E22)
+          watch -> 1.0   : green  (#177E40)
+
+        watch > critical (e.g. watch=0.85, critical=0.75).
+        """
+        if value >= watch:
+            bar_colour = "#177E40"
+        elif value >= critical:
+            bar_colour = "#E67E22"
+        else:
+            bar_colour = "#C0392B"
+
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=value,
+            number=dict(
+                suffix=f" {unit}",
+                font=dict(size=28, color=bar_colour),
+                valueformat=".3f",
+            ),
+            title=dict(text=title, font=dict(size=12)),
+            gauge=dict(
+                axis=dict(
+                    range=[0, 1.0],
+                    tickwidth=1,
+                    tickcolor="#555",
+                    tickfont=dict(size=9),
+                    nticks=6,
+                ),
+                bar=dict(color=bar_colour, thickness=0.22),
+                bgcolor="rgba(0,0,0,0)",
+                borderwidth=0,
+                steps=[
+                    dict(range=[0,        critical], color="rgba(192,57,43,0.15)"),
+                    dict(range=[critical, watch],    color="rgba(230,126,34,0.15)"),
+                    dict(range=[watch,    1.0],      color="rgba(23,126,64,0.15)"),
+                ],
+                threshold=dict(
+                    line=dict(color=bar_colour, width=3),
+                    thickness=0.80,
+                    value=value,
+                ),
+            ),
+        ))
+        fig.update_layout(
+            height=220,
+            margin=dict(l=30, r=30, t=50, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        )
+        return fig
+
     # Resolve gauge thresholds (caller overrides take priority over constants)
     _iuf_watch    = iuf_gauge_watch    if iuf_gauge_watch    is not None else float(IUF_WATCH)
     _iuf_critical = iuf_gauge_critical if iuf_gauge_critical is not None else float(IUF_CRITICAL)
     _vuf_watch    = vuf_gauge_watch    if vuf_gauge_watch    is not None else float(VUF_WATCH)
     _vuf_critical = vuf_gauge_critical if vuf_gauge_critical is not None else float(VUF_CRITICAL)
+    _pf_watch     = pf_gauge_watch     if pf_gauge_watch     is not None else 0.85
+    _pf_critical  = pf_gauge_critical  if pf_gauge_critical  is not None else 0.75
 
     cl_idx = cleaned_data.index if has_cleaned else None
 
@@ -1326,6 +1385,21 @@ def build_assessment_charts(
         h_lines=pf_hlines or None,
         y_range=[0, 1.05],
     ))
+
+    # PF gauge — inverted scale (high PF = healthy)
+    if has_cleaned and len(cl_pf) > 0:
+        _pf_mean = float(cl_pf.mean())
+        figs.append(_gauge_inverted(
+            value=_pf_mean,
+            watch=_pf_watch,
+            critical=_pf_critical,
+            title=(
+                f"PF Gauge \u2014 Assessment Period Mean<br>"
+                f"<sup>Watch \u2264{_pf_watch:.2f}  \u2502  Critical \u2264{_pf_critical:.2f}"
+                f"  \u2502  Axis: 0 \u2192 1</sup>"
+            ),
+            unit="",
+        ))
 
     # PF drift by load band — one chart per signal (Machine + Phase 1/2/3)
     _machine_bands = record.motor_side.bands if record.motor_side else []
@@ -3657,14 +3731,15 @@ with tab_analysis:
                             "\U0001f7e2 **Blue dots** = cleaned samples used for analysis  "
                             "\u2502  \U0001f6ab **Grey line** = all raw data (not analysed)"
                         )
-                        # Gauge threshold controls — VUF and IUF
+                        # Gauge threshold controls — VUF, IUF and PF
                         with st.expander(
-                            "\u2699\ufe0f Gauge Thresholds (VUF & IUF)", expanded=False
+                            "\u2699\ufe0f Gauge Thresholds (VUF, IUF & PF)", expanded=False
                         ):
                             st.caption("Override methodology defaults for the gauge displays only. Does not affect alarm logic.")
-                            _gt_c1, _gt_c2 = st.columns(2)
+                            _gt_c1, _gt_c2, _gt_c3 = st.columns(3)
                             _gt_c1.markdown("**Voltage Imbalance (VUF)**")
                             _gt_c2.markdown("**Current Imbalance (IUF)**")
+                            _gt_c3.markdown("**Power Factor (PF)**")
                             _vuf_g_watch = _gt_c1.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=10.0,
@@ -3680,6 +3755,15 @@ with tab_analysis:
                                 step=0.5,
                                 key="iuf_gauge_watch",
                                 help=f"Default: {IUF_WATCH:.0f}% (IUF_WATCH)",
+                            )
+                            _pf_g_watch = _gt_c3.number_input(
+                                "Watch threshold (PF)",
+                                min_value=0.50, max_value=0.99,
+                                value=0.85,
+                                step=0.01,
+                                format="%.2f",
+                                key="pf_gauge_watch",
+                                help="PF below this value = amber. Default: 0.85",
                             )
                             _vuf_g_crit = _gt_c1.number_input(
                                 "Critical threshold (%)",
@@ -3697,16 +3781,29 @@ with tab_analysis:
                                 key="iuf_gauge_critical",
                                 help=f"Default: {IUF_CRITICAL:.0f}% (IUF_CRITICAL)",
                             )
+                            _pf_g_crit = _gt_c3.number_input(
+                                "Critical threshold (PF)",
+                                min_value=0.30, max_value=0.98,
+                                value=0.75,
+                                step=0.01,
+                                format="%.2f",
+                                key="pf_gauge_critical",
+                                help="PF below this value = red. Default: 0.75",
+                            )
                             _warn_vuf = _vuf_g_watch >= _vuf_g_crit
                             _warn_iuf = _iuf_g_watch >= _iuf_g_crit
-                            if _warn_vuf or _warn_iuf:
-                                st.warning("Watch threshold must be below Critical threshold. Affected gauge(s) reset to defaults.")
+                            _warn_pf  = _pf_g_watch  <= _pf_g_crit
+                            if _warn_vuf or _warn_iuf or _warn_pf:
+                                st.warning("Invalid thresholds detected. Affected gauge(s) reset to defaults.")
                             if _warn_vuf:
                                 _vuf_g_watch = float(VUF_WATCH)
                                 _vuf_g_crit  = float(VUF_CRITICAL)
                             if _warn_iuf:
                                 _iuf_g_watch = float(IUF_WATCH)
                                 _iuf_g_crit  = float(IUF_CRITICAL)
+                            if _warn_pf:
+                                _pf_g_watch = 0.85
+                                _pf_g_crit  = 0.75
                         for fig in build_assessment_charts(
                             _chart_data_w, record,
                             cleaned_data=_cleaned_chart,
@@ -3716,6 +3813,8 @@ with tab_analysis:
                             iuf_gauge_critical=_iuf_g_crit,
                             vuf_gauge_watch=_vuf_g_watch,
                             vuf_gauge_critical=_vuf_g_crit,
+                            pf_gauge_watch=_pf_g_watch,
+                            pf_gauge_critical=_pf_g_crit,
                         ):
                             st.plotly_chart(fig, use_container_width=True)
 
