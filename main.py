@@ -1229,9 +1229,9 @@ def build_assessment_charts(
     ))
 
     # VUF gauge
-    if record.supply and record.supply.vuf_pct is not None:
+    if record.supply_alarm and record.supply_alarm.vuf_pct is not None:
         figs.append(_gauge(
-            value=record.supply.vuf_pct,
+            value=record.supply_alarm.vuf_pct,
             watch=_vuf_watch,
             critical=_vuf_critical,
             title=(
