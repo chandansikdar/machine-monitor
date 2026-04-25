@@ -1147,17 +1147,20 @@ def build_assessment_charts(
         return out
 
     def _gauge(value: float, watch: float, critical: float,
-               title: str, unit: str) -> go.Figure:
+               title: str, unit: str,
+               axis_max: float | None = None) -> go.Figure:
         """Indicator gauge — high-is-bad (VUF, IUF).
 
         Colour bands:
           0 -> watch    : green  (#177E40)
           watch -> crit : amber  (#E67E22)
           crit -> max   : red    (#C0392B)
+
+        axis_max overrides the default 1.4x critical scale.
         """
         g_watch    = watch
         g_critical = critical
-        g_max      = max(critical * 1.4, 15.0)
+        g_max      = axis_max if axis_max is not None else max(critical * 1.4, 15.0)
 
         if value < g_watch:
             bar_colour = "#177E40"
@@ -1294,9 +1297,11 @@ def build_assessment_charts(
             critical=_vuf_critical,
             title=(
                 f"VUF Gauge \u2014 Assessment Period Mean<br>"
-                f"<sup>Watch \u2265{_vuf_watch:.1f}%  \u2502  Critical \u2265{_vuf_critical:.1f}%</sup>"
+                f"<sup>Watch \u2265{_vuf_watch:.1f}%  \u2502  Critical \u2265{_vuf_critical:.1f}%"
+                f"  \u2502  Axis: 0 \u2192 5%</sup>"
             ),
             unit="%",
+            axis_max=5.0,
         ))
 
     # IUF chart — only on cleaned data (IUF is meaningless at low / zero load)
