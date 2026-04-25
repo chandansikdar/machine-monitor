@@ -2098,7 +2098,8 @@ with tab_data:
                                     _raw_str.columns[0]
                                 )
                                 _raw_str[_ts_col] = pd.to_datetime(
-                                    _raw_str[_ts_col], dayfirst=True, errors="coerce"
+                                    _raw_str[_ts_col], format="mixed",
+                                    dayfirst=False, errors="coerce"
                                 )
                                 _raw_str = _raw_str.set_index(_ts_col).sort_index()
                                 for _mc in _MEAS:
