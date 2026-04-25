@@ -1623,7 +1623,7 @@ def assessment_summary(record: AssessmentRecord) -> str:
     if r:
         lines.append(
             f"Data cleaning: {r.n_raw} raw"
-            f" \u2192 {r.n_after_load_precondition} load 226520%"
+            f" \u2192 {r.n_after_load_precondition} load \u226520%"
             f" \u2192 {r.n_after_start_transient} start-transient"
             f" \u2192 {r.n_after_user_filter} user-filter"
             f" \u2192 {r.n_cleaned} cleaned"
