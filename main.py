@@ -2634,7 +2634,8 @@ with tab_analysis:
                                 _bl_removed_seq = pd.DataFrame()
                                 if meta:
                                     try:
-                                        _bl_cleaned_seq, _ = clean_samples(_bl_raw_w_seq, meta, _bl_user_filter)
+                                        _bl_cleaned_seq, _ = clean_samples(_bl_raw_w_seq, meta, _bl_user_filter,
+                                                        load_precondition_fraction=st.session_state.get("load_precondition_pct", 20) / 100.0)
                                         _bl_cl_ts = set(_bl_cleaned_seq["timestamp"].astype(str)) if "timestamp" in _bl_cleaned_seq.columns else set()
                                         _bl_removed_seq = _bl_raw_w_seq[
                                             ~_bl_raw_w_seq["timestamp"].astype(str).isin(_bl_cl_ts)
@@ -2722,7 +2723,8 @@ with tab_analysis:
                             ].reset_index()
                             _bl_w_h   = scale_power_to_watts(_bl_raw_h, meta.get("power_unit", "W"))
                             _bl_cl_h, _ = clean_samples(
-                                _bl_w_h, meta, _stored_bl_dict.get("user_filter_expr")
+                                _bl_w_h, meta, _stored_bl_dict.get("user_filter_expr"),
+                                load_precondition_fraction=st.session_state.get("load_precondition_pct", 20) / 100.0,
                             )
                             if not _bl_cl_h.empty:
                                 _tot_all_bins = select_pf_bands(_bl_cl_h, min_samples=0)
@@ -2826,7 +2828,8 @@ with tab_analysis:
                         _bl_w_ph = scale_power_to_watts(_bl_raw_ph, meta.get("power_unit", "W"))
                         _bl_cl_ph, _ = clean_samples(
                             _bl_w_ph, meta,
-                            _stored_bl_dict.get("user_filter_expr")
+                            _stored_bl_dict.get("user_filter_expr"),
+                            load_precondition_fraction=st.session_state.get("load_precondition_pct", 20) / 100.0,
                         )
                         if not _bl_cl_ph.empty:
                             for _ph in (1, 2, 3):
@@ -2941,6 +2944,21 @@ with tab_analysis:
                             st.rerun()
 
                 st.markdown("---")
+                # Load precondition threshold
+                _load_pct = st.number_input(
+                    "Minimum load threshold (% of rated)",
+                    min_value=1, max_value=50,
+                    value=int(st.session_state.get("load_precondition_pct", 20)),
+                    step=1,
+                    key="load_precondition_pct",
+                    help=(
+                        "Step 1 of data cleaning removes samples below this fraction "
+                        "of rated electrical power. Default 20 % (methodology §4.1). "
+                        "Lower values retain more low-load samples; raise if CT accuracy "
+                        "is poor at light load."
+                    ),
+                )
+                _load_frac_ui = _load_pct / 100.0
                 _run_disabled = not bool(_stored_bl_dict)
                 if st.button(
                     "\u25b6 Run Assessment",
@@ -3002,10 +3020,12 @@ with tab_analysis:
                                 else:
                                     _raw_bl_for_assess = None
                                 _record = run_assessment(_raw_reset, _bm_loaded, meta,
-                                                         raw_baseline=_raw_bl_for_assess)
+                                                         raw_baseline=_raw_bl_for_assess,
+                                                         load_precondition_fraction=_load_frac_ui)
                                 # Also capture cleaned data for download
                                 _user_filter = _bm_loaded.user_filter_expr if _bm_loaded else None
-                                _cleaned_df, _ = clean_samples(_raw_reset, meta, _user_filter)
+                                _cleaned_df, _ = clean_samples(_raw_reset, meta, _user_filter,
+                                                               load_precondition_fraction=_load_frac_ui)
 
                             # Serialise and store in history
                             _record_dict = dataclasses.asdict(_record)
@@ -3027,7 +3047,8 @@ with tab_analysis:
                             _cleaned_bl_for_phase = None
                             if _raw_bl_for_assess is not None:
                                 _cleaned_bl_for_phase, _ = clean_samples(
-                                    _raw_bl_for_assess, meta, _user_filter
+                                    _raw_bl_for_assess, meta, _user_filter,
+                                    load_precondition_fraction=_load_frac_ui,
                                 )
                             if _cleaned_bl_for_phase is not None and len(_cleaned_bl_for_phase) > 0:
                                 _ph_bands = {}
@@ -3118,7 +3139,10 @@ with tab_analysis:
                             )
                             _uf_for_dl = (baseline_from_dict(db.get_baseline(selected_id)).user_filter_expr
                                           if db.get_baseline(selected_id) else None)
-                            _cleaned_redone, _cr_redone = clean_samples(_raw_w, meta, _uf_for_dl)
+                            _cleaned_redone, _cr_redone = clean_samples(
+                                _raw_w, meta, _uf_for_dl,
+                                load_precondition_fraction=st.session_state.get("load_precondition_pct", 20) / 100.0,
+                            )
 
                             # Derive removed rows by timestamp comparison
                             _raw_ts_set     = set(_raw_w["timestamp"].astype(str)) if "timestamp" in _raw_w.columns else set()
@@ -3615,7 +3639,8 @@ with tab_analysis:
                                         # Clean baseline same way as assessment
                                         _bl_cleaned, _ = clean_samples(
                                             _bl_w, meta,
-                                            _bm_xl.user_filter_expr
+                                            _bm_xl.user_filter_expr,
+                                            load_precondition_fraction=st.session_state.get("load_precondition_pct", 20) / 100.0,
                                         )
                                         _pt_bl = (
                                             _bl_cleaned["phase_1_active_power"] +
