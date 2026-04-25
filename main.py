@@ -959,6 +959,8 @@ def build_assessment_charts(
     phase_bands: dict | None = None,
     iuf_gauge_watch: float | None = None,
     iuf_gauge_critical: float | None = None,
+    vuf_gauge_watch: float | None = None,
+    vuf_gauge_critical: float | None = None,
 ) -> list:
     """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
 
@@ -1209,6 +1211,8 @@ def build_assessment_charts(
     # Resolve gauge thresholds (caller overrides take priority over constants)
     _iuf_watch    = iuf_gauge_watch    if iuf_gauge_watch    is not None else float(IUF_WATCH)
     _iuf_critical = iuf_gauge_critical if iuf_gauge_critical is not None else float(IUF_CRITICAL)
+    _vuf_watch    = vuf_gauge_watch    if vuf_gauge_watch    is not None else float(VUF_WATCH)
+    _vuf_critical = vuf_gauge_critical if vuf_gauge_critical is not None else float(VUF_CRITICAL)
 
     cl_idx = cleaned_data.index if has_cleaned else None
 
@@ -1223,6 +1227,19 @@ def build_assessment_charts(
         ],
         y_range=[0, max(float(raw_vuf.max()) * 1.3, VUF_CRITICAL * 1.5)],
     ))
+
+    # VUF gauge
+    if record.supply and record.supply.vuf_pct is not None:
+        figs.append(_gauge(
+            value=record.supply.vuf_pct,
+            watch=_vuf_watch,
+            critical=_vuf_critical,
+            title=(
+                f"VUF Gauge \u2014 Assessment Period Mean<br>"
+                f"<sup>Watch \u2265{_vuf_watch:.1f}%  \u2502  Critical \u2265{_vuf_critical:.1f}%</sup>"
+            ),
+            unit="%",
+        ))
 
     # IUF chart — only on cleaned data (IUF is meaningless at low / zero load)
     iuf_max = float(cl_iuf.max()) if has_cleaned else float(raw_iuf.max())
@@ -3640,37 +3657,54 @@ with tab_analysis:
                             "\U0001f7e2 **Blue dots** = cleaned samples used for analysis  "
                             "\u2502  \U0001f6ab **Grey line** = all raw data (not analysed)"
                         )
-                        # IUF gauge threshold controls
+                        # Gauge threshold controls — VUF and IUF
                         with st.expander(
-                            "\u2699\ufe0f IUF Gauge Thresholds", expanded=False
+                            "\u2699\ufe0f Gauge Thresholds (VUF & IUF)", expanded=False
                         ):
-                            _gc1, _gc2 = st.columns(2)
-                            _iuf_g_watch = _gc1.number_input(
+                            st.caption("Override methodology defaults for the gauge displays only. Does not affect alarm logic.")
+                            _gt_c1, _gt_c2 = st.columns(2)
+                            _gt_c1.markdown("**Voltage Imbalance (VUF)**")
+                            _gt_c2.markdown("**Current Imbalance (IUF)**")
+                            _vuf_g_watch = _gt_c1.number_input(
+                                "Watch threshold (%)",
+                                min_value=0.1, max_value=10.0,
+                                value=float(VUF_WATCH),
+                                step=0.1,
+                                key="vuf_gauge_watch",
+                                help=f"Default: {VUF_WATCH:.1f}% (VUF_WATCH)",
+                            )
+                            _iuf_g_watch = _gt_c2.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=50.0,
                                 value=float(IUF_WATCH),
                                 step=0.5,
                                 key="iuf_gauge_watch",
-                                help=(
-                                    f"Default: {IUF_WATCH:.0f}% "
-                                    "(methodology constant IUF_WATCH)"
-                                ),
+                                help=f"Default: {IUF_WATCH:.0f}% (IUF_WATCH)",
                             )
-                            _iuf_g_crit = _gc2.number_input(
+                            _vuf_g_crit = _gt_c1.number_input(
+                                "Critical threshold (%)",
+                                min_value=0.1, max_value=20.0,
+                                value=float(VUF_CRITICAL),
+                                step=0.1,
+                                key="vuf_gauge_critical",
+                                help=f"Default: {VUF_CRITICAL:.1f}% (VUF_CRITICAL)",
+                            )
+                            _iuf_g_crit = _gt_c2.number_input(
                                 "Critical threshold (%)",
                                 min_value=0.1, max_value=100.0,
                                 value=float(IUF_CRITICAL),
                                 step=0.5,
                                 key="iuf_gauge_critical",
-                                help=(
-                                    f"Default: {IUF_CRITICAL:.0f}% "
-                                    "(methodology constant IUF_CRITICAL)"
-                                ),
+                                help=f"Default: {IUF_CRITICAL:.0f}% (IUF_CRITICAL)",
                             )
-                            if _iuf_g_watch >= _iuf_g_crit:
-                                st.warning(
-                                    "Watch threshold must be below Critical threshold."
-                                )
+                            _warn_vuf = _vuf_g_watch >= _vuf_g_crit
+                            _warn_iuf = _iuf_g_watch >= _iuf_g_crit
+                            if _warn_vuf or _warn_iuf:
+                                st.warning("Watch threshold must be below Critical threshold. Affected gauge(s) reset to defaults.")
+                            if _warn_vuf:
+                                _vuf_g_watch = float(VUF_WATCH)
+                                _vuf_g_crit  = float(VUF_CRITICAL)
+                            if _warn_iuf:
                                 _iuf_g_watch = float(IUF_WATCH)
                                 _iuf_g_crit  = float(IUF_CRITICAL)
                         for fig in build_assessment_charts(
@@ -3680,6 +3714,8 @@ with tab_analysis:
                             phase_bands=st.session_state.get("last_phase_bands") or {},
                             iuf_gauge_watch=_iuf_g_watch,
                             iuf_gauge_critical=_iuf_g_crit,
+                            vuf_gauge_watch=_vuf_g_watch,
+                            vuf_gauge_critical=_vuf_g_crit,
                         ):
                             st.plotly_chart(fig, use_container_width=True)
 
