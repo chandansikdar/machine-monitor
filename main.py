@@ -571,12 +571,11 @@ def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning")
     try:
         st.markdown(f"**{title}**")
         steps = [
-            ("Raw samples",                    report.n_raw),
-            ("Step 1 2014 Load 226520% rated",   report.n_after_load_precondition),
+            ("Raw samples",                         report.n_raw),
+            ("Step 1 \u2014 Load \u226520% rated",  report.n_after_load_precondition),
             ("Step 2 \u2014 Start transient",        getattr(report, "n_after_start_transient",
                                                      report.n_after_load_precondition)),
             ("Step 3 \u2014 User filter",            report.n_after_user_filter),
-            ("Step 4 \u2014 IQR rejection (removed)",  report.n_cleaned),
         ]
         rows_html = ""
         prev = None
