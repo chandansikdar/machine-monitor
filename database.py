@@ -125,19 +125,44 @@ class Database:
                 df.columns[0],
             )
 
-            # Detect day-first vs month-first from the raw string values.
-            # pandas format="mixed" with dayfirst=True is unreliable when day <= 12:
-            # it infers format per-row and may silently flip DD/MM to MM/DD.
-            # Strategy: scan for an unambiguous row where the first numeric token > 12
-            # (must be a day) or the second numeric token > 12 (must be a day, so
-            # first is the month). Default to day-first (European standard) if all
-            # values are ambiguous.
+            # Detect timestamp format from raw string values and parse accordingly.
+            #
+            # Priority 1 — ISO 8601 (YYYY-MM-DD …):
+            #   If the first non-null value starts with a 4-digit year followed by
+            #   '-', the format is unambiguously ISO.  Use an explicit strptime format
+            #   so pandas never attempts day/month inference.  dayfirst is irrelevant
+            #   in this path.
+            #
+            # Priority 2 — Ambiguous DD/MM or MM/DD:
+            #   Scan for an unambiguous row where the leading token > 12 (must be a
+            #   day → dayfirst=True) or the second token > 12 (must be a day →
+            #   dayfirst=False, i.e. month-first).  Default to dayfirst=True
+            #   (European standard) only when every row is ambiguous.
+            #
+            # Note: the former regex r"(\d{1,2})[\/\-\.\s](\d{1,2})" failed silently
+            # on ISO strings because the leading token is 4 digits, causing the regex
+            # to never match and leaving dayfirst=True, which then flipped April dates
+            # (04-01 → 01-04, etc.) when day ≤ 12.
             import re as _re
-            _dayfirst = True  # default
-            for _val in df[ts_col].dropna().astype(str):
-                _m = _re.match(r"(\d{1,2})[\/\-\.\s](\d{1,2})", _val.strip())
-                if _m:
-                    _first, _second = int(_m.group(1)), int(_m.group(2))
+            _sample_vals = [
+                str(v).strip() for v in df[ts_col].dropna().astype(str)
+                if str(v).strip()
+            ]
+            _iso_re   = _re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}")
+            _ambig_re = _re.compile(r"^(\d{1,2})[\/\-\.\s](\d{1,2})")
+            _fmt      = None    # explicit strptime format if ISO detected
+            _dayfirst = True    # fallback for ambiguous DD/MM
+
+            for _val in _sample_vals:
+                if _iso_re.match(_val):
+                    # ISO format: month is always the middle token — dayfirst=False
+                    _dayfirst = False
+                    # Detect whether a time component is present for the format string
+                    _fmt = "%Y-%m-%d %H:%M:%S" if " " in _val else "%Y-%m-%d"
+                    break
+                _m2 = _ambig_re.match(_val)
+                if _m2:
+                    _first, _second = int(_m2.group(1)), int(_m2.group(2))
                     if _first > 12:
                         _dayfirst = True
                         break
@@ -145,9 +170,13 @@ class Database:
                         _dayfirst = False
                         break
 
-            df[ts_col] = pd.to_datetime(
-                df[ts_col], dayfirst=_dayfirst, format="mixed", errors="coerce"
-            )
+            if _fmt:
+                # Explicit ISO format — no ambiguity possible
+                df[ts_col] = pd.to_datetime(df[ts_col], format=_fmt, errors="coerce")
+            else:
+                df[ts_col] = pd.to_datetime(
+                    df[ts_col], dayfirst=_dayfirst, format="mixed", errors="coerce"
+                )
             df = df.rename(columns={ts_col: "timestamp"})
             # Drop empty rows — null timestamp means a blank/trailing row in the CSV
             df = df[df["timestamp"].notna()].copy()
