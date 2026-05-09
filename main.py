@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -946,6 +947,918 @@ def render_assessment(record: AssessmentRecord):
 
 
 
+import matplotlib
+matplotlib.use("Agg")                          # non-interactive backend — must be before pyplot
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from io import BytesIO as _BytesIO
+
+# ---------------------------------------------------------------------------
+# Assessment report generator
+# ---------------------------------------------------------------------------
+
+def _fig_to_png_bytes(go_fig, figsize=(8.5, 2.8), dpi=130) -> bytes:
+    """Convert a go.Figure (Scatter traces) to PNG bytes via matplotlib.
+
+    Handles:
+    * go.Scatter — lines / markers / lines+markers
+    * go.Indicator (gauge) — rendered as a coloured value box
+    * layout.shapes (add_hline results) — drawn as axhline
+    * layout.annotations — drawn as ax.annotate for threshold labels
+    """
+    import matplotlib.dates as mdates
+
+    is_gauge = any(hasattr(t, "value") and not hasattr(t, "x") for t in go_fig.data)
+    if is_gauge:
+        # Render gauge as a simple coloured box
+        trace = go_fig.data[0]
+        val   = trace.value if trace.value is not None else 0.0
+        title = (go_fig.layout.title.text or "").replace("<br>", "\n").replace("<sup>", "").replace("</sup>", "")
+        # Derive fill colour from bar colour (set by _gauge/_gauge_inverted)
+        bar_col = "#177E40"
+        if hasattr(trace, "gauge") and trace.gauge and trace.gauge.bar:
+            bar_col = trace.gauge.bar.color or bar_col
+        fig_m, ax = plt.subplots(figsize=(4, 1.6))
+        ax.set_facecolor(bar_col)
+        fig_m.patch.set_facecolor(bar_col)
+        ax.text(0.5, 0.6, f"{val:.2f}", ha="center", va="center",
+                fontsize=32, fontweight="bold", color="white",
+                transform=ax.transAxes)
+        ax.text(0.5, 0.15, title.split("\n")[0], ha="center", va="center",
+                fontsize=9, color="white", alpha=0.85,
+                transform=ax.transAxes)
+        ax.axis("off")
+        buf = _BytesIO()
+        fig_m.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
+                      facecolor=bar_col)
+        plt.close(fig_m)
+        buf.seek(0)
+        return buf.read()
+
+    fig_m, ax = plt.subplots(figsize=figsize)
+    ax.set_facecolor("#FAFBFC")
+    fig_m.patch.set_facecolor("white")
+
+    _is_ts = False   # will detect if x axis is datetime
+    for trace in go_fig.data:
+        if not hasattr(trace, "x") or trace.x is None:
+            continue
+        xs = list(trace.x)
+        ys = list(trace.y) if trace.y is not None else []
+        if not xs or not ys:
+            continue
+
+        # Detect datetime x-axis
+        if xs and hasattr(xs[0], "year"):
+            _is_ts = True
+        elif xs and isinstance(xs[0], str):
+            try:
+                import pandas as _pd
+                xs = list(_pd.to_datetime(xs))
+                _is_ts = True
+            except Exception:
+                pass
+
+        col   = "#888888"
+        alpha = 1.0
+        lw    = 1.5
+        mode  = trace.mode or "lines"
+        label = trace.name or ""
+
+        if hasattr(trace, "line") and trace.line:
+            col = trace.line.color or col
+            if trace.line.width:
+                lw = float(trace.line.width)
+        if hasattr(trace, "opacity") and trace.opacity:
+            alpha = float(trace.opacity)
+        # Grey background traces get lower alpha
+        if "All data" in label or "rgba(180" in col:
+            col, alpha, lw = "#BBBBBB", 0.4, 0.8
+
+        if "lines" in mode:
+            ax.plot(xs, ys, color=col, linewidth=lw, alpha=alpha,
+                    label=label, solid_capstyle="round")
+        elif "markers" in mode:
+            ax.scatter(xs, ys, color=col, s=8, alpha=alpha, label=label)
+
+    # Threshold hlines from layout.shapes
+    for shape in (go_fig.layout.shapes or []):
+        if getattr(shape, "type", None) == "line":
+            y0 = getattr(shape, "y0", None)
+            y1 = getattr(shape, "y1", None)
+            if y0 is not None and y0 == y1:
+                sc = getattr(shape.line, "color", "#888") if shape.line else "#888"
+                sd = "dashed" if getattr(shape.line, "dash", "") in ("dash", "dashdot") else "solid"
+                ax.axhline(y=y0, color=sc, linestyle=sd, linewidth=1.0, alpha=0.75)
+
+    # Labels
+    layout = go_fig.layout
+    title  = (layout.title.text if layout.title and layout.title.text else "")
+    title  = title.replace("<br>", " ").replace("<sup>", "").replace("</sup>", "").replace("&#x2014;", "—")
+    ax.set_title(title, fontsize=10, pad=6, loc="left", color="#333")
+
+    if layout.xaxis and layout.xaxis.title and layout.xaxis.title.text:
+        ax.set_xlabel(layout.xaxis.title.text, fontsize=8)
+    if layout.yaxis and layout.yaxis.title and layout.yaxis.title.text:
+        ax.set_ylabel(layout.yaxis.title.text, fontsize=8)
+    if layout.yaxis and layout.yaxis.range:
+        try:
+            ax.set_ylim(layout.yaxis.range[0], layout.yaxis.range[1])
+        except Exception:
+            pass
+
+    if _is_ts:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+        fig_m.autofmt_xdate(rotation=30, ha="right")
+    ax.tick_params(labelsize=7)
+    ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.6, color="#CCCCCC")
+    ax.spines[["top", "right"]].set_visible(False)
+
+    handles, labels = ax.get_legend_handles_labels()
+    if labels:
+        ax.legend(handles, labels, fontsize=7, loc="upper right",
+                  framealpha=0.7, edgecolor="none")
+
+    fig_m.tight_layout(pad=0.4)
+    buf = _BytesIO()
+    fig_m.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    plt.close(fig_m)
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_assessment_report_pdf(
+    record: "AssessmentRecord",
+    meta: dict,
+    data: "pd.DataFrame",
+    cleaned_data: "pd.DataFrame | None",
+    phase_bands: dict,
+    gauge_thresholds: dict,
+    figs: list,
+) -> bytes:
+    """Build a ReportLab PDF assessment report and return as bytes.
+
+    Charts are rendered via matplotlib from the Plotly figure trace data.
+    No kaleido / Chrome required.
+    """
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        Image, HRFlowable, PageBreak, KeepTogether,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors as rl_colors
+    from reportlab.lib.units import cm
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+
+    PAGE_W, PAGE_H = A4
+    MARGIN = 1.8 * cm
+    COL_W  = PAGE_W - 2 * MARGIN
+
+    # ── Brand colours ────────────────────────────────────────────────────────
+    TEAL   = rl_colors.HexColor("#054D5F")
+    GOLD   = rl_colors.HexColor("#C8A84B")
+    GREEN  = rl_colors.HexColor("#177E40")
+    AMBER  = rl_colors.HexColor("#E67E22")
+    RED    = rl_colors.HexColor("#C0392B")
+    LTGREY = rl_colors.HexColor("#F5F7FA")
+    MGREY  = rl_colors.HexColor("#D0D8E4")
+    DGREY  = rl_colors.HexColor("#4A5568")
+
+    _TIER_COL = {"critical": RED, "watch": AMBER, None: GREEN, "none": GREEN}
+    _TIER_LBL = {"critical": "CRITICAL", "watch": "WATCH", None: "NORMAL", "none": "NORMAL"}
+
+    def _tier_col(tier): return _TIER_COL.get(tier, DGREY)
+    def _tier_lbl(tier): return _TIER_LBL.get(tier, "—")
+
+    # ── Styles ────────────────────────────────────────────────────────────────
+    base = getSampleStyleSheet()
+
+    def _style(name, parent="Normal", **kw):
+        s = ParagraphStyle(name, parent=base[parent], **kw)
+        return s
+
+    S = {
+        "title":    _style("title",   "Title",   fontSize=18, textColor=TEAL,  spaceAfter=2),
+        "sub":      _style("sub",     "Normal",  fontSize=9,  textColor=DGREY, spaceAfter=6),
+        "h2":       _style("h2",      "Heading2",fontSize=13, textColor=TEAL,  spaceBefore=14, spaceAfter=4),
+        "h3":       _style("h3",      "Heading3",fontSize=11, textColor=TEAL,  spaceBefore=8,  spaceAfter=3),
+        "body":     _style("body",    "Normal",  fontSize=9,  leading=13),
+        "small":    _style("small",   "Normal",  fontSize=8,  textColor=DGREY),
+        "bold":     _style("bold",    "Normal",  fontSize=9,  fontName="Helvetica-Bold"),
+        "badge_ok": _style("badge_ok","Normal",  fontSize=8,  textColor=GREEN, fontName="Helvetica-Bold"),
+        "badge_wa": _style("badge_wa","Normal",  fontSize=8,  textColor=AMBER, fontName="Helvetica-Bold"),
+        "badge_cr": _style("badge_cr","Normal",  fontSize=8,  textColor=RED,   fontName="Helvetica-Bold"),
+    }
+    def _badge_style(tier):
+        return {"critical": S["badge_cr"], "watch": S["badge_wa"]}.get(tier, S["badge_ok"])
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _tbl(data_rows, col_widths, style_cmds=None):
+        ts = TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), LTGREY),
+            ("TEXTCOLOR",  (0,0), (-1,0), TEAL),
+            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0,0), (-1,-1), 8),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [rl_colors.white, LTGREY]),
+            ("GRID",       (0,0), (-1,-1), 0.3, MGREY),
+            ("TOPPADDING", (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+        ])
+        if style_cmds:
+            for cmd in style_cmds:
+                ts.add(*cmd)
+        return Table(data_rows, colWidths=col_widths, style=ts, repeatRows=1)
+
+    def _fig_img(go_fig, w_cm=16, h_cm=4.5, gauge=False):
+        """Convert a go.Figure to a ReportLab Image flowable."""
+        png = _fig_to_png_bytes(go_fig, figsize=(w_cm*0.5, h_cm*0.5) if not gauge else (4, 1.6))
+        buf = _BytesIO(png)
+        return Image(buf, width=w_cm*cm, height=h_cm*cm, kind="proportional")
+
+    def _hr(): return HRFlowable(width="100%", thickness=0.5,
+                                 color=MGREY, spaceAfter=4, spaceBefore=4)
+
+    # ── Data ──────────────────────────────────────────────────────────────────
+    now_str   = datetime.now().strftime("%Y-%m-%d %H:%M")
+    machine   = meta.get("machine_name") or meta.get("machine_id") or "—"
+    mtype     = meta.get("machine_type", "—")
+    mapp      = meta.get("application_type", "—")
+    p_shaft   = meta.get("p_rated_shaft_kw")
+    p_shaft_s = f"{p_shaft:.1f} kW" if p_shaft else "—"
+    eta       = meta.get("eta_rated")
+    eta_s     = f"{eta:.2f}" if eta else "—"
+
+    if data is not None and len(data) > 0:
+        idx = pd.to_datetime(data.index)
+        period_str = f"{idx.min().strftime('%Y-%m-%d')}  to  {idx.max().strftime('%Y-%m-%d')}"
+        n_raw = len(data)
+    else:
+        period_str = "—"
+        n_raw = 0
+    n_clean = len(cleaned_data) if cleaned_data is not None else 0
+    ret_pct = f"{100 * n_clean / n_raw:.0f}%" if n_raw > 0 else "—"
+
+    # Zone tiers
+    z1_tier = record.supply_alarm.tier    if record.supply_alarm  else None
+    z1_vuf  = record.supply_alarm.vuf_pct if record.supply_alarm  else None
+    z2_tier = record.motor_side.iuf_tier     if record.motor_side else None
+    z2_iuf  = record.motor_side.iuf_mean_pct if record.motor_side else None
+
+    mside_pf_tier = None
+    if record.motor_side and record.motor_side.bands:
+        sig = [b for b in record.motor_side.bands if b.drift_significant]
+        if sig:
+            worst = min(b.pf_drift for b in sig)
+            mside_pf_tier = ("critical" if worst <= -0.03 else
+                             "watch"    if worst <= -0.02 else None)
+
+    tiers   = [z1_tier, z2_tier, mside_pf_tier]
+    overall = ("critical" if "critical" in tiers else
+               "watch"    if "watch"    in tiers else None)
+
+    # ── Story ─────────────────────────────────────────────────────────────────
+    story = []
+
+    # ── Cover / Header ────────────────────────────────────────────────────────
+    header_data = [[
+        Paragraph("<b><font color='#054D5F' size=16>Symbion</font>"
+                  "<font color='#C8A84B' size=16> Machine Analytics</font></b><br/>"
+                  "<font size=9 color='#6B7280'>Machine Health Assessment Report</font>", S["body"]),
+        Paragraph(f"<b>{machine}</b><br/>"
+                  f"<font size=8 color='#6B7280'>Generated: {now_str}<br/>"
+                  f"Period: {period_str}</font>", ParagraphStyle("rt", parent=S["body"],
+                  alignment=TA_RIGHT)),
+    ]]
+    header_tbl = Table(header_data, colWidths=[COL_W*0.6, COL_W*0.4])
+    header_tbl.setStyle(TableStyle([
+        ("LINEBELOW", (0,0), (-1,0), 2, TEAL),
+        ("TOPPADDING",  (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    story.append(header_tbl)
+    story.append(Spacer(1, 10))
+
+    # ── Overall health banner ─────────────────────────────────────────────────
+    ov_col  = _tier_col(overall)
+    ov_lbl  = _tier_lbl(overall)
+    ov_msg  = ("No issues detected across all diagnostic zones." if overall is None else
+               "One or more diagnostic zones require attention — see zone findings below.")
+    banner_data = [[
+        Paragraph(f"<b><font size=13 color='#{ov_col.hexval()[2:]}'>Overall Health: {ov_lbl}</font></b><br/>"
+                  f"<font size=9>{ov_msg}</font>", S["body"]),
+    ]]
+    banner_tbl = Table(banner_data, colWidths=[COL_W])
+    banner_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), rl_colors.HexColor(
+            "#EAF7EE" if overall is None else "#FDECEA" if overall == "critical" else "#FEF3E7")),
+        ("LEFTPADDING",  (0,0), (-1,-1), 12),
+        ("TOPPADDING",   (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 8),
+        ("LINEBEFORECOLOR", (0,0), (0,-1), ov_col),
+        ("LINEBEFORE",   (0,0), (0,-1), 4, ov_col),
+        ("ROUNDEDCORNERS", (0,0), (-1,-1), 4),
+    ]))
+    story.append(banner_tbl)
+    story.append(Spacer(1, 10))
+
+    # ── Machine details ────────────────────────────────────────────────────────
+    story.append(Paragraph("Machine Details", S["h2"]))
+    meta_rows = [
+        ["Machine", machine, "Type", mtype],
+        ["Application", mapp, "Rated shaft power", p_shaft_s],
+        ["Rated efficiency", eta_s, "Assessment period", period_str],
+    ]
+    meta_tbl = _tbl(
+        [[Paragraph(c, S["bold"] if i%2==0 else S["body"]) for i,c in enumerate(r)]
+         for r in meta_rows],
+        [COL_W*0.2, COL_W*0.3, COL_W*0.2, COL_W*0.3],
+    )
+    story.append(meta_tbl)
+    story.append(Spacer(1, 8))
+
+    # ── Data quality ──────────────────────────────────────────────────────────
+    story.append(Paragraph("Data Quality", S["h2"]))
+    cr = record.cleaning_report
+    if cr:
+        n_st  = getattr(cr, "n_after_start_transient", cr.n_after_load_precondition)
+        cl_rows = [
+            [Paragraph(h, S["bold"]) for h in ["Step", "Samples", "Removed"]],
+            ["Raw samples",              f"{cr.n_raw:,}",                      "—"],
+            ["Step 1 — Load \u226520%",  f"{cr.n_after_load_precondition:,}",
+             Paragraph(f'<font color="#C0392B">-{cr.n_raw - cr.n_after_load_precondition:,}</font>',S["body"])
+             if cr.n_raw > cr.n_after_load_precondition else "0"],
+            ["Step 2 — Start transient", f"{n_st:,}",
+             Paragraph(f'<font color="#C0392B">-{cr.n_after_load_precondition - n_st:,}</font>',S["body"])
+             if cr.n_after_load_precondition > n_st else "0"],
+            ["Step 3 — User filter",     f"{cr.n_after_user_filter:,}",
+             Paragraph(f'<font color="#C0392B">-{n_st - cr.n_after_user_filter:,}</font>',S["body"])
+             if n_st > cr.n_after_user_filter else "0"],
+            [Paragraph("<b>Cleaned (analysis)</b>", S["body"]), f"{cr.n_cleaned:,}", ""],
+        ]
+        story.append(_tbl(cl_rows, [COL_W*0.55, COL_W*0.22, COL_W*0.23]))
+        story.append(Paragraph(f"{ret_pct} of raw samples retained for analysis.",
+                                ParagraphStyle("gr", parent=S["small"], textColor=GREEN)))
+    story.append(Spacer(1, 8))
+
+    # ── Zone findings ─────────────────────────────────────────────────────────
+    story.append(Paragraph("Zone Diagnostic Findings", S["h2"]))
+
+    def _zone_row(z_title, tier, msg, thresh_str):
+        col = _tier_col(tier)
+        lbl = _tier_lbl(tier)
+        return KeepTogether([
+            Table([[
+                Paragraph(f"<b>{z_title}</b>", S["bold"]),
+                Paragraph(f"<b><font color='#{col.hexval()[2:]}'>{lbl}</font></b>",
+                          S["body"]),
+            ]], colWidths=[COL_W*0.75, COL_W*0.25],
+                style=TableStyle([
+                    ("BACKGROUND", (0,0), (-1,-1), LTGREY),
+                    ("TOPPADDING", (0,0), (-1,-1), 5),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+                    ("LEFTPADDING", (0,0), (-1,-1), 8),
+                    ("LINEBEFORE", (0,0), (0,-1), 3, col),
+                ])),
+            Table([[
+                Paragraph(msg, S["body"]),
+            ], [
+                Paragraph(thresh_str, S["small"]),
+            ]], colWidths=[COL_W],
+                style=TableStyle([
+                    ("TOPPADDING", (0,0), (-1,-1), 3),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+                    ("LEFTPADDING", (0,0), (-1,-1), 14),
+                ])),
+            Spacer(1, 6),
+        ])
+
+    z1_msg = (f"VUF = {z1_vuf:.2f}% — " +
+              ("above critical threshold." if z1_tier == "critical" else
+               "above watch threshold." if z1_tier == "watch" else
+               "within normal limits.")) if z1_vuf is not None else "No supply data."
+    story.append(_zone_row("Zone 1 — Supply Quality (VUF)", z1_tier, z1_msg,
+        f"Watch \u2265{gauge_thresholds.get('vuf_watch',1.0):.1f}%  |  "
+        f"Critical \u2265{gauge_thresholds.get('vuf_critical',2.0):.1f}%"))
+
+    z2_msg = (f"IUF = {z2_iuf:.1f}% — " +
+              ("above critical threshold." if z2_tier == "critical" else
+               "above watch threshold." if z2_tier == "watch" else
+               "within normal limits.")) if z2_iuf is not None else "No current data."
+    story.append(_zone_row("Zone 2 — Current Imbalance (IUF)", z2_tier, z2_msg,
+        f"Watch \u2265{gauge_thresholds.get('iuf_watch',5.0):.0f}%  |  "
+        f"Critical \u2265{gauge_thresholds.get('iuf_critical',10.0):.0f}%"))
+
+    n_sig = sum(1 for b in record.motor_side.bands if b.drift_significant) \
+            if record.motor_side else 0
+    z3_msg = (f"Statistically significant PF drift in {n_sig} load band(s)."
+              if n_sig else "No statistically significant PF drift detected.")
+    story.append(_zone_row("Zone 3 — Motor Health (PF Drift)", mside_pf_tier, z3_msg,
+        "Watch \u2264-0.01  |  Alert \u2264-0.02  |  Action \u2264-0.03 (absolute PF)"))
+
+    z4_msg = "—"
+    if record.zone4:
+        z4r = record.zone4
+        if hasattr(z4r, "finding") and z4r.finding:
+            z4_msg = z4r.finding
+        elif hasattr(z4r, "delta_pct") and z4r.delta_pct is not None:
+            z4_msg = f"Power change: {z4r.delta_pct:+.1f}% vs baseline average."
+    story.append(_zone_row("Zone 4 — Driven Equipment", None, z4_msg, ""))
+    story.append(Spacer(1, 6))
+
+    # ── Recommendations ───────────────────────────────────────────────────────
+    story.append(Paragraph("Recommendations", S["h2"]))
+    recs = []
+    if z1_tier == "critical": recs.append(("Critical", "Zone 1", "Investigate supply voltage quality immediately. Check upstream transformer and busbars."))
+    elif z1_tier == "watch":  recs.append(("Watch",    "Zone 1", "Monitor supply voltage balance. Check for single-phase loads on the feeder."))
+    if z2_tier == "critical": recs.append(("Critical", "Zone 2", "Current imbalance critical — inspect cabling, contactor, and fuse on all three phases."))
+    elif z2_tier == "watch":  recs.append(("Watch",    "Zone 2", "Elevated current imbalance — check panel connections and phase fuse ratings."))
+    if mside_pf_tier == "critical": recs.append(("Critical", "Zone 3", "Significant PF degradation. Schedule motor inspection: winding insulation, bearing condition."))
+    elif mside_pf_tier == "watch":  recs.append(("Watch",    "Zone 3", "Developing PF drift. Monitor closely; plan inspection at next maintenance window."))
+    if not recs: recs.append(("Normal", "All zones", "No corrective action required. Continue scheduled monitoring."))
+
+    rec_data = [[Paragraph(h, S["bold"]) for h in ["Priority", "Zone", "Recommended Action"]]]
+    for tier, zone, text in recs:
+        col = _tier_col(tier.lower() if tier != "Normal" else None)
+        rec_data.append([
+            Paragraph(f"<b><font color='#{col.hexval()[2:]}'>{tier}</font></b>", S["body"]),
+            Paragraph(zone, S["bold"]),
+            Paragraph(text, S["body"]),
+        ])
+    story.append(_tbl(rec_data, [COL_W*0.14, COL_W*0.14, COL_W*0.72]))
+    story.append(Spacer(1, 6))
+
+    # ── PF Drift tables ───────────────────────────────────────────────────────
+    if record.motor_side and record.motor_side.bands:
+        sig_bands = [b for b in record.motor_side.bands
+                     if not b.suppressed and b.pf_drift is not None and b.drift_significant]
+        if sig_bands:
+            story.append(Paragraph("PF Drift — Significant Bands (Machine Level)", S["h2"]))
+            d_data = [[Paragraph(h, S["bold"]) for h in
+                       ["Band centre (kW)", "Baseline PF", "Recent PF", "Drift"]]]
+            for b in sig_bands[:20]:
+                dc = ("#C0392B" if b.pf_drift <= -0.03 else
+                      "#E67E22" if b.pf_drift <= -0.02 else "#333333")
+                d_data.append([
+                    f"{b.centre_kw/1000:.2f}",
+                    f"{b.mean_pf_baseline:.4f}",
+                    f"{b.mean_pf_recent:.4f}",
+                    Paragraph(f"<b><font color='{dc}'>{b.pf_drift:+.4f}</font></b>", S["body"]),
+                ])
+            story.append(_tbl(d_data, [COL_W*0.25]*4))
+            story.append(Spacer(1, 6))
+
+    # ── Charts ────────────────────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("Diagnostic Charts", S["h2"]))
+    story.append(Paragraph(
+        "Blue = cleaned data used for analysis  |  Grey = all raw data",
+        S["small"]))
+    story.append(Spacer(1, 6))
+
+    chart_labels = [
+        "Zone 1 — VUF Time Series", "Zone 1 — VUF Gauge",
+        "Zone 2 — IUF Time Series", "Zone 2 — IUF Gauge",
+        "P_total Time Series", "PF Machine Time Series", "PF Gauge",
+    ]
+    drift_labels = ["PF Drift — Machine", "PF Drift — Phase 1",
+                    "PF Drift — Phase 2", "PF Drift — Phase 3"]
+    all_labels = chart_labels + drift_labels
+
+    for i, go_fig in enumerate(figs):
+        label = all_labels[i] if i < len(all_labels) else f"Chart {i+1}"
+        is_gauge = any(hasattr(t, "value") and not hasattr(t, "x")
+                       for t in go_fig.data)
+        try:
+            if is_gauge:
+                img = _fig_img(go_fig, w_cm=6, h_cm=3.2, gauge=True)
+                story.append(KeepTogether([
+                    Paragraph(label, S["h3"]),
+                    img,
+                    Spacer(1, 8),
+                ]))
+            else:
+                img = _fig_img(go_fig, w_cm=16, h_cm=4.5)
+                story.append(KeepTogether([
+                    Paragraph(label, S["h3"]),
+                    img,
+                    Spacer(1, 8),
+                ]))
+        except Exception as _ce:
+            story.append(Paragraph(f"[Chart could not be rendered: {_ce}]", S["small"]))
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    story.append(_hr())
+    story.append(Table([[
+        Paragraph("Symbion Machine Analytics Platform  |  Methodology v0.8", S["small"]),
+        Paragraph(f"Report generated {now_str}  |  Confidential",
+                  ParagraphStyle("fr", parent=S["small"], alignment=TA_RIGHT)),
+    ]], colWidths=[COL_W*0.6, COL_W*0.4],
+        style=TableStyle([("TOPPADDING",(0,0),(-1,-1),3)])))
+
+    # ── Build ─────────────────────────────────────────────────────────────────
+    buf = _BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=MARGIN, bottomMargin=MARGIN,
+        title=f"Machine Health Assessment — {machine}",
+        author="Symbion Machine Analytics",
+    )
+    doc.build(story)
+    return buf.getvalue()
+
+
+
+def generate_assessment_report_html(
+    record: "AssessmentRecord",
+    meta: dict,
+    data: "pd.DataFrame",
+    cleaned_data: "pd.DataFrame | None",
+    phase_bands: dict,
+    gauge_thresholds: dict,
+    figs: list,
+) -> str:
+    """Generate a self-contained HTML assessment report.
+
+    Parameters
+    ----------
+    record           : completed AssessmentRecord
+    meta             : effective machine metadata dict
+    data             : raw measurement DataFrame (full window)
+    cleaned_data     : cleaned DataFrame used for analysis
+    phase_bands      : {1: [BandRecord], ...} per-phase drift bands
+    gauge_thresholds : {vuf_watch, vuf_critical, iuf_watch, iuf_critical,
+                        pf_watch, pf_critical}
+    figs             : list of go.Figure from build_assessment_charts
+    """
+    import io as _io
+
+    now_str   = datetime.now().strftime("%Y-%m-%d %H:%M")
+    machine   = meta.get("machine_name") or meta.get("machine_id") or "—"
+    mtype     = meta.get("machine_type", "—")
+    mapp      = meta.get("application_type", "—")
+    p_shaft   = meta.get("p_rated_shaft_kw")
+    p_shaft_s = f"{p_shaft:.1f} kW" if p_shaft else "—"
+    eta       = meta.get("eta_rated")
+    eta_s     = f"{eta:.2f}" if eta else "—"
+
+    # ── Date range ───────────────────────────────────────────────────────────
+    if data is not None and len(data) > 0:
+        idx = pd.to_datetime(data.index)
+        period_str = f"{idx.min().strftime('%Y-%m-%d')} → {idx.max().strftime('%Y-%m-%d')}"
+        n_raw = len(data)
+    else:
+        period_str = "—"
+        n_raw = 0
+    n_clean = len(cleaned_data) if cleaned_data is not None else 0
+    ret_pct = f"{100 * n_clean / n_raw:.0f}%" if n_raw > 0 else "—"
+
+    # ── Zone colours ─────────────────────────────────────────────────────────
+    _TIER_COL = {"critical": "#C0392B", "watch": "#E67E22", None: "#177E40", "none": "#177E40"}
+    _TIER_BG  = {"critical": "#FDECEA", "watch":  "#FEF3E7", None: "#EAF7EE", "none": "#EAF7EE"}
+    _TIER_LBL = {"critical": "CRITICAL", "watch": "WATCH",  None: "NORMAL",   "none": "NORMAL"}
+
+    def _zone_badge(tier):
+        col = _TIER_COL.get(tier, "#888")
+        lbl = _TIER_LBL.get(tier, str(tier).upper() if tier else "—")
+        return (f'<span style="background:{col};color:#fff;padding:2px 10px;'
+                f'border-radius:10px;font-size:11px;font-weight:700;'
+                f'letter-spacing:.06em">{lbl}</span>')
+
+    # ── Overall health ────────────────────────────────────────────────────────
+    tiers = []
+    if record.supply_alarm:       tiers.append(record.supply_alarm.tier)
+    if record.motor_side:         tiers.append(record.motor_side.iuf_tier)
+    mside_pf_tier = None
+    if record.motor_side and record.motor_side.bands:
+        sig = [b for b in record.motor_side.bands if b.drift_significant]
+        if sig:
+            worst = min(b.pf_drift for b in sig)
+            if worst <= -0.03:   mside_pf_tier = "critical"
+            elif worst <= -0.02: mside_pf_tier = "watch"
+            else:                mside_pf_tier = None
+    tiers.append(mside_pf_tier)
+    overall = "critical" if "critical" in tiers else ("watch" if "watch" in tiers else None)
+    overall_col = _TIER_COL.get(overall)
+    overall_lbl = _TIER_LBL.get(overall)
+
+    # ── Chart HTML fragments ──────────────────────────────────────────────────
+    chart_htmls = []
+    first = True
+    for fig in figs:
+        fig2 = go.Figure(fig)
+        fig2.update_layout(height=300, margin=dict(l=40, r=120, t=55, b=40))
+        html_frag = pio.to_html(
+            fig2,
+            include_plotlyjs="cdn" if first else False,
+            full_html=False,
+            config={"displayModeBar": False, "responsive": True},
+        )
+        chart_htmls.append(html_frag)
+        first = False
+
+    # ── Zone 3 PF drift table ─────────────────────────────────────────────────
+    def _drift_table(bands, label):
+        rows = [b for b in bands if not b.suppressed and b.pf_drift is not None]
+        if not rows:
+            return f"<p style='color:#888;font-size:12px'>No qualifying bands for {label}.</p>"
+        sig_rows = [b for b in rows if b.drift_significant]
+        html = (
+            '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+            '<thead><tr style="background:#F5F7FA">'
+            '<th style="padding:6px 8px;text-align:left;border-bottom:2px solid #E0E4EA">Band centre (kW)</th>'
+            '<th style="padding:6px 8px;text-align:right;border-bottom:2px solid #E0E4EA">Baseline PF</th>'
+            '<th style="padding:6px 8px;text-align:right;border-bottom:2px solid #E0E4EA">Recent PF</th>'
+            '<th style="padding:6px 8px;text-align:right;border-bottom:2px solid #E0E4EA">Drift</th>'
+            '<th style="padding:6px 8px;text-align:center;border-bottom:2px solid #E0E4EA">Significant</th>'
+            '</tr></thead><tbody>'
+        )
+        for b in sig_rows[:15]:
+            drift_col = "#C0392B" if b.pf_drift <= -0.03 else ("#E67E22" if b.pf_drift <= -0.02 else "#333")
+            html += (
+                f'<tr style="border-bottom:1px solid #F0F0F0">'
+                f'<td style="padding:5px 8px">{b.centre_kw/1000:.2f}</td>'
+                f'<td style="padding:5px 8px;text-align:right">{b.mean_pf_baseline:.4f}</td>'
+                f'<td style="padding:5px 8px;text-align:right">{b.mean_pf_recent:.4f}</td>'
+                f'<td style="padding:5px 8px;text-align:right;color:{drift_col};font-weight:600">'
+                f'{b.pf_drift:+.4f}</td>'
+                f'<td style="padding:5px 8px;text-align:center">&#10003;</td>'
+                f'</tr>'
+            )
+        html += '</tbody></table>'
+        if len(rows) > 15:
+            html += f'<p style="font-size:11px;color:#888">Showing top 15 of {len(sig_rows)} significant bands.</p>'
+        return html
+
+    machine_drift_table = ""
+    if record.motor_side and record.motor_side.bands:
+        machine_drift_table = _drift_table(record.motor_side.bands, "Machine")
+
+    phase_drift_tables = ""
+    for ph in (1, 2, 3):
+        ph_bands = phase_bands.get(ph, [])
+        if ph_bands:
+            phase_drift_tables += (
+                f'<h4 style="margin:16px 0 6px;font-size:13px;color:#054D5F">Phase {ph}</h4>'
+                + _drift_table(ph_bands, f"Phase {ph}")
+            )
+
+    # ── Zone messages ─────────────────────────────────────────────────────────
+    z1_tier = record.supply_alarm.tier    if record.supply_alarm  else None
+    z1_vuf  = record.supply_alarm.vuf_pct if record.supply_alarm  else None
+    z1_msg  = (f"VUF = {z1_vuf:.2f}% — "
+               + ("above critical threshold." if z1_tier == "critical"
+                  else "above watch threshold." if z1_tier == "watch"
+                  else "within normal limits.")) if z1_vuf is not None else "No supply data."
+
+    z2_tier = record.motor_side.iuf_tier     if record.motor_side else None
+    z2_iuf  = record.motor_side.iuf_mean_pct if record.motor_side else None
+    z2_msg  = (f"IUF = {z2_iuf:.1f}% — "
+               + ("above critical threshold." if z2_tier == "critical"
+                  else "above watch threshold." if z2_tier == "watch"
+                  else "within normal limits.")) if z2_iuf is not None else "No current data."
+
+    z4_msg  = "—"
+    if record.zone4:
+        z4r = record.zone4
+        if hasattr(z4r, "finding") and z4r.finding:
+            z4_msg = z4r.finding
+        elif hasattr(z4r, "delta_pct") and z4r.delta_pct is not None:
+            z4_msg = f"Power change: {z4r.delta_pct:+.1f}% vs baseline average."
+
+    # ── Recommendations ───────────────────────────────────────────────────────
+    recs = []
+    if z1_tier == "critical": recs.append(("Critical", "Zone 1", "Investigate supply voltage quality immediately. Check upstream transformer and busbars."))
+    elif z1_tier == "watch":  recs.append(("Watch",    "Zone 1", "Monitor supply voltage balance. Check for single-phase loads on the feeder."))
+    if z2_tier == "critical": recs.append(("Critical", "Zone 2", "Current imbalance critical — inspect cabling, contactor, and fuse condition on all three phases."))
+    elif z2_tier == "watch":  recs.append(("Watch",    "Zone 2", "Elevated current imbalance — check panel connections and phase fuse ratings."))
+    if mside_pf_tier == "critical": recs.append(("Critical", "Zone 3", "Significant PF degradation detected. Schedule motor inspection: winding insulation, bearing condition."))
+    elif mside_pf_tier == "watch":  recs.append(("Watch",    "Zone 3", "Developing PF drift. Monitor closely; plan inspection at next maintenance window."))
+    if not recs: recs.append(("Normal", "All zones", "No corrective action required. Continue scheduled monitoring."))
+
+    rec_rows = ""
+    for tier, zone, text in recs:
+        rc = _TIER_COL.get(tier.lower(), "#177E40")
+        rec_rows += (
+            f'<tr><td style="padding:7px 10px">{_zone_badge(tier.lower() if tier != "Normal" else None)}</td>'
+            f'<td style="padding:7px 10px;font-weight:600;color:#054D5F">{zone}</td>'
+            f'<td style="padding:7px 10px">{text}</td></tr>'
+        )
+
+    # ── Assemble charts into labelled sections ────────────────────────────────
+    chart_labels = [
+        "Zone 1 — Voltage Unbalance Factor (VUF) · Time Series",
+        "Zone 1 — VUF Gauge",
+        "Zone 2 — Current Imbalance Factor (IUF) · Time Series",
+        "Zone 2 — IUF Gauge",
+        "P_total · Time Series",
+        "Machine Power Factor · Time Series",
+        "PF Gauge",
+    ]
+    # Drift charts follow (Machine + Phase 1/2/3)
+    drift_labels = ["PF Drift · Machine", "PF Drift · Phase 1", "PF Drift · Phase 2", "PF Drift · Phase 3"]
+    all_labels = chart_labels + drift_labels
+
+    charts_html = ""
+    for i, (frag, lbl) in enumerate(zip(chart_htmls, all_labels + [""] * max(0, len(chart_htmls) - len(all_labels)))):
+        label = lbl or f"Chart {i+1}"
+        charts_html += (
+            f'<div style="margin:20px 0">'
+            f'<div style="font-size:12px;font-weight:600;color:#4A5568;'
+            f'margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase">{label}</div>'
+            f'{frag}</div>'
+        )
+
+    # ── HTML ──────────────────────────────────────────────────────────────────
+    cr = record.cleaning_report
+    cleaning_rows = ""
+    if cr:
+        steps = [
+            ("Raw samples",                   cr.n_raw,                    None),
+            ("Step 1 — Load \u226520% rated", cr.n_after_load_precondition, cr.n_raw - cr.n_after_load_precondition),
+            ("Step 2 — Start transient",      getattr(cr, "n_after_start_transient", cr.n_after_load_precondition),
+             cr.n_after_load_precondition - getattr(cr, "n_after_start_transient", cr.n_after_load_precondition)),
+            ("Step 3 — User filter",          cr.n_after_user_filter,
+             getattr(cr, "n_after_start_transient", cr.n_after_load_precondition) - cr.n_after_user_filter),
+            ("Cleaned (used for analysis)",   cr.n_cleaned,                None),
+        ]
+        for label, count, removed in steps:
+            rm_s = (f'<span style="color:#C0392B;font-weight:600">-{removed}</span>' if removed and removed > 0 else "")
+            cleaning_rows += (
+                f'<tr><td style="padding:5px 10px">{label}</td>'
+                f'<td style="padding:5px 10px;text-align:right;font-weight:600">{count:,}</td>'
+                f'<td style="padding:5px 10px;text-align:right">{rm_s}</td></tr>'
+            )
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Machine Health Assessment — {machine}</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:'Segoe UI',Arial,sans-serif;font-size:14px;color:#333;background:#fff;padding:32px}}
+  h1{{font-size:22px;color:#054D5F;margin-bottom:4px}}
+  h2{{font-size:16px;color:#054D5F;margin:28px 0 10px;padding-bottom:6px;border-bottom:2px solid #054D5F}}
+  h3{{font-size:14px;color:#054D5F;margin:16px 0 8px}}
+  table{{width:100%;border-collapse:collapse;font-size:13px}}
+  th{{background:#EEF2F7;padding:7px 10px;text-align:left;border-bottom:2px solid #D0D8E4;font-weight:600;color:#333}}
+  td{{padding:6px 10px;border-bottom:1px solid #F0F2F5}}
+  tr:last-child td{{border-bottom:none}}
+  .header{{display:flex;justify-content:space-between;align-items:flex-start;
+           border-bottom:3px solid #054D5F;padding-bottom:16px;margin-bottom:24px}}
+  .logo{{font-size:24px;font-weight:700;color:#054D5F;letter-spacing:-.5px}}
+  .logo span{{color:#C8A84B}}
+  .meta-grid{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:12px 0}}
+  .meta-box{{background:#F5F8FA;border-radius:6px;padding:10px 14px}}
+  .meta-label{{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#6B7280;margin-bottom:2px}}
+  .meta-value{{font-size:15px;font-weight:600;color:#054D5F}}
+  .health-banner{{border-radius:8px;padding:14px 20px;margin:16px 0;
+                  background:{_TIER_BG.get(overall,'#EAF7EE')};
+                  border-left:5px solid {overall_col}}}
+  .health-title{{font-size:18px;font-weight:700;color:{overall_col}}}
+  .zone-card{{border:1px solid #E0E4EA;border-radius:8px;padding:14px 18px;margin:10px 0;
+              background:#FAFBFC}}
+  .zone-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}}
+  .zone-title{{font-size:14px;font-weight:700;color:#054D5F}}
+  .zone-body{{font-size:13px;color:#444;line-height:1.5}}
+  .footer{{margin-top:40px;padding-top:16px;border-top:1px solid #E0E4EA;
+           font-size:11px;color:#9CA3AF;display:flex;justify-content:space-between}}
+  @media print{{
+    body{{padding:16px}}
+    h2{{page-break-before:auto}}
+    .no-print{{display:none}}
+  }}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <div class="logo">Sym<span>bion</span> Machine Analytics</div>
+    <div style="font-size:12px;color:#6B7280;margin-top:2px">Machine Health Assessment Report</div>
+  </div>
+  <div style="text-align:right;font-size:12px;color:#6B7280">
+    <div><strong>{machine}</strong></div>
+    <div>Generated: {now_str}</div>
+    <div>Assessment period: {period_str}</div>
+  </div>
+</div>
+
+<!-- Executive Summary -->
+<h2>Executive Summary</h2>
+<div class="health-banner">
+  <div class="health-title">Overall Health: {overall_lbl}</div>
+  <div style="font-size:13px;margin-top:6px;color:#444">
+    {'No issues detected across all diagnostic zones.' if overall is None else
+     'One or more diagnostic zones require attention. See zone findings below.'}
+  </div>
+</div>
+
+<!-- Machine Details -->
+<h2>Machine Details</h2>
+<div class="meta-grid">
+  <div class="meta-box"><div class="meta-label">Machine</div><div class="meta-value">{machine}</div></div>
+  <div class="meta-box"><div class="meta-label">Type</div><div class="meta-value">{mtype}</div></div>
+  <div class="meta-box"><div class="meta-label">Application</div><div class="meta-value">{mapp}</div></div>
+  <div class="meta-box"><div class="meta-label">Rated shaft power</div><div class="meta-value">{p_shaft_s}</div></div>
+  <div class="meta-box"><div class="meta-label">Rated efficiency</div><div class="meta-value">{eta_s}</div></div>
+  <div class="meta-box"><div class="meta-label">Assessment period</div><div class="meta-value" style="font-size:12px">{period_str}</div></div>
+</div>
+
+<!-- Data Quality -->
+<h2>Data Quality</h2>
+<table>
+  <thead><tr><th>Step</th><th style="text-align:right">Samples</th><th style="text-align:right">Removed</th></tr></thead>
+  <tbody>{cleaning_rows}</tbody>
+</table>
+<div style="margin-top:8px;font-size:12px;color:#177E40;font-weight:600">
+  {ret_pct} of raw samples retained for analysis
+</div>
+
+<!-- Zone Findings -->
+<h2>Zone Diagnostic Findings</h2>
+
+<div class="zone-card">
+  <div class="zone-header">
+    <span class="zone-title">Zone 1 — Supply Quality (VUF)</span>
+    {_zone_badge(z1_tier)}
+  </div>
+  <div class="zone-body">{z1_msg}
+    <br><span style="font-size:11px;color:#888">Watch ≥{gauge_thresholds.get('vuf_watch',1.0):.1f}%
+    &nbsp;|&nbsp; Critical ≥{gauge_thresholds.get('vuf_critical',2.0):.1f}%</span>
+  </div>
+</div>
+
+<div class="zone-card">
+  <div class="zone-header">
+    <span class="zone-title">Zone 2 — Current Imbalance (IUF)</span>
+    {_zone_badge(z2_tier)}
+  </div>
+  <div class="zone-body">{z2_msg}
+    <br><span style="font-size:11px;color:#888">Watch ≥{gauge_thresholds.get('iuf_watch',5.0):.0f}%
+    &nbsp;|&nbsp; Critical ≥{gauge_thresholds.get('iuf_critical',10.0):.0f}%</span>
+  </div>
+</div>
+
+<div class="zone-card">
+  <div class="zone-header">
+    <span class="zone-title">Zone 3 — Motor Health (PF Drift)</span>
+    {_zone_badge(mside_pf_tier)}
+  </div>
+  <div class="zone-body">
+    {'Statistically significant PF drift detected in ' + str(sum(1 for b in record.motor_side.bands if b.drift_significant)) + ' load band(s).'
+      if record.motor_side and any(b.drift_significant for b in record.motor_side.bands)
+      else 'No statistically significant PF drift detected.'}
+    <br><span style="font-size:11px;color:#888">Watch ≤-0.01 &nbsp;|&nbsp; Alert ≤-0.02 &nbsp;|&nbsp; Action ≤-0.03 (absolute)</span>
+  </div>
+</div>
+
+<div class="zone-card">
+  <div class="zone-header">
+    <span class="zone-title">Zone 4 — Driven Equipment</span>
+    {_zone_badge(None)}
+  </div>
+  <div class="zone-body">{z4_msg}</div>
+</div>
+
+<!-- PF Drift Tables -->
+<h2>PF Drift Detail — Significant Bands</h2>
+<h3>Machine Level</h3>
+{machine_drift_table if machine_drift_table else '<p style="color:#888;font-size:12px">No machine-level bands available.</p>'}
+{('<h3>Per-Phase</h3>' + phase_drift_tables) if phase_drift_tables else ''}
+
+<!-- Recommendations -->
+<h2>Recommendations</h2>
+<table>
+  <thead><tr><th>Priority</th><th>Zone</th><th>Action</th></tr></thead>
+  <tbody>{rec_rows}</tbody>
+</table>
+
+<!-- Charts -->
+<h2>Diagnostic Charts</h2>
+<div style="font-size:12px;color:#6B7280;margin-bottom:12px">
+  Blue = cleaned data used for analysis &nbsp;|&nbsp; Grey = all raw data
+</div>
+{charts_html}
+
+<!-- Footer -->
+<div class="footer">
+  <div>Symbion Machine Analytics Platform &nbsp;|&nbsp; Methodology v0.8</div>
+  <div>Report generated {now_str} &nbsp;|&nbsp; Confidential</div>
+</div>
+
+</body>
+</html>"""
+
+    return html
+
+
 # ---------------------------------------------------------------------------
 # Assessment charts
 # ---------------------------------------------------------------------------
@@ -1455,7 +2368,8 @@ for _k, _v in [
     ("_ep_just_saved",           False),  # flag to show save confirmation after rerun
     ("last_phase_bands",         {}),     # {1: [BandRecord], 2: [...], 3: [...]}
     ("last_phase_bl_all_bins",   {}),     # {1: all 100 bins, 2: ..., 3: ...}
-    # Gauge threshold defaults — initialised once; user edits persist across reruns
+    # Gauge threshold defaults — version-stamped so a code change forces a clean reset.
+    # _GAUGE_SS_VER should be bumped whenever the defaults or valid ranges change.
     ("vuf_gauge_watch",    float(VUF_WATCH)),
     ("vuf_gauge_critical", float(VUF_CRITICAL)),
     ("iuf_gauge_watch",    float(IUF_WATCH)),
@@ -1465,6 +2379,18 @@ for _k, _v in [
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# Force-correct gauge thresholds that got corrupted to min_value in earlier versions.
+# Key: if any value is out of its expected range, the entire set is reset to defaults.
+_GAUGE_SS_VER = "v2"
+if st.session_state.get("_gauge_ss_ver") != _GAUGE_SS_VER:
+    st.session_state["vuf_gauge_watch"]    = float(VUF_WATCH)
+    st.session_state["vuf_gauge_critical"] = float(VUF_CRITICAL)
+    st.session_state["iuf_gauge_watch"]    = float(IUF_WATCH)
+    st.session_state["iuf_gauge_critical"] = float(IUF_CRITICAL)
+    st.session_state["pf_gauge_watch"]     = 0.85
+    st.session_state["pf_gauge_critical"]  = 0.75
+    st.session_state["_gauge_ss_ver"]      = _GAUGE_SS_VER
 
 
 # ---------------------------------------------------------------------------
@@ -3779,7 +4705,6 @@ with tab_analysis:
                             _gt_c1.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=10.0,
-                                value=st.session_state["vuf_gauge_watch"],
                                 step=0.1,
                                 key="vuf_gauge_watch",
                                 help=f"Default: {VUF_WATCH:.1f}% (VUF_WATCH)",
@@ -3787,7 +4712,6 @@ with tab_analysis:
                             _gt_c2.number_input(
                                 "Watch threshold (%)",
                                 min_value=0.1, max_value=50.0,
-                                value=st.session_state["iuf_gauge_watch"],
                                 step=0.5,
                                 key="iuf_gauge_watch",
                                 help=f"Default: {IUF_WATCH:.0f}% (IUF_WATCH)",
@@ -3795,7 +4719,6 @@ with tab_analysis:
                             _gt_c3.number_input(
                                 "Watch threshold (PF)",
                                 min_value=0.50, max_value=0.99,
-                                value=st.session_state["pf_gauge_watch"],
                                 step=0.01,
                                 format="%.2f",
                                 key="pf_gauge_watch",
@@ -3804,7 +4727,6 @@ with tab_analysis:
                             _gt_c1.number_input(
                                 "Critical threshold (%)",
                                 min_value=0.1, max_value=20.0,
-                                value=st.session_state["vuf_gauge_critical"],
                                 step=0.1,
                                 key="vuf_gauge_critical",
                                 help=f"Default: {VUF_CRITICAL:.1f}% (VUF_CRITICAL)",
@@ -3812,7 +4734,6 @@ with tab_analysis:
                             _gt_c2.number_input(
                                 "Critical threshold (%)",
                                 min_value=0.1, max_value=100.0,
-                                value=st.session_state["iuf_gauge_critical"],
                                 step=0.5,
                                 key="iuf_gauge_critical",
                                 help=f"Default: {IUF_CRITICAL:.0f}% (IUF_CRITICAL)",
@@ -3820,7 +4741,6 @@ with tab_analysis:
                             _gt_c3.number_input(
                                 "Critical threshold (PF)",
                                 min_value=0.30, max_value=0.98,
-                                value=st.session_state["pf_gauge_critical"],
                                 step=0.01,
                                 format="%.2f",
                                 key="pf_gauge_critical",
@@ -3848,7 +4768,7 @@ with tab_analysis:
                         if _warn_pf:
                             _pf_g_watch = 0.85
                             _pf_g_crit  = 0.75
-                        for fig in build_assessment_charts(
+                        _report_figs = build_assessment_charts(
                             _chart_data_w, record,
                             cleaned_data=_cleaned_chart,
                             meta=meta,
@@ -3859,8 +4779,64 @@ with tab_analysis:
                             vuf_gauge_critical=_vuf_g_crit,
                             pf_gauge_watch=_pf_g_watch,
                             pf_gauge_critical=_pf_g_crit,
-                        ):
+                        )
+                        for fig in _report_figs:
                             st.plotly_chart(fig, use_container_width=True)
+
+                        # ── Download Report ──────────────────────────────
+                        st.markdown("---")
+                        _gauge_thresholds = {
+                            "vuf_watch":    _vuf_g_watch,
+                            "vuf_critical": _vuf_g_crit,
+                            "iuf_watch":    _iuf_g_watch,
+                            "iuf_critical": _iuf_g_crit,
+                            "pf_watch":     _pf_g_watch,
+                            "pf_critical":  _pf_g_crit,
+                        }
+                        _report_args = dict(
+                            record=record,
+                            meta=meta or {},
+                            data=_chart_data_w,
+                            cleaned_data=_cleaned_chart,
+                            phase_bands=st.session_state.get("last_phase_bands") or {},
+                            gauge_thresholds=_gauge_thresholds,
+                            figs=_report_figs,
+                        )
+                        _fname_stem = (
+                            f"assessment_report_"
+                            f"{(meta or {}).get('machine_id', 'machine')}_"
+                            f"{datetime.now().strftime('%Y%m%d_%H%M')}"
+                        )
+                        _dl_c1, _dl_c2 = st.columns(2)
+                        # HTML report
+                        try:
+                            _html_bytes = generate_assessment_report_html(
+                                **_report_args
+                            ).encode("utf-8")
+                            _dl_c1.download_button(
+                                label="\U0001f4e5 Download Report (HTML)",
+                                data=_html_bytes,
+                                file_name=f"{_fname_stem}.html",
+                                mime="text/html",
+                                help="Interactive report with Plotly charts. Open in browser, then Print \u2192 Save as PDF.",
+                            )
+                        except Exception as _e:
+                            _dl_c1.warning(f"HTML report failed: {_e}")
+                        # PDF report
+                        try:
+                            with st.spinner("Building PDF\u2026"):
+                                _pdf_bytes = generate_assessment_report_pdf(
+                                    **_report_args
+                                )
+                            _dl_c2.download_button(
+                                label="\U0001f4f4 Download Report (PDF)",
+                                data=_pdf_bytes,
+                                file_name=f"{_fname_stem}.pdf",
+                                mime="application/pdf",
+                                help="Static PDF with embedded charts. Ready to share or print.",
+                            )
+                        except Exception as _e:
+                            _dl_c2.warning(f"PDF report failed: {_e}")
 
 
 # ================================================================== #
