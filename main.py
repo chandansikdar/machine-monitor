@@ -947,10 +947,7 @@ def render_assessment(record: AssessmentRecord):
 
 
 
-import matplotlib
-matplotlib.use("Agg")                          # non-interactive backend — must be before pyplot
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
+
 from io import BytesIO as _BytesIO
 
 # ---------------------------------------------------------------------------
@@ -966,6 +963,9 @@ def _fig_to_png_bytes(go_fig, figsize=(8.5, 2.8), dpi=130) -> bytes:
     * layout.shapes (add_hline results) — drawn as axhline
     * layout.annotations — drawn as ax.annotate for threshold labels
     """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
 
     is_gauge = any(hasattr(t, "value") and not hasattr(t, "x") for t in go_fig.data)
