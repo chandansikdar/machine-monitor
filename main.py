@@ -527,31 +527,6 @@ def run_integrity_checks(df_json: str, meta_json: str):
             f"impossible for a passive motor load - check CT polarity and "
             f"V-I channel assignment")
 
-    # Checks 4 & 5 — PF plausibility and spread (only when meaningfully loaded)
-    # Use 10% of rated as minimum for PF to be interpretable.
-    # If p_rated is 0 (electrical params not saved), skip both PF checks.
-    if p_rated > 0:
-        pf_run_thr = 0.10 * p_rated * 1000.0   # 10% of rated electrical input (W)
-        pf_running = p_total > pf_run_thr
-
-        # Check 4 — Per-phase PF plausibility
-        for ph, p_x, v_x, i_x in [("1",p1,v1,i1),("2",p2,v2,i2),("3",p3,v3,i3)]:
-            s_x  = v_x * i_x
-            pf_x = p_x / s_x.replace(0, np.nan)
-            c4   = pf_running & ((pf_x < 0.30) | (pf_x > 1.00)) & (fail_check == "")
-            fail_check  = fail_check.where(~c4, "check_4_pf_plausibility")
-            fail_reason = fail_reason.where(~c4, f"Phase {ph} PF outside [0.30, 1.00]")
-
-        # Check 5 — Per-phase PF spread
-        pf_list = []
-        for p_x, v_x, i_x in [(p1,v1,i1),(p2,v2,i2),(p3,v3,i3)]:
-            s_x = v_x * i_x
-            pf_list.append(p_x / s_x.replace(0, np.nan))
-        pf_spread = pd.concat(pf_list, axis=1).max(axis=1) - pd.concat(pf_list, axis=1).min(axis=1)
-        c5 = pf_running & (pf_spread > 0.15) & (fail_check == "")
-        fail_check  = fail_check.where(~c5, "check_5_pf_consistency")
-        fail_reason = fail_reason.where(~c5, "Per-phase PF spread > 0.15 (channel pairing error suspected)")
-
     failed_mask = fail_check != ""
     failed_df   = df[failed_mask].copy()
     failed_df["failure_check"]  = fail_check[failed_mask].values
@@ -3243,8 +3218,6 @@ with tab_data:
                         "check_1_voltage_plausibility":  "Check 1 \u2014 Voltage plausibility",
                         "check_2_current_plausibility":  "Check 2 \u2014 Current plausibility",
                         "check_3_negative_active_power": "Check 3 \u2014 Negative active power (wiring fault)",
-                        "check_4_pf_plausibility":       "Check 4 \u2014 Per-phase PF plausibility",
-                        "check_5_pf_consistency":        "Check 5 \u2014 Per-phase PF spread consistency",
                     }
                     st.warning(
                         f"\u26a0\ufe0f **{_n_failed:,} samples ({_fail_pct:.1f}%) failed one or more integrity checks.** "
