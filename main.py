@@ -1850,6 +1850,8 @@ def build_assessment_charts(
     vuf_gauge_critical: float | None = None,
     pf_gauge_watch: float | None = None,
     pf_gauge_critical: float | None = None,
+    vuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
+    iuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
 ) -> list:
     """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
 
@@ -2167,12 +2169,14 @@ def build_assessment_charts(
 
     # VUF gauge
     if record.supply_alarm and record.supply_alarm.vuf_pct is not None:
+        _vuf_display = vuf_gauge_value if vuf_gauge_value is not None \
+                       else record.supply_alarm.vuf_pct
         figs.append(_gauge(
-            value=record.supply_alarm.vuf_pct,
+            value=_vuf_display,
             watch=_vuf_watch,
             critical=_vuf_critical,
             title=(
-                f"VUF Gauge \u2014 Assessment Period Mean<br>"
+                f"VUF Gauge \u2014 Latest Daily Mean<br>"
                 f"<sup>Watch \u2265{_vuf_watch:.1f}%  \u2502  Critical \u2265{_vuf_critical:.1f}%"
                 f"  \u2502  Axis: 0 \u2192 5%</sup>"
             ),
@@ -2204,12 +2208,14 @@ def build_assessment_charts(
             pass
 
     if record.motor_side and record.motor_side.iuf_mean_pct is not None:
+        _iuf_display = iuf_gauge_value if iuf_gauge_value is not None \
+                       else record.motor_side.iuf_mean_pct
         figs.append(_gauge(
-            value=record.motor_side.iuf_mean_pct,
+            value=_iuf_display,
             watch=_iuf_watch,
             critical=_iuf_critical,
             title=(
-                f"IUF Gauge \u2014 Assessment Period Mean<br>"
+                f"IUF Gauge \u2014 Latest Daily Mean<br>"
                 f"<sup>Watch \u2265{_iuf_watch:.0f}%  \u2502  Critical"
                 f" \u2265{_iuf_critical:.0f}%{_ph_iuf_subtitle}</sup>"
             ),
@@ -4738,6 +4744,32 @@ with tab_analysis:
                         if _warn_pf:
                             _pf_g_watch = 0.85
                             _pf_g_crit  = 0.75
+
+                        # Latest daily VUF and IUF — computed before build so
+                        # gauges show the most recent day's value
+                        _latest_vuf = None
+                        _latest_iuf = None
+                        if _cleaned_chart is not None and not _cleaned_chart.empty:
+                            try:
+                                _rc_pre = _cleaned_chart.copy()
+                                _rc_pre.index = pd.to_datetime(_rc_pre.index)
+                                _rpv1=_rc_pre["phase_1_voltage"]; _rpv2=_rc_pre["phase_2_voltage"]; _rpv3=_rc_pre["phase_3_voltage"]
+                                _rpva=(_rpv1+_rpv2+_rpv3)/3.0
+                                _vuf_pre=(pd.concat([(_rpv1-_rpva).abs(),(_rpv2-_rpva).abs(),(_rpv3-_rpva).abs()],axis=1)
+                                          .max(axis=1)/_rpva.replace(0,np.nan)*100.0)
+                                _rpi1=_rc_pre["phase_1_current"]; _rpi2=_rc_pre["phase_2_current"]; _rpi3=_rc_pre["phase_3_current"]
+                                _rpia=(_rpi1+_rpi2+_rpi3)/3.0
+                                _iuf_pre=(pd.concat([(_rpi1-_rpia).abs(),(_rpi2-_rpia).abs(),(_rpi3-_rpia).abs()],axis=1)
+                                          .max(axis=1)/_rpia.replace(0,np.nan)*100.0)
+                                _dv_pre = _vuf_pre.resample("D").mean().dropna()
+                                _di_pre = _iuf_pre.resample("D").mean().dropna()
+                                if len(_dv_pre) > 0:
+                                    _latest_vuf = round(float(_dv_pre.iloc[-1]), 3)
+                                if len(_di_pre) > 0:
+                                    _latest_iuf = round(float(_di_pre.iloc[-1]), 2)
+                            except Exception:
+                                pass   # fall back to assessment mean in gauges
+
                         _report_figs = build_assessment_charts(
                             _chart_data_w, record,
                             cleaned_data=_cleaned_chart,
@@ -4749,6 +4781,8 @@ with tab_analysis:
                             vuf_gauge_critical=_vuf_g_crit,
                             pf_gauge_watch=_pf_g_watch,
                             pf_gauge_critical=_pf_g_crit,
+                            vuf_gauge_value=_latest_vuf,
+                            iuf_gauge_value=_latest_iuf,
                         )
                         # ── Helper: single-signal daily run chart ──────
                         def _daily_run_chart(df, signal, colour, thresholds,
