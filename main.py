@@ -2407,6 +2407,7 @@ for _k, _v in [
     ("baseline_vuf_mean",        None),   # baseline period mean VUF %
     ("baseline_iuf_mean",        None),   # baseline period mean IUF %
     ("baseline_ph_iuf",          {}),     # {1: mean%, 2: mean%, 3: mean%}
+    ("baseline_p_daily",         {}),     # {date_str: kw} daily P_total baseline
     # Gauge threshold defaults — version-stamped so a code change forces a clean reset.
     # _GAUGE_SS_VER should be bumped whenever the defaults or valid ranges change.
     ("vuf_gauge_watch",    float(VUF_WATCH)),
@@ -4082,6 +4083,29 @@ with tab_analysis:
                             st.session_state["baseline_vuf_mean"] = _bl_vuf_mean
                             st.session_state["baseline_iuf_mean"] = _bl_iuf_mean
                             st.session_state["baseline_ph_iuf"]   = _bl_ph_iuf
+
+                            # Baseline daily P_total for run chart
+                            _bl_p_daily = {}
+                            if _cleaned_bl_for_phase is not None and len(_cleaned_bl_for_phase) > 0:
+                                try:
+                                    _bp_cols = ["phase_1_active_power",
+                                                "phase_2_active_power",
+                                                "phase_3_active_power"]
+                                    if all(c in _cleaned_bl_for_phase.columns for c in _bp_cols):
+                                        _bp_df = _cleaned_bl_for_phase.copy()
+                                        _bp_df.index = pd.to_datetime(_bp_df.index)
+                                        _bp_s = (_bp_df[_bp_cols[0]] +
+                                                 _bp_df[_bp_cols[1]] +
+                                                 _bp_df[_bp_cols[2]]) / 1000.0
+                                        _bp_daily = _bp_s.resample("D").mean().dropna()
+                                        # Store as {iso-date-string: kw_value}
+                                        _bl_p_daily = {
+                                            str(d.date()): round(float(v), 3)
+                                            for d, v in zip(_bp_daily.index, _bp_daily.values)
+                                        }
+                                except Exception:
+                                    pass
+                            st.session_state["baseline_p_daily"] = _bl_p_daily
                             st.rerun()
 
                 if _run_disabled:
@@ -5031,6 +5055,66 @@ with tab_analysis:
                                     st.warning(f"IUF run chart: {_e}")
 
                             st.plotly_chart(fig, use_container_width=True)
+
+                            # Baseline P_total daily run chart — shown after assessment chart
+                            if "P_total" in _fig_title and "Daily" in _fig_title:
+                                _bl_p = st.session_state.get("baseline_p_daily") or {}
+                                if _bl_p:
+                                    try:
+                                        _bpd = sorted(_bl_p.items())
+                                        _bpx = [pd.Timestamp(d) for d, _ in _bpd]
+                                        _bpy = [v for _, v in _bpd]
+                                        _bpfig = go.Figure()
+                                        _bpfig.add_trace(go.Scatter(
+                                            x=_bpx, y=_bpy,
+                                            mode="lines+markers",
+                                            name="Baseline daily avg",
+                                            line=dict(color="#177E40", width=2),
+                                            marker=dict(size=5),
+                                            hovertemplate="<b>P_total (baseline)</b>"
+                                                          " %{y:.1f} kW<extra></extra>",
+                                        ))
+                                        if len(_bpy) >= 2:
+                                            _bpxt = np.arange(len(_bpx))
+                                            _bpyt = np.polyval(np.polyfit(_bpxt, _bpy, 1), _bpxt)
+                                            _bpfig.add_trace(go.Scatter(
+                                                x=_bpx, y=_bpyt.tolist(),
+                                                mode="lines", showlegend=False, hoverinfo="skip",
+                                                line=dict(color="#177E40", width=1.2, dash="dot"),
+                                            ))
+                                        _bpy_max = max(_bpy) if _bpy else 10
+                                        _bl_p_avg = sum(_bpy) / len(_bpy)
+                                        _bpfig.add_shape(
+                                            type="line", xref="paper", x0=0, x1=1,
+                                            yref="y", y0=_bl_p_avg, y1=_bl_p_avg,
+                                            line=dict(color="#054D5F", width=1.2, dash="dashdot"),
+                                        )
+                                        _bpfig.add_annotation(
+                                            xref="paper", x=1.01, yref="y", y=_bl_p_avg,
+                                            text=f"Baseline avg {_bl_p_avg:.1f} kW",
+                                            showarrow=False, xanchor="left",
+                                            font=dict(size=8, color="#054D5F"),
+                                        )
+                                        _bpfig.update_layout(
+                                            title=dict(
+                                                text="Total Active Power — Baseline Period Daily Average"
+                                                     "<br><sup>Each point = daily mean (cleaned samples)"
+                                                     "  \u2502  Dotted = linear trend</sup>",
+                                                font=dict(size=13),
+                                            ),
+                                            xaxis=dict(title="Date", tickformat="%d %b"),
+                                            yaxis=dict(title="P_total (kW)",
+                                                       range=[0, _bpy_max * 1.25]),
+                                            showlegend=False,
+                                            hovermode="x unified",
+                                            plot_bgcolor="rgba(0,0,0,0)",
+                                            paper_bgcolor="rgba(0,0,0,0)",
+                                            margin=dict(l=55, r=160, t=65, b=50),
+                                            height=300, font=dict(size=11),
+                                        )
+                                        st.plotly_chart(_bpfig, use_container_width=True)
+                                    except Exception as _bpe:
+                                        st.warning(f"Baseline P_total chart: {_bpe}")
 
                             # Below VUF gauge — baseline comparison
                             if "VUF Gauge" in _fig_title:
