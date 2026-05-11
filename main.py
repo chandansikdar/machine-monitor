@@ -1394,8 +1394,9 @@ def generate_assessment_report_pdf(
     story.append(Spacer(1, 6))
 
     chart_labels = [
-        "Zone 1 — VUF Time Series", "Zone 1 — VUF Gauge",
-        "Zone 2 — IUF Time Series", "Zone 2 — IUF Gauge",
+        "Daily Imbalance Run Chart — VUF & IUF",
+        "Zone 1 — VUF Gauge",
+        "Zone 2 — IUF Gauge",
         "P_total Time Series", "PF Machine Time Series", "PF Gauge",
     ]
     drift_labels = ["PF Drift — Machine", "PF Drift — Phase 1",
@@ -1625,12 +1626,11 @@ def generate_assessment_report_html(
 
     # ── Assemble charts into labelled sections ────────────────────────────────
     chart_labels = [
-        "Zone 1 — Voltage Unbalance Factor (VUF) · Time Series",
-        "Zone 1 — VUF Gauge",
-        "Zone 2 — Current Imbalance Factor (IUF) · Time Series",
-        "Zone 2 — IUF Gauge",
-        "P_total · Time Series",
-        "Machine Power Factor · Time Series",
+        "Daily Imbalance Run Chart \u2014 VUF & IUF",
+        "Zone 1 \u2014 VUF Gauge",
+        "Zone 2 \u2014 IUF Gauge",
+        "P_total \u00b7 Time Series",
+        "Machine Power Factor \u00b7 Time Series",
         "PF Gauge",
     ]
     # Drift charts follow (Machine + Phase 1/2/3)
@@ -2165,18 +2165,6 @@ def build_assessment_charts(
 
     cl_idx = cleaned_data.index if has_cleaned else None
 
-    # VUF chart
-    figs.append(_chart(
-        data.index, raw_vuf,
-        cl_idx, cl_vuf if has_cleaned else None,
-        "Zone 1 \u2014 Voltage Unbalance Factor (VUF)", "VUF (%)",
-        h_lines=[
-            (VUF_CRITICAL, "#C0392B", "solid",  f"Critical {VUF_CRITICAL:.1f}%"),
-            (VUF_WATCH,    "#E67E22", "dash",   f"Watch {VUF_WATCH:.1f}%"),
-        ],
-        y_range=[0, max(float(raw_vuf.max()) * 1.3, VUF_CRITICAL * 1.5)],
-    ))
-
     # VUF gauge
     if record.supply_alarm and record.supply_alarm.vuf_pct is not None:
         figs.append(_gauge(
@@ -2191,20 +2179,6 @@ def build_assessment_charts(
             unit="%",
             axis_max=5.0,
         ))
-
-    # IUF chart — only on cleaned data (IUF is meaningless at low / zero load)
-    iuf_max = float(cl_iuf.max()) if has_cleaned else float(raw_iuf.max())
-    figs.append(_chart(
-        data.index, raw_iuf,
-        cl_idx, cl_iuf if has_cleaned else None,
-        "Zone 2 \u2014 Current Imbalance Factor (IUF)", "IUF (%)",
-        h_lines=[
-            (IUF_CRITICAL, "#C0392B", "solid",  f"Critical {IUF_CRITICAL:.0f}%"),
-            (IUF_WATCH,    "#E67E22", "dash",   f"Watch {IUF_WATCH:.0f}%"),
-        ],
-        y_range=[0, max(iuf_max * 1.3, IUF_CRITICAL * 1.5)],
-        show_raw=False,   # cleaned only — raw values near shutdown break autoscale
-    ))
 
     # IUF gauge — per-phase contribution for subtitle
     _ph_iuf_subtitle = ""
@@ -2321,7 +2295,7 @@ def build_assessment_charts(
     _phase_bands   = phase_bands or {}
     figs.extend(_pf_drift_charts(_machine_bands, _phase_bands))
 
-    # Daily imbalance run chart — VUF and IUF trend over the assessment period
+    # Daily imbalance run chart — built last, inserted at position 0 to lead the section
     if has_cleaned:
         try:
             _df_run = cleaned_data.copy()
@@ -2483,7 +2457,7 @@ def build_assessment_charts(
                     margin=dict(l=55, r=130, t=65, b=50),
                     height=340, font=dict(size=11),
                 )
-                figs.append(_run_fig)
+                figs.insert(0, _run_fig)
         except Exception as _re:
             pass   # silently skip if data columns missing — e.g. voltage cols absent
 
