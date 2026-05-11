@@ -1846,8 +1846,8 @@ def build_assessment_charts(
     vuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     iuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     pf_gauge_value: float | None = None,    # override: latest daily mean PF
-    pf_drift_watch: float | None = None,    # override PF_DRIFT_WATCH  (default -0.01)
-    pf_drift_critical: float | None = None, # override PF_DRIFT_ACTION (default -0.03)
+    pf_drift_watch: float | None = None,    # override PF_DRIFT_WATCH  (default -0.10)
+    pf_drift_critical: float | None = None, # override PF_DRIFT_ACTION (default -0.20)
     baseline_p_daily: dict | None = None,   # {date_str: kw} baseline daily P_total
 ) -> list:
     """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
@@ -2447,8 +2447,8 @@ def build_assessment_charts(
     # PF drift by load band — one chart per signal (Machine + Phase 1/2/3)
     _machine_bands  = record.motor_side.bands if record.motor_side else []
     _phase_bands    = phase_bands or {}
-    _eff_pf_watch    = pf_drift_watch    if pf_drift_watch    is not None else float(PF_DRIFT_WATCH)
-    _eff_pf_critical = pf_drift_critical if pf_drift_critical is not None else float(PF_DRIFT_ACTION)
+    _eff_pf_watch    = pf_drift_watch    if pf_drift_watch    is not None else -0.10
+    _eff_pf_critical = pf_drift_critical if pf_drift_critical is not None else -0.20
     figs.extend(_pf_drift_charts(_machine_bands, _phase_bands,
                                  _eff_pf_watch, _eff_pf_critical))
 
@@ -2509,15 +2509,15 @@ for _k, _v in [
     ("iuf_gauge_critical", float(IUF_CRITICAL)),
     ("pf_gauge_watch",     0.85),
     ("pf_gauge_critical",  0.75),
-    ("pf_drift_watch",    float(PF_DRIFT_WATCH)),
-    ("pf_drift_critical", float(PF_DRIFT_ACTION)),
+    ("pf_drift_watch",    -0.10),
+    ("pf_drift_critical", -0.20),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
 # Force-correct gauge thresholds that got corrupted to min_value in earlier versions.
 # Key: if any value is out of its expected range, the entire set is reset to defaults.
-_GAUGE_SS_VER = "v6"
+_GAUGE_SS_VER = "v7"
 if st.session_state.get("_gauge_ss_ver") != _GAUGE_SS_VER:
     st.session_state["vuf_gauge_watch"]    = 2.0
     st.session_state["vuf_gauge_critical"] = 5.0
@@ -2525,6 +2525,8 @@ if st.session_state.get("_gauge_ss_ver") != _GAUGE_SS_VER:
     st.session_state["iuf_gauge_critical"] = float(IUF_CRITICAL)
     st.session_state["pf_gauge_watch"]     = 0.85
     st.session_state["pf_gauge_critical"]  = 0.75
+    st.session_state["pf_drift_watch"]     = -0.10
+    st.session_state["pf_drift_critical"]  = -0.20
     st.session_state["_gauge_ss_ver"]      = _GAUGE_SS_VER
 
 
@@ -4965,8 +4967,8 @@ with tab_analysis:
                         _iuf_g_crit  = float(st.session_state.get("iuf_gauge_critical", IUF_CRITICAL))
                         _pf_g_watch  = float(st.session_state.get("pf_gauge_watch",  0.85))
                         _pf_g_crit   = float(st.session_state.get("pf_gauge_critical", 0.75))
-                        _pf_d_watch    = float(st.session_state.get("pf_drift_watch",    PF_DRIFT_WATCH))
-                        _pf_d_critical = float(st.session_state.get("pf_drift_critical", PF_DRIFT_ACTION))
+                        _pf_d_watch    = float(st.session_state.get("pf_drift_watch",    -0.10))
+                        _pf_d_critical = float(st.session_state.get("pf_drift_critical", -0.20))
                         _warn_vuf      = _vuf_g_watch >= _vuf_g_crit
                         _warn_iuf      = _iuf_g_watch >= _iuf_g_crit
                         _warn_pf       = _pf_g_watch  <= _pf_g_crit
