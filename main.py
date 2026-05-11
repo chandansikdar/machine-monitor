@@ -2206,15 +2206,38 @@ def build_assessment_charts(
         show_raw=False,   # cleaned only — raw values near shutdown break autoscale
     ))
 
-    # IUF gauge
+    # IUF gauge — per-phase contribution for subtitle
+    _ph_iuf_subtitle = ""
+    if has_cleaned:
+        try:
+            _i1 = cleaned_data["phase_1_current"]
+            _i2 = cleaned_data["phase_2_current"]
+            _i3 = cleaned_data["phase_3_current"]
+            _i_avg_cl  = (_i1 + _i2 + _i3) / 3.0
+            _i_avg_safe = _i_avg_cl.replace(0, np.nan)
+            _ph_dev = {
+                1: float(((_i1 - _i_avg_cl).abs() / _i_avg_safe * 100).mean()),
+                2: float(((_i2 - _i_avg_cl).abs() / _i_avg_safe * 100).mean()),
+                3: float(((_i3 - _i_avg_cl).abs() / _i_avg_safe * 100).mean()),
+            }
+            _worst_ph  = max(_ph_dev, key=_ph_dev.get)
+            _worst_val = _ph_dev[_worst_ph]
+            _ph_iuf_subtitle = (
+                f"  \u2502  Highest imbalance: Phase\u00a0{_worst_ph}"
+                f" ({_worst_val:.1f}%)"
+            )
+        except Exception:
+            pass
+
     if record.motor_side and record.motor_side.iuf_mean_pct is not None:
         figs.append(_gauge(
             value=record.motor_side.iuf_mean_pct,
             watch=_iuf_watch,
             critical=_iuf_critical,
             title=(
-                f"IUF Gauge — Assessment Period Mean<br>"
-                f"<sup>Watch ≥{_iuf_watch:.0f}%  │  Critical ≥{_iuf_critical:.0f}%</sup>"
+                f"IUF Gauge \u2014 Assessment Period Mean<br>"
+                f"<sup>Watch \u2265{_iuf_watch:.0f}%  \u2502  Critical"
+                f" \u2265{_iuf_critical:.0f}%{_ph_iuf_subtitle}</sup>"
             ),
             unit="%",
         ))
@@ -4753,8 +4776,40 @@ with tab_analysis:
                             pf_gauge_watch=_pf_g_watch,
                             pf_gauge_critical=_pf_g_crit,
                         )
-                        for fig in _report_figs:
+                        for _fig_idx, fig in enumerate(_report_figs):
                             st.plotly_chart(fig, use_container_width=True)
+                            # IUF gauge is at index 3; show per-phase breakdown below it
+                            if _fig_idx == 3 and _cleaned_chart is not None:
+                                try:
+                                    _ci1 = _cleaned_chart["phase_1_current"]
+                                    _ci2 = _cleaned_chart["phase_2_current"]
+                                    _ci3 = _cleaned_chart["phase_3_current"]
+                                    _ci_avg  = (_ci1 + _ci2 + _ci3) / 3.0
+                                    _ci_safe = _ci_avg.replace(0, np.nan)
+                                    _per_ph  = {
+                                        1: float(((_ci1 - _ci_avg).abs() / _ci_safe * 100).mean()),
+                                        2: float(((_ci2 - _ci_avg).abs() / _ci_safe * 100).mean()),
+                                        3: float(((_ci3 - _ci_avg).abs() / _ci_safe * 100).mean()),
+                                    }
+                                    _worst_ph  = max(_per_ph, key=_per_ph.get)
+                                    _mc1, _mc2, _mc3 = st.columns(3)
+                                    for _ph, _mc in [(1, _mc1), (2, _mc2), (3, _mc3)]:
+                                        _pval = _per_ph[_ph]
+                                        _tier_s = (
+                                            "\U0001f534 Critical" if _pval >= _iuf_g_crit else
+                                            "\U0001f7e0 Watch"    if _pval >= _iuf_g_watch else
+                                            "\U0001f7e2 Normal"
+                                        )
+                                        _mc.metric(
+                                            label=f"Phase\u00a0{_ph} imbalance"
+                                                  + (" \u2605 Worst" if _ph == _worst_ph else ""),
+                                            value=f"{_pval:.1f}\u00a0%",
+                                            delta=_tier_s,
+                                            delta_color="off",
+                                            help="Mean per-phase current deviation as % of 3-phase average over cleaned samples",
+                                        )
+                                except Exception:
+                                    pass
 
                         # ── Download Report ──────────────────────────────
                         st.markdown("---")
