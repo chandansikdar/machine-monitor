@@ -4056,17 +4056,20 @@ with tab_analysis:
                             _bl_ph_iuf   = {}
                             if _cleaned_bl_for_phase is not None and len(_cleaned_bl_for_phase) > 0:
                                 try:
-                                    _bv1=_cleaned_bl_for_phase["phase_1_voltage"]
-                                    _bv2=_cleaned_bl_for_phase["phase_2_voltage"]
-                                    _bv3=_cleaned_bl_for_phase["phase_3_voltage"]
+                                    _bl_df = _cleaned_bl_for_phase.copy()
+                                    if "timestamp" in _bl_df.columns:
+                                        _bl_df = _bl_df.set_index("timestamp")
+                                    _bv1=_bl_df["phase_1_voltage"]
+                                    _bv2=_bl_df["phase_2_voltage"]
+                                    _bv3=_bl_df["phase_3_voltage"]
                                     _bva=(_bv1+_bv2+_bv3)/3.0
                                     _bl_vuf_mean = round(float(
                                         (pd.concat([(_bv1-_bva).abs(),(_bv2-_bva).abs(),(_bv3-_bva).abs()],axis=1)
                                          .max(axis=1)/_bva.replace(0,np.nan)*100.0).mean()
                                     ), 3)
-                                    _bi1=_cleaned_bl_for_phase["phase_1_current"]
-                                    _bi2=_cleaned_bl_for_phase["phase_2_current"]
-                                    _bi3=_cleaned_bl_for_phase["phase_3_current"]
+                                    _bi1=_bl_df["phase_1_current"]
+                                    _bi2=_bl_df["phase_2_current"]
+                                    _bi3=_bl_df["phase_3_current"]
                                     _bia=(_bi1+_bi2+_bi3)/3.0
                                     _bis=_bia.replace(0,np.nan)
                                     _bl_iuf_mean = round(float(
@@ -4093,12 +4096,14 @@ with tab_analysis:
                                                 "phase_3_active_power"]
                                     if all(c in _cleaned_bl_for_phase.columns for c in _bp_cols):
                                         _bp_df = _cleaned_bl_for_phase.copy()
+                                        # Handle both DatetimeIndex and timestamp-as-column
+                                        if "timestamp" in _bp_df.columns:
+                                            _bp_df = _bp_df.set_index("timestamp")
                                         _bp_df.index = pd.to_datetime(_bp_df.index)
                                         _bp_s = (_bp_df[_bp_cols[0]] +
                                                  _bp_df[_bp_cols[1]] +
                                                  _bp_df[_bp_cols[2]]) / 1000.0
                                         _bp_daily = _bp_s.resample("D").mean().dropna()
-                                        # Store as {iso-date-string: kw_value}
                                         _bl_p_daily = {
                                             str(d.date()): round(float(v), 3)
                                             for d, v in zip(_bp_daily.index, _bp_daily.values)
