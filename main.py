@@ -32,7 +32,6 @@ from electrical_diagnostics import (
     IUF_CRITICAL,
     IUF_WATCH,
     PF_DRIFT_ACTION,
-    PF_DRIFT_ALERT,
     PF_DRIFT_WATCH,
     VUF_CRITICAL,
     VUF_WATCH,
@@ -636,8 +635,7 @@ def render_motor_side(m: MotorSideResult):
     elif m.pf_drift_aggregated is not None:
         pf_html = (f"PF drift = <b>{m.pf_drift_aggregated:+.3f}</b> "
                    f"(watch \u2264 {PF_DRIFT_WATCH:.2f}, "
-                   f"alert \u2264 {PF_DRIFT_ALERT:.2f}, "
-                   f"action \u2264 {PF_DRIFT_ACTION:.2f})")
+                   f"critical \u2264 {PF_DRIFT_ACTION:.2f})")
     else:
         pf_html = "PF drift \u2014 no data"
 
@@ -677,8 +675,7 @@ def render_motor_side(m: MotorSideResult):
                 "**p-value** = Welch\u2019s t-test (two-tailed). "
                 "**Significant** = Yes if p < 0.05 (drift exceeds normal statistical variation).  \n"
                 f"\U0001f7e1 Watch: drift \u2264 {PF_DRIFT_WATCH*100:.0f}%  \u2002"
-                f"\U0001f7e0 Alert: drift \u2264 {PF_DRIFT_ALERT*100:.0f}%  \u2002"
-                f"\U0001f534 Action: drift \u2264 {PF_DRIFT_ACTION*100:.0f}%"
+                                f"\U0001f534 Action: drift \u2264 {PF_DRIFT_ACTION*100:.0f}%"
             )
             # Table — convert band centres from W to kW for display
             rows = []
@@ -687,7 +684,7 @@ def render_motor_side(m: MotorSideResult):
                 drift_pct = (drift / b.mean_pf_baseline * 100) if b.mean_pf_baseline else 0.0
                 if drift <= PF_DRIFT_ACTION:
                     status = "\U0001f534 Action"
-                elif drift <= PF_DRIFT_ALERT:
+
                     status = "\U0001f7e0 Alert"
                 elif drift <= PF_DRIFT_WATCH:
                     status = "\U0001f7e1 Watch"
@@ -738,7 +735,6 @@ def render_motor_side(m: MotorSideResult):
             # Drift bar (secondary y)
             bar_colours = [
                 "#A32D2D" if d <= PF_DRIFT_ACTION
-                else "#E67E22" if d <= PF_DRIFT_ALERT
                 else "#F1C40F" if d <= PF_DRIFT_WATCH
                 else "#177E40"
                 for d in drift_vals
@@ -754,7 +750,6 @@ def render_motor_side(m: MotorSideResult):
             # Threshold lines on drift axis
             for val, colour, label in [
                 (PF_DRIFT_WATCH,  "#F1C40F", f"Watch {PF_DRIFT_WATCH}"),
-                (PF_DRIFT_ALERT,  "#E67E22", f"Alert {PF_DRIFT_ALERT}"),
                 (PF_DRIFT_ACTION, "#A32D2D", f"Action {PF_DRIFT_ACTION}"),
             ]:
                 fig.add_hline(
@@ -807,15 +802,13 @@ def render_motor_side(m: MotorSideResult):
                 "**p-value** = Welch\u2019s t-test. "
                 "**Significant** = Yes if p < 0.05.  \n"
                 f"\U0001f7e1 Watch: \u2264 {PF_DRIFT_WATCH*100:.0f}%  \u2002"
-                f"\U0001f7e0 Alert: \u2264 {PF_DRIFT_ALERT*100:.0f}%  \u2002"
-                f"\U0001f534 Action: \u2264 {PF_DRIFT_ACTION*100:.0f}%"
+                                f"\U0001f534 Action: \u2264 {PF_DRIFT_ACTION*100:.0f}%"
             )
             _ph_rows = []
             for b in _ph_active:
                 drift = b.pf_drift
                 drift_pct = (drift / b.mean_pf_baseline * 100) if b.mean_pf_baseline else 0.0
-                if drift <= PF_DRIFT_ACTION:   status = "\U0001f534 Action"
-                elif drift <= PF_DRIFT_ALERT:  status = "\U0001f7e0 Alert"
+                if drift <= PF_DRIFT_ACTION:   status = "\U0001f534 Critical"
                 elif drift <= PF_DRIFT_WATCH:  status = "\U0001f7e1 Watch"
                 else:                          status = "\U0001f7e2 Normal"
                 _ph_rows.append({
@@ -1853,6 +1846,8 @@ def build_assessment_charts(
     vuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     iuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     pf_gauge_value: float | None = None,    # override: latest daily mean PF
+    pf_drift_watch: float | None = None,    # override PF_DRIFT_WATCH  (default -0.01)
+    pf_drift_critical: float | None = None, # override PF_DRIFT_ACTION (default -0.03)
     baseline_p_daily: dict | None = None,   # {date_str: kw} baseline daily P_total
 ) -> list:
     """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
@@ -1950,7 +1945,9 @@ def build_assessment_charts(
         )
         return fig
 
-    def _pf_drift_charts(machine_bands: list, phase_bands_dict: dict) -> list:
+    def _pf_drift_charts(machine_bands: list, phase_bands_dict: dict,
+                         drift_watch: float = PF_DRIFT_WATCH,
+                         drift_action: float = PF_DRIFT_ACTION) -> list:
         """One PF-drift band-profile chart per signal (Machine + Phase 1/2/3).
 
         Each chart: X = band centre (kW), Y = PF drift.
@@ -1995,14 +1992,13 @@ def build_assessment_charts(
                 ),
             ))
 
-            y_lo = min(min(ys) * 1.35, PF_DRIFT_ACTION * 1.5)
+            y_lo = min(min(ys) * 1.35, drift_action * 1.5)
             y_hi = max(max(ys) * 1.35 if max(ys) > 0 else 0.005, 0.02)
 
             fig.add_hline(y=0, line_color="#AAAAAA", line_width=1, line_dash="dot")
             for val, col, label in [
-                (PF_DRIFT_WATCH,  "#F1C40F", f"Watch {PF_DRIFT_WATCH:+.2f}"),
-                (PF_DRIFT_ALERT,  "#E67E22", f"Alert {PF_DRIFT_ALERT:+.2f}"),
-                (PF_DRIFT_ACTION, "#A32D2D", f"Action {PF_DRIFT_ACTION:+.2f}"),
+                (drift_watch,  "#F1C40F", f"Watch {drift_watch:+.2f}"),
+                (drift_action, "#A32D2D", f"Critical {drift_action:+.2f}"),
             ]:
                 fig.add_hline(
                     y=val, line_color=col, line_dash="dash", line_width=1.2,
@@ -2449,9 +2445,12 @@ def build_assessment_charts(
         ))
 
     # PF drift by load band — one chart per signal (Machine + Phase 1/2/3)
-    _machine_bands = record.motor_side.bands if record.motor_side else []
-    _phase_bands   = phase_bands or {}
-    figs.extend(_pf_drift_charts(_machine_bands, _phase_bands))
+    _machine_bands  = record.motor_side.bands if record.motor_side else []
+    _phase_bands    = phase_bands or {}
+    _eff_pf_watch    = pf_drift_watch    if pf_drift_watch    is not None else float(PF_DRIFT_WATCH)
+    _eff_pf_critical = pf_drift_critical if pf_drift_critical is not None else float(PF_DRIFT_ACTION)
+    figs.extend(_pf_drift_charts(_machine_bands, _phase_bands,
+                                 _eff_pf_watch, _eff_pf_critical))
 
     return figs
 
@@ -2510,13 +2509,15 @@ for _k, _v in [
     ("iuf_gauge_critical", float(IUF_CRITICAL)),
     ("pf_gauge_watch",     0.85),
     ("pf_gauge_critical",  0.75),
+    ("pf_drift_watch",    float(PF_DRIFT_WATCH)),
+    ("pf_drift_critical", float(PF_DRIFT_ACTION)),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
 # Force-correct gauge thresholds that got corrupted to min_value in earlier versions.
 # Key: if any value is out of its expected range, the entire set is reset to defaults.
-_GAUGE_SS_VER = "v3"
+_GAUGE_SS_VER = "v5"
 if st.session_state.get("_gauge_ss_ver") != _GAUGE_SS_VER:
     st.session_state["vuf_gauge_watch"]    = float(VUF_WATCH)
     st.session_state["vuf_gauge_critical"] = float(VUF_CRITICAL)
@@ -4595,7 +4596,7 @@ with tab_analysis:
                                     _dp = ((_b.pf_drift / _b.mean_pf_baseline * 100)
                                            if _b.mean_pf_baseline else None)
                                     _st = ("Action" if _b.pf_drift <= -0.03 else
-                                           "Alert"  if _b.pf_drift <= -0.02 else
+                                           "Critical" if _b.pf_drift <= float(PF_DRIFT_ACTION) else
                                            "Watch"  if _b.pf_drift <= -0.01 else
                                            "Normal")
                                     _sig = ("Yes" if _b.drift_significant else
@@ -4706,7 +4707,7 @@ with tab_analysis:
                                     _dp2 = ((_b.pf_drift / _b.mean_pf_baseline * 100)
                                             if _b.mean_pf_baseline else None)
                                     _st2 = ("Action" if _b.pf_drift <= -0.03 else
-                                            "Alert"  if _b.pf_drift <= -0.02 else
+                                            "Critical" if _b.pf_drift <= float(PF_DRIFT_ACTION) else
                                             "Watch"  if _b.pf_drift <= -0.01 else
                                             "Normal")
                                     _row2 = [
@@ -4940,6 +4941,22 @@ with tab_analysis:
                                 key="pf_gauge_critical",
                                 help="PF below this value = red. Default: 0.75",
                             )
+                            st.markdown("**PF Drift thresholds (absolute)**")
+                            _gd1, _gd2 = st.columns(2)
+                            _gd1.number_input(
+                                "Watch (drift)",
+                                min_value=-0.20, max_value=-0.001,
+                                step=0.005, format="%.3f",
+                                key="pf_drift_watch",
+                                help=f"Default: {PF_DRIFT_WATCH:+.2f}",
+                            )
+                            _gd2.number_input(
+                                "Critical (drift)",
+                                min_value=-0.20, max_value=-0.001,
+                                step=0.005, format="%.3f",
+                                key="pf_drift_critical",
+                                help=f"Default: {PF_DRIFT_ACTION:+.2f}",
+                            )
 
                         # Read current widget values from session state
                         _vuf_g_watch = float(st.session_state.get("vuf_gauge_watch",  VUF_WATCH))
@@ -4948,6 +4965,8 @@ with tab_analysis:
                         _iuf_g_crit  = float(st.session_state.get("iuf_gauge_critical", IUF_CRITICAL))
                         _pf_g_watch  = float(st.session_state.get("pf_gauge_watch",  0.85))
                         _pf_g_crit   = float(st.session_state.get("pf_gauge_critical", 0.75))
+                        _pf_d_watch    = float(st.session_state.get("pf_drift_watch",    PF_DRIFT_WATCH))
+                        _pf_d_critical = float(st.session_state.get("pf_drift_critical", PF_DRIFT_ACTION))
                         _warn_vuf = _vuf_g_watch >= _vuf_g_crit
                         _warn_iuf = _iuf_g_watch >= _iuf_g_crit
                         _warn_pf  = _pf_g_watch  <= _pf_g_crit
@@ -5041,6 +5060,8 @@ with tab_analysis:
                             vuf_gauge_value=_latest_vuf,
                             iuf_gauge_value=_latest_iuf,
                             pf_gauge_value=_latest_pf,
+                            pf_drift_watch=_pf_d_watch,
+                            pf_drift_critical=_pf_d_critical,
                             baseline_p_daily=st.session_state.get("baseline_p_daily") or {},
                         )
                         # ── Helper: single-signal daily run chart ──────
