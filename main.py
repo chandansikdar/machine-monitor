@@ -768,7 +768,7 @@ def render_motor_side(m: MotorSideResult):
                 yaxis2=dict(
                     title="PF drift",
                     overlaying="y", side="right",
-                    range=[round(min(min(drift_vals) * 1.2, drift_action * 1.2), 2), 0.02],
+                    range=[round(min(min(drift_vals) * 1.2, float(st.session_state.get("pf_drift_critical", -0.20)) * 1.2), 2), 0.02],
                     showgrid=False,
                     tickformat=".3f",
                 ),
