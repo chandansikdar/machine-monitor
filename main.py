@@ -4818,13 +4818,13 @@ with tab_analysis:
                                             "  \u2502  Dotted = IUF thresholds (right axis)</sup>"),
                                             font=dict(size=13)),
                                         xaxis=dict(title="Date", tickformat="%d %b"),
-                                        yaxis=dict(title="VUF (%)",
-                                            titlefont=dict(color="#054D5F"),
+                                        yaxis=dict(
+                                            title=dict(text="VUF (%)", font=dict(color="#054D5F")),
                                             tickfont=dict(color="#054D5F"),
                                             range=[0, max(max(_vv)*1.4, VUF_CRITICAL*1.6)],
                                             tickformat=".2f"),
-                                        yaxis2=dict(title="IUF (%)",
-                                            titlefont=dict(color="#C8A84B"),
+                                        yaxis2=dict(
+                                            title=dict(text="IUF (%)", font=dict(color="#C8A84B")),
                                             tickfont=dict(color="#C8A84B"),
                                             overlaying="y", side="right",
                                             range=[0, max(max(_iv)*1.4, IUF_CRITICAL*1.6)],
