@@ -2321,6 +2321,169 @@ def build_assessment_charts(
     _phase_bands   = phase_bands or {}
     figs.extend(_pf_drift_charts(_machine_bands, _phase_bands))
 
+    # Daily imbalance run chart — VUF and IUF trend over the assessment period
+    if has_cleaned:
+        try:
+            _df_run = cleaned_data.copy()
+            _df_run.index = pd.to_datetime(_df_run.index)
+
+            # VUF series
+            _rv1 = _df_run["phase_1_voltage"]
+            _rv2 = _df_run["phase_2_voltage"]
+            _rv3 = _df_run["phase_3_voltage"]
+            _rv_avg = (_rv1 + _rv2 + _rv3) / 3.0
+            _vuf_s  = (
+                pd.concat([(_rv1 - _rv_avg).abs(),
+                           (_rv2 - _rv_avg).abs(),
+                           (_rv3 - _rv_avg).abs()], axis=1)
+                .max(axis=1) / _rv_avg.replace(0, np.nan) * 100.0
+            )
+
+            # IUF series
+            _ri1 = _df_run["phase_1_current"]
+            _ri2 = _df_run["phase_2_current"]
+            _ri3 = _df_run["phase_3_current"]
+            _ri_avg = (_ri1 + _ri2 + _ri3) / 3.0
+            _iuf_s  = (
+                pd.concat([(_ri1 - _ri_avg).abs(),
+                           (_ri2 - _ri_avg).abs(),
+                           (_ri3 - _ri_avg).abs()], axis=1)
+                .max(axis=1) / _ri_avg.replace(0, np.nan) * 100.0
+            )
+
+            _daily_vuf = _vuf_s.resample("D").mean().dropna()
+            _daily_iuf = _iuf_s.resample("D").mean().dropna()
+
+            if len(_daily_vuf) >= 2 and len(_daily_iuf) >= 2:
+                _run_fig = go.Figure()
+
+                # Helper: linear trend overlay
+                def _trend(xs, ys, colour):
+                    _x_num = np.arange(len(xs))
+                    _coeffs = np.polyfit(_x_num, ys, 1)
+                    _y_fit  = np.polyval(_coeffs, _x_num)
+                    return go.Scatter(
+                        x=xs, y=_y_fit.tolist(),
+                        mode="lines",
+                        line=dict(color=colour, width=1.2, dash="dot"),
+                        showlegend=False,
+                        hoverinfo="skip",
+                        yaxis="y",
+                    )
+
+                def _trend2(xs, ys, colour):
+                    _x_num = np.arange(len(xs))
+                    _coeffs = np.polyfit(_x_num, ys, 1)
+                    _y_fit  = np.polyval(_coeffs, _x_num)
+                    return go.Scatter(
+                        x=xs, y=_y_fit.tolist(),
+                        mode="lines",
+                        line=dict(color=colour, width=1.2, dash="dot"),
+                        showlegend=False,
+                        hoverinfo="skip",
+                        yaxis="y2",
+                    )
+
+                _vuf_dates = _daily_vuf.index.tolist()
+                _vuf_vals  = _daily_vuf.values.tolist()
+                _iuf_dates = _daily_iuf.index.tolist()
+                _iuf_vals  = _daily_iuf.values.tolist()
+
+                # VUF trace (left axis)
+                _run_fig.add_trace(go.Scatter(
+                    x=_vuf_dates, y=_vuf_vals,
+                    name="VUF (%)",
+                    mode="lines+markers",
+                    line=dict(color="#054D5F", width=2),
+                    marker=dict(size=5, color="#054D5F"),
+                    yaxis="y",
+                    hovertemplate="<b>VUF</b> %{y:.2f}%<extra></extra>",
+                ))
+                _run_fig.add_trace(_trend(_vuf_dates, _vuf_vals, "#054D5F"))
+
+                # IUF trace (right axis)
+                _run_fig.add_trace(go.Scatter(
+                    x=_iuf_dates, y=_iuf_vals,
+                    name="IUF (%)",
+                    mode="lines+markers",
+                    line=dict(color="#C8A84B", width=2),
+                    marker=dict(size=5, color="#C8A84B"),
+                    yaxis="y2",
+                    hovertemplate="<b>IUF</b> %{y:.1f}%<extra></extra>",
+                ))
+                _run_fig.add_trace(_trend2(_iuf_dates, _iuf_vals, "#C8A84B"))
+
+                # VUF threshold lines (left axis)
+                for _yval, _col, _lbl in [
+                    (VUF_WATCH,    "#E67E22", f"VUF Watch {VUF_WATCH:.1f}%"),
+                    (VUF_CRITICAL, "#C0392B", f"VUF Critical {VUF_CRITICAL:.1f}%"),
+                ]:
+                    _run_fig.add_shape(
+                        type="line", xref="paper", x0=0, x1=1,
+                        yref="y", y0=_yval, y1=_yval,
+                        line=dict(color=_col, width=1, dash="dash"),
+                    )
+                    _run_fig.add_annotation(
+                        xref="paper", x=1.0, yref="y", y=_yval,
+                        text=_lbl, showarrow=False,
+                        xanchor="left", font=dict(size=8, color=_col),
+                        xshift=4,
+                    )
+
+                # IUF threshold lines (right axis)
+                for _yval, _col, _lbl in [
+                    (IUF_WATCH,    "#E67E22", f"IUF Watch {IUF_WATCH:.0f}%"),
+                    (IUF_CRITICAL, "#C0392B", f"IUF Critical {IUF_CRITICAL:.0f}%"),
+                ]:
+                    _run_fig.add_shape(
+                        type="line", xref="paper", x0=0, x1=1,
+                        yref="y2", y0=_yval, y1=_yval,
+                        line=dict(color=_col, width=1, dash="dot"),
+                    )
+
+                _vuf_max = max(_vuf_vals) if _vuf_vals else VUF_CRITICAL
+                _iuf_max = max(_iuf_vals) if _iuf_vals else IUF_CRITICAL
+
+                _run_fig.update_layout(
+                    title=dict(
+                        text=(
+                            "Daily Imbalance Run Chart \u2014 VUF & IUF"
+                            "<br><sup>Dotted lines = linear trend \u2502"
+                            " Dashed = VUF thresholds (left axis)"
+                            " \u2502 Dotted = IUF thresholds (right axis)</sup>"
+                        ),
+                        font=dict(size=13),
+                    ),
+                    xaxis=dict(title="Date", tickformat="%d %b"),
+                    yaxis=dict(
+                        title="VUF (%)",
+                        titlefont=dict(color="#054D5F"),
+                        tickfont=dict(color="#054D5F"),
+                        range=[0, max(_vuf_max * 1.4, VUF_CRITICAL * 1.6)],
+                        tickformat=".2f",
+                    ),
+                    yaxis2=dict(
+                        title="IUF (%)",
+                        titlefont=dict(color="#C8A84B"),
+                        tickfont=dict(color="#C8A84B"),
+                        overlaying="y", side="right",
+                        range=[0, max(_iuf_max * 1.4, IUF_CRITICAL * 1.6)],
+                        tickformat=".1f",
+                    ),
+                    legend=dict(
+                        orientation="h", y=1.08, x=0,
+                        font=dict(size=10),
+                    ),
+                    hovermode="x unified",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=55, r=130, t=65, b=50),
+                    height=340, font=dict(size=11),
+                )
+                figs.append(_run_fig)
+        except Exception:
+            pass   # silently skip if data columns missing
+
     return figs
 
 
