@@ -4995,25 +4995,6 @@ with tab_analysis:
                                             help="Latest daily mean minus baseline mean (negative = improvement)",
                                         )
                             if "IUF Gauge" in _fig_title and _latest_ph_iuf:
-                                # Baseline IUF overall comparison
-                                _bl_iuf = st.session_state.get("baseline_iuf_mean")
-                                if _bl_iuf is not None:
-                                    _delta_iuf = round(_latest_iuf - _bl_iuf, 2) \
-                                                 if _latest_iuf is not None else None
-                                    _bic1, _bic2 = st.columns([1, 2])
-                                    _bic1.metric(
-                                        label="Baseline mean IUF",
-                                        value=f"{_bl_iuf:.1f}\u00a0%",
-                                        help="Mean IUF over the full baseline period (cleaned samples)",
-                                    )
-                                    if _delta_iuf is not None:
-                                        _bic2.metric(
-                                            label="Change vs baseline",
-                                            value=f"{_delta_iuf:+.1f}\u00a0%",
-                                            delta=f"{_delta_iuf:+.1f}%",
-                                            delta_color="inverse",
-                                            help="Latest daily mean minus baseline mean (negative = improvement)",
-                                        )
                                 # Per-phase: latest vs baseline
                                 _bl_ph = st.session_state.get("baseline_ph_iuf") or {}
                                 try:
