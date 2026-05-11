@@ -477,25 +477,29 @@ def clean_samples(
     report.n_after_load_precondition = len(df)
 
     # ── Step 2: Start transient exclusion ───────────────────────────────────
-    # Detect cold starts on the ORIGINAL (pre-step-1) data so we can identify
-    # the crossing point even though those near-zero rows were already removed.
+    # A cold start is detected when P_total crosses from below 1% of rated to
+    # above it.  Only the samples that are ABOVE rated electrical input (genuine
+    # electrical spikes / inrush artefacts) are removed.  Samples within the
+    # normal load range (0 → P_rated_elec) are valid operating data even if they
+    # immediately follow a startup, and are kept.
     if len(df) > 0 and "timestamp" in raw.columns:
         raw_p = (raw["phase_1_active_power"] + raw["phase_2_active_power"]
                  + raw["phase_3_active_power"])
-        # Boolean: was previous sample below cold-start threshold?
-        prev_below = raw_p.shift(1, fill_value=0.0) < cold_min_w
-        # Boolean: current sample is at or above cold-start threshold?
-        curr_above = raw_p >= cold_min_w
-        # Crossing rows (first sample after cold start) — index in raw
+        rated_max_w = p_rated_elec * 1000.0          # upper bound for normal operation
+        prev_below  = raw_p.shift(1, fill_value=0.0) < cold_min_w
+        curr_above  = raw_p >= cold_min_w
         crossing_idx = raw.index[prev_below & curr_above]
 
-        # Build set of timestamps to exclude: crossing + next N-1 rows in raw
         transient_ts: set = set()
         for ci in crossing_idx:
             loc = raw.index.get_loc(ci)
             for offset in range(COLD_START_TRANSIENT_SAMPLES):
                 if loc + offset < len(raw):
-                    transient_ts.add(raw.iloc[loc + offset]["timestamp"])
+                    sample_p = raw_p.iloc[loc + offset]
+                    # Only exclude if the sample power is above rated
+                    # (genuine spike); keep if within normal load range
+                    if sample_p > rated_max_w:
+                        transient_ts.add(raw.iloc[loc + offset]["timestamp"])
 
         if transient_ts:
             df = df[~df["timestamp"].isin(transient_ts)].copy()
