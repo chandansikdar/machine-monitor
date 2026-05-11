@@ -2360,7 +2360,7 @@ for _k, _v in [
 
 # Force-correct gauge thresholds that got corrupted to min_value in earlier versions.
 # Key: if any value is out of its expected range, the entire set is reset to defaults.
-_GAUGE_SS_VER = "v2"
+_GAUGE_SS_VER = "v3"
 if st.session_state.get("_gauge_ss_ver") != _GAUGE_SS_VER:
     st.session_state["vuf_gauge_watch"]    = float(VUF_WATCH)
     st.session_state["vuf_gauge_critical"] = float(VUF_CRITICAL)
