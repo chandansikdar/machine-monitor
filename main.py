@@ -1852,6 +1852,7 @@ def build_assessment_charts(
     pf_gauge_critical: float | None = None,
     vuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     iuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
+    baseline_p_daily: dict | None = None,   # {date_str: kw} baseline daily P_total
 ) -> list:
     """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
 
@@ -2266,13 +2267,14 @@ def build_assessment_charts(
             _prun = go.Figure()
             _pd_x = _p_daily_avg.index.tolist()
             _pd_y = _p_daily_avg.values.tolist()
+            # Assessment trace (blue)
             _prun.add_trace(go.Scatter(
                 x=_pd_x, y=_pd_y,
                 mode="lines+markers",
-                name="Daily avg P_total",
+                name="Assessment",
                 line=dict(color="#185FA5", width=2),
                 marker=dict(size=5),
-                hovertemplate="<b>P_total</b> %{y:.1f} kW<extra></extra>",
+                hovertemplate="<b>Assessment</b> %{y:.1f} kW<extra></extra>",
             ))
             if len(_pd_y) >= 2:
                 _pxt = np.arange(len(_pd_x))
@@ -2282,7 +2284,31 @@ def build_assessment_charts(
                     mode="lines", showlegend=False, hoverinfo="skip",
                     line=dict(color="#185FA5", width=1.2, dash="dot"),
                 ))
-            _p_y_max = max(_pd_y) if _pd_y else 0
+            # Baseline trace (green) — plotted on same axes, different date range
+            _bl_pd = baseline_p_daily or {}
+            _bl_y_vals = []
+            if _bl_pd:
+                _bl_sorted = sorted(_bl_pd.items())
+                _bl_x = [pd.Timestamp(d) for d, _ in _bl_sorted]
+                _bl_y = [v for _, v in _bl_sorted]
+                _bl_y_vals = _bl_y
+                _prun.add_trace(go.Scatter(
+                    x=_bl_x, y=_bl_y,
+                    mode="lines+markers",
+                    name="Baseline",
+                    line=dict(color="#177E40", width=2),
+                    marker=dict(size=5, color="#177E40"),
+                    hovertemplate="<b>Baseline</b> %{y:.1f} kW<extra></extra>",
+                ))
+                if len(_bl_y) >= 2:
+                    _blxt = np.arange(len(_bl_x))
+                    _blyt = np.polyval(np.polyfit(_blxt, _bl_y, 1), _blxt)
+                    _prun.add_trace(go.Scatter(
+                        x=_bl_x, y=_blyt.tolist(),
+                        mode="lines", showlegend=False, hoverinfo="skip",
+                        line=dict(color="#177E40", width=1.2, dash="dot"),
+                    ))
+            _p_y_max = max(_pd_y + _bl_y_vals) if (_pd_y or _bl_y_vals) else 0
             for _hv, _hc, _hd, _hl in (p_hlines or []):
                 _prun.add_shape(
                     type="line", xref="paper", x0=0, x1=1,
@@ -2299,15 +2325,16 @@ def build_assessment_charts(
                 _p_y_max = max(_p_y_max, _hv)
             _prun.update_layout(
                 title=dict(
-                    text="Total Active Power — Daily Average (P_total)"
-                         "<br><sup>Each point = daily mean (cleaned samples)"
+                    text="Total Active Power — Daily Average"
+                         "<br><sup>Blue = assessment  \u2502  Green = baseline"
                          "  \u2502  Dotted = linear trend</sup>",
                     font=dict(size=13),
                 ),
                 xaxis=dict(title="Date", tickformat="%d %b"),
                 yaxis=dict(title="P_total (kW)",
                            range=[0, _p_y_max * 1.25 if _p_y_max > 0 else 10]),
-                showlegend=False,
+                showlegend=True,
+                legend=dict(orientation="h", y=1.08, x=0, font=dict(size=10)),
                 hovermode="x unified",
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
@@ -4934,6 +4961,7 @@ with tab_analysis:
                             pf_gauge_critical=_pf_g_crit,
                             vuf_gauge_value=_latest_vuf,
                             iuf_gauge_value=_latest_iuf,
+                            baseline_p_daily=st.session_state.get("baseline_p_daily") or {},
                         )
                         # ── Helper: single-signal daily run chart ──────
                         def _daily_run_chart(df, signal, colour, thresholds,
@@ -5060,66 +5088,6 @@ with tab_analysis:
                                     st.warning(f"IUF run chart: {_e}")
 
                             st.plotly_chart(fig, use_container_width=True)
-
-                            # Baseline P_total daily run chart — shown after assessment chart
-                            if "P_total" in _fig_title and "Daily" in _fig_title:
-                                _bl_p = st.session_state.get("baseline_p_daily") or {}
-                                if _bl_p:
-                                    try:
-                                        _bpd = sorted(_bl_p.items())
-                                        _bpx = [pd.Timestamp(d) for d, _ in _bpd]
-                                        _bpy = [v for _, v in _bpd]
-                                        _bpfig = go.Figure()
-                                        _bpfig.add_trace(go.Scatter(
-                                            x=_bpx, y=_bpy,
-                                            mode="lines+markers",
-                                            name="Baseline daily avg",
-                                            line=dict(color="#177E40", width=2),
-                                            marker=dict(size=5),
-                                            hovertemplate="<b>P_total (baseline)</b>"
-                                                          " %{y:.1f} kW<extra></extra>",
-                                        ))
-                                        if len(_bpy) >= 2:
-                                            _bpxt = np.arange(len(_bpx))
-                                            _bpyt = np.polyval(np.polyfit(_bpxt, _bpy, 1), _bpxt)
-                                            _bpfig.add_trace(go.Scatter(
-                                                x=_bpx, y=_bpyt.tolist(),
-                                                mode="lines", showlegend=False, hoverinfo="skip",
-                                                line=dict(color="#177E40", width=1.2, dash="dot"),
-                                            ))
-                                        _bpy_max = max(_bpy) if _bpy else 10
-                                        _bl_p_avg = sum(_bpy) / len(_bpy)
-                                        _bpfig.add_shape(
-                                            type="line", xref="paper", x0=0, x1=1,
-                                            yref="y", y0=_bl_p_avg, y1=_bl_p_avg,
-                                            line=dict(color="#054D5F", width=1.2, dash="dashdot"),
-                                        )
-                                        _bpfig.add_annotation(
-                                            xref="paper", x=1.01, yref="y", y=_bl_p_avg,
-                                            text=f"Baseline avg {_bl_p_avg:.1f} kW",
-                                            showarrow=False, xanchor="left",
-                                            font=dict(size=8, color="#054D5F"),
-                                        )
-                                        _bpfig.update_layout(
-                                            title=dict(
-                                                text="Total Active Power — Baseline Period Daily Average"
-                                                     "<br><sup>Each point = daily mean (cleaned samples)"
-                                                     "  \u2502  Dotted = linear trend</sup>",
-                                                font=dict(size=13),
-                                            ),
-                                            xaxis=dict(title="Date", tickformat="%d %b"),
-                                            yaxis=dict(title="P_total (kW)",
-                                                       range=[0, _bpy_max * 1.25]),
-                                            showlegend=False,
-                                            hovermode="x unified",
-                                            plot_bgcolor="rgba(0,0,0,0)",
-                                            paper_bgcolor="rgba(0,0,0,0)",
-                                            margin=dict(l=55, r=160, t=65, b=50),
-                                            height=300, font=dict(size=11),
-                                        )
-                                        st.plotly_chart(_bpfig, use_container_width=True)
-                                    except Exception as _bpe:
-                                        st.warning(f"Baseline P_total chart: {_bpe}")
 
                             # Below VUF gauge — baseline comparison
                             if "VUF Gauge" in _fig_title:
