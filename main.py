@@ -2325,6 +2325,9 @@ def build_assessment_charts(
     if has_cleaned:
         try:
             _df_run = cleaned_data.copy()
+            # Ensure DatetimeIndex for resample — handle both index and column forms
+            if "timestamp" in _df_run.columns:
+                _df_run = _df_run.set_index("timestamp")
             _df_run.index = pd.to_datetime(_df_run.index)
 
             # VUF series
@@ -2481,8 +2484,8 @@ def build_assessment_charts(
                     height=340, font=dict(size=11),
                 )
                 figs.append(_run_fig)
-        except Exception:
-            pass   # silently skip if data columns missing
+        except Exception as _re:
+            pass   # silently skip if data columns missing — e.g. voltage cols absent
 
     return figs
 
@@ -4941,8 +4944,11 @@ with tab_analysis:
                         )
                         for _fig_idx, fig in enumerate(_report_figs):
                             st.plotly_chart(fig, use_container_width=True)
-                            # IUF gauge is at index 3; show per-phase breakdown below it
-                            if _fig_idx == 3 and _cleaned_chart is not None:
+                            # Detect IUF gauge by title (robust to conditional VUF gauge)
+                            _fig_title = getattr(
+                                getattr(fig.layout, "title", None), "text", ""
+                            ) or ""
+                            if "IUF Gauge" in _fig_title and _cleaned_chart is not None:
                                 try:
                                     _ci1 = _cleaned_chart["phase_1_current"]
                                     _ci2 = _cleaned_chart["phase_2_current"]
@@ -4971,8 +4977,8 @@ with tab_analysis:
                                             delta_color="off",
                                             help="Mean per-phase current deviation as % of 3-phase average over cleaned samples",
                                         )
-                                except Exception:
-                                    pass
+                                except Exception as _pe:
+                                    st.caption(f"Per-phase breakdown unavailable: {_pe}")
 
                         # ── Download Report ──────────────────────────────
                         st.markdown("---")
