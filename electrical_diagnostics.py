@@ -319,10 +319,18 @@ def _running_mask(df: pd.DataFrame, p_rated_elec_kw: float) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 def integrity_gate(row: pd.Series, meta: dict) -> IntegrityResult:
-    """Per-sample integrity check (\u00a73.1).
+    """Per-sample integrity check (§3.1).
 
-    Returns IntegrityResult(passed=True) if all five checks pass.
+    Returns IntegrityResult(passed=True) if all three checks pass.
     First failing check is reported; subsequent checks are not evaluated.
+
+    Checks 4 (per-phase PF plausibility) and 5 (per-phase PF spread) were
+    removed after analysis showed they cover no fault class not already
+    owned by Check 3 (power sign coherence).  For the only scenario where
+    Check 3 is borderline — single CT secondary polarity reversal on a
+    balanced load — the fault is still detectable via the negative P_total
+    contribution in downstream diagnostics, and the removed checks were
+    producing false positives on machines with elevated supply VUF.
 
     Parameters
     ----------
@@ -339,7 +347,7 @@ def integrity_gate(row: pd.Series, meta: dict) -> IntegrityResult:
     _p_shaft_ig = float(meta.get("p_rated_shaft_kw", 0))
     _eta_ig     = float(meta.get("eta_rated", 0.90))
     p_rated_elec = (_p_shaft_ig / _eta_ig) if (_p_shaft_ig > 0 and _eta_ig > 0) else 1.0
-    running = p_total > RUNNING_THRESHOLD_FRACTION * p_rated_elec * 1000.0
+
 
     # --- Check 1: Voltage plausibility ---
     v_lo = 0.85 * v_nom
@@ -422,48 +430,6 @@ def integrity_gate(row: pd.Series, meta: dict) -> IntegrityResult:
             )
         )
 
-    # --- Check 4: Per-phase PF plausibility (running only) ---
-    if running:
-        for ph, p_x, v_x, i_x in zip(
-            ("1", "2", "3"),
-            (p1, p2, p3),
-            (v1, v2, v3),
-            (i1, i2, i3),
-        ):
-            s_x = v_x * i_x
-            if s_x > 0:
-                pf_x = p_x / s_x
-                if not (0.30 <= pf_x <= 1.00):
-                    return IntegrityResult(
-                        passed=False,
-                        failing_check="check_4_pf_plausibility",
-                        reason=(
-                            f"Phase {ph} PF {pf_x:.3f} outside [0.30, 1.00] "
-                            f"(channel pairing or polarity error suspected)"
-                        )
-                    )
-
-    # --- Check 5: Per-phase PF spread consistency (running only) ---
-    if running:
-        pfs = []
-        for p_x, v_x, i_x in zip(
-            (p1, p2, p3), (v1, v2, v3), (i1, i2, i3)
-        ):
-            s_x = v_x * i_x
-            if s_x > 0:
-                pfs.append(p_x / s_x)
-        if len(pfs) == 3:
-            spread = max(pfs) - min(pfs)
-            if spread > 0.15:
-                return IntegrityResult(
-                    passed=False,
-                    failing_check="check_5_pf_consistency",
-                    reason=(
-                        f"Per-phase PF spread {spread:.3f} exceeds 0.15 limit "
-                        f"(channel pairing or polarity error suspected)"
-                    )
-                )
-
     return IntegrityResult(passed=True)
 
 
@@ -475,7 +441,6 @@ def clean_samples(
     raw: pd.DataFrame,
     meta: dict,
     user_filter: str | None = None,
-    load_precondition_fraction: float | None = None,
 ) -> tuple[pd.DataFrame, CleaningReport]:
     """Four-step data cleaning procedure (§4.1).
 
@@ -486,11 +451,10 @@ def clean_samples(
 
     Step order
     ----------
-    1. Load precondition (≥ load_precondition_fraction × P_rated_elec)
+    1. Load precondition (≥20 % of P_rated_elec)
        Removes shutdown / stopped samples AND low-load samples where CT class
        tolerance errors become significant relative to the small active current
        component, producing apparent IUF on a healthy motor.
-       Defaults to LOAD_PRECONDITION_FRACTION (20 %).
 
     2. Start transient exclusion
        Removes the first COLD_START_TRANSIENT_SAMPLES (2) samples immediately
@@ -507,15 +471,11 @@ def clean_samples(
 
     Parameters
     ----------
-    raw                        : raw measurement DataFrame
-    meta                       : machine metadata dict
-    user_filter                : optional pandas query string applied at step 3
-    load_precondition_fraction : override for the minimum load fraction (0–1).
-                                 Defaults to LOAD_PRECONDITION_FRACTION (0.20).
+    raw         : raw measurement DataFrame (must contain timestamp column)
+    meta        : machine metadata dict
+    user_filter : optional pandas query string applied at step 3
     """
     report = CleaningReport(n_raw=len(raw))
-    _load_frac = load_precondition_fraction if load_precondition_fraction is not None \
-                 else LOAD_PRECONDITION_FRACTION
     # meta["p_rated_shaft_kw"] is guaranteed non-zero by resolve_effective_meta (§2.5)
     # which runs once after data ingestion and fills in data-derived estimates.
     p_shaft = float(meta.get("p_rated_shaft_kw", 0))
@@ -528,10 +488,10 @@ def clean_samples(
                   + raw["phase_3_active_power"])
         _p95fb = float(_pt_fb[_pt_fb > 0].quantile(0.95)) / 1000.0 if (_pt_fb > 0).any() else 1.0
         p_rated_elec = _p95fb / 0.95
-    load_min_w   = _load_frac * p_rated_elec * 1000.0
+    load_min_w   = LOAD_PRECONDITION_FRACTION * p_rated_elec * 1000.0
     cold_min_w   = COLD_START_THRESHOLD_FRACTION * p_rated_elec * 1000.0
 
-    # ── Step 1: Load precondition (≥ load_precondition_fraction of rated electrical input) ──
+    # ── Step 1: Load precondition (≥ 20 % of rated electrical input) ────────
     df = raw.copy()
     if len(df) > 0:
         p_total = (df["phase_1_active_power"] + df["phase_2_active_power"]
@@ -1505,28 +1465,22 @@ def run_assessment(
     baseline: BaselineMetadata,
     meta: dict,
     raw_baseline: pd.DataFrame | None = None,
-    load_precondition_fraction: float | None = None,
 ) -> AssessmentRecord:
     """Run a full user-initiated assessment (§8.1).
 
     Parameters
     ----------
-    raw_recent                 : raw measurement DataFrame for the recent window
-    baseline                   : BaselineMetadata from ingest_baseline()
-    meta                       : machine metadata dict (current effective meta)
-    raw_baseline               : raw baseline DataFrame — used to compute PF bands at
-                                 analysis time with current rated power (§6.3.2)
-    load_precondition_fraction : override for the minimum load fraction passed to
-                                 clean_samples (default: LOAD_PRECONDITION_FRACTION).
+    raw_recent    : raw measurement DataFrame for the recent window
+    baseline      : BaselineMetadata from ingest_baseline()
+    meta          : machine metadata dict (current effective meta)
+    raw_baseline  : raw baseline DataFrame — used to compute PF bands at
+                    analysis time with current rated power (§6.3.2)
     """
     record = AssessmentRecord()
 
     # -- Check 1: Data cleaning --
     user_filter = baseline.user_filter_expr if baseline else None
-    cleaned, cleaning_report = clean_samples(
-        raw_recent, meta, user_filter,
-        load_precondition_fraction=load_precondition_fraction,
-    )
+    cleaned, cleaning_report = clean_samples(raw_recent, meta, user_filter)
     record.cleaning_report = cleaning_report
 
     if cleaning_report.n_cleaned < CLEANING_MIN_SAMPLES:
@@ -1544,10 +1498,7 @@ def run_assessment(
     # -- Compute PF bands from baseline at analysis time using actual data range --
     _cleaned_bl: pd.DataFrame | None = None   # kept in scope for std recomputation
     if raw_baseline is not None and len(raw_baseline) > 0:
-        _cleaned_bl, _ = clean_samples(
-            raw_baseline, meta, user_filter,
-            load_precondition_fraction=load_precondition_fraction,
-        )
+        _cleaned_bl, _ = clean_samples(raw_baseline, meta, user_filter)
         if len(_cleaned_bl) >= CLEANING_MIN_SAMPLES:
             all_bins = select_pf_bands(_cleaned_bl, min_samples=0)   # all 100 bins
             bands    = [b for b in all_bins if b.n_baseline >= PF_BAND_MIN_SAMPLES]
@@ -1638,7 +1589,7 @@ def assessment_summary(record: AssessmentRecord) -> str:
     if r:
         lines.append(
             f"Data cleaning: {r.n_raw} raw"
-            f" \u2192 {r.n_after_load_precondition} load \u226520%"
+            f" \u2192 {r.n_after_load_precondition} load 226520%"
             f" \u2192 {r.n_after_start_transient} start-transient"
             f" \u2192 {r.n_after_user_filter} user-filter"
             f" \u2192 {r.n_cleaned} cleaned"
