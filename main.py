@@ -4749,6 +4749,7 @@ with tab_analysis:
                         # gauges show the most recent day's value
                         _latest_vuf = None
                         _latest_iuf = None
+                        _latest_ph_iuf: dict = {}
                         if _cleaned_chart is not None and not _cleaned_chart.empty:
                             try:
                                 _rc_pre = _cleaned_chart.copy()
@@ -4767,6 +4768,32 @@ with tab_analysis:
                                     _latest_vuf = round(float(_dv_pre.iloc[-1]), 3)
                                 if len(_di_pre) > 0:
                                     _latest_iuf = round(float(_di_pre.iloc[-1]), 2)
+                                # Per-phase latest daily values — walk back through
+                                # available days until a day with enough samples is found
+                                _latest_ph_iuf: dict = {}
+                                _ph_date_used: str = ""
+                                for _candidate_ts in reversed(_di_pre.index.tolist()):
+                                    _candidate_day = _candidate_ts.date()
+                                    _day_mask = _rc_pre.index.date == _candidate_day
+                                    _ld = _rc_pre[_day_mask]
+                                    if _ld.empty:
+                                        continue
+                                    try:
+                                        _ldi1=_ld["phase_1_current"]; _ldi2=_ld["phase_2_current"]; _ldi3=_ld["phase_3_current"]
+                                        _lda=(_ldi1+_ldi2+_ldi3)/3.0
+                                        _lds=_lda.replace(0,np.nan)
+                                        _ph_vals = {
+                                            1: round(float(((_ldi1-_lda).abs()/_lds*100).mean()), 2),
+                                            2: round(float(((_ldi2-_lda).abs()/_lds*100).mean()), 2),
+                                            3: round(float(((_ldi3-_lda).abs()/_lds*100).mean()), 2),
+                                        }
+                                        # Accept if all three phases have valid values
+                                        if all(not np.isnan(v) for v in _ph_vals.values()):
+                                            _latest_ph_iuf = _ph_vals
+                                            _ph_date_used = _candidate_day.strftime("%d %b")
+                                            break
+                                    except Exception:
+                                        continue
                             except Exception:
                                 pass   # fall back to assessment mean in gauges
 
@@ -4909,22 +4936,12 @@ with tab_analysis:
                                     st.warning(f"IUF run chart: {_e}")
 
                             st.plotly_chart(fig, use_container_width=True)
-                            if "IUF Gauge" in _fig_title and _cleaned_chart is not None:
+                            if "IUF Gauge" in _fig_title and _latest_ph_iuf:
                                 try:
-                                    _ci1 = _cleaned_chart["phase_1_current"]
-                                    _ci2 = _cleaned_chart["phase_2_current"]
-                                    _ci3 = _cleaned_chart["phase_3_current"]
-                                    _ci_avg  = (_ci1 + _ci2 + _ci3) / 3.0
-                                    _ci_safe = _ci_avg.replace(0, np.nan)
-                                    _per_ph  = {
-                                        1: float(((_ci1 - _ci_avg).abs() / _ci_safe * 100).mean()),
-                                        2: float(((_ci2 - _ci_avg).abs() / _ci_safe * 100).mean()),
-                                        3: float(((_ci3 - _ci_avg).abs() / _ci_safe * 100).mean()),
-                                    }
-                                    _worst_ph  = max(_per_ph, key=_per_ph.get)
+                                    _worst_ph = max(_latest_ph_iuf, key=_latest_ph_iuf.get)
                                     _mc1, _mc2, _mc3 = st.columns(3)
                                     for _ph, _mc in [(1, _mc1), (2, _mc2), (3, _mc3)]:
-                                        _pval = _per_ph[_ph]
+                                        _pval = _latest_ph_iuf[_ph]
                                         _tier_s = (
                                             "\U0001f534 Critical" if _pval >= _iuf_g_crit else
                                             "\U0001f7e0 Watch"    if _pval >= _iuf_g_watch else
@@ -4936,7 +4953,8 @@ with tab_analysis:
                                             value=f"{_pval:.1f}\u00a0%",
                                             delta=_tier_s,
                                             delta_color="off",
-                                            help="Mean per-phase current deviation as % of 3-phase average over cleaned samples",
+                                            help=f"Per-phase current deviation as % of 3-phase average"
+                                                 f" \u2014 {_ph_date_used or 'latest available day'}",
                                         )
                                 except Exception as _pe:
                                     st.caption(f"Per-phase breakdown unavailable: {_pe}")
