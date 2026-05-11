@@ -1852,6 +1852,7 @@ def build_assessment_charts(
     pf_gauge_critical: float | None = None,
     vuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     iuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
+    pf_gauge_value: float | None = None,    # override: latest daily mean PF
     baseline_p_daily: dict | None = None,   # {date_str: kw} baseline daily P_total
 ) -> list:
     """Build control charts for VUF, IUF, P_total, PF_machine, and PF drift.
@@ -2434,13 +2435,13 @@ def build_assessment_charts(
 
     # PF gauge — inverted scale (high PF = healthy)
     if has_cleaned and len(cl_pf) > 0:
-        _pf_mean = float(cl_pf.mean())
+        _pf_display = pf_gauge_value if pf_gauge_value is not None else float(cl_pf.mean())
         figs.append(_gauge_inverted(
-            value=_pf_mean,
+            value=_pf_display,
             watch=_pf_watch,
             critical=_pf_critical,
             title=(
-                f"PF Gauge \u2014 Assessment Period Mean<br>"
+                f"PF Gauge \u2014 Latest Daily Mean<br>"
                 f"<sup>Watch \u2264{_pf_watch:.2f}  \u2502  Critical \u2264{_pf_critical:.2f}"
                 f"  \u2502  Axis: 0 \u2192 1</sup>"
             ),
@@ -4966,6 +4967,7 @@ with tab_analysis:
                         # gauges show the most recent day's value
                         _latest_vuf = None
                         _latest_iuf = None
+                        _latest_pf  = None
                         _latest_ph_iuf: dict = {}
                         if _cleaned_chart is not None and not _cleaned_chart.empty:
                             try:
@@ -4985,6 +4987,17 @@ with tab_analysis:
                                     _latest_vuf = round(float(_dv_pre.iloc[-1]), 3)
                                 if len(_di_pre) > 0:
                                     _latest_iuf = round(float(_di_pre.iloc[-1]), 2)
+                                # Latest daily PF
+                                _pf_pre = ((_rc_pre["phase_1_active_power"] +
+                                            _rc_pre["phase_2_active_power"] +
+                                            _rc_pre["phase_3_active_power"]) /
+                                           (_rc_pre["phase_1_voltage"] * _rc_pre["phase_1_current"] +
+                                            _rc_pre["phase_2_voltage"] * _rc_pre["phase_2_current"] +
+                                            _rc_pre["phase_3_voltage"] * _rc_pre["phase_3_current"])
+                                           .replace(0, np.nan))
+                                _pf_daily_pre = _pf_pre.resample("D").mean().dropna()
+                                if len(_pf_daily_pre) > 0:
+                                    _latest_pf = round(float(_pf_daily_pre.iloc[-1]), 4)
                                 # Per-phase latest daily values — walk back through
                                 # available days until a day with enough samples is found
                                 _latest_ph_iuf: dict = {}
@@ -5027,6 +5040,7 @@ with tab_analysis:
                             pf_gauge_critical=_pf_g_crit,
                             vuf_gauge_value=_latest_vuf,
                             iuf_gauge_value=_latest_iuf,
+                            pf_gauge_value=_latest_pf,
                             baseline_p_daily=st.session_state.get("baseline_p_daily") or {},
                         )
                         # ── Helper: single-signal daily run chart ──────
