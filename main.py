@@ -1992,13 +1992,13 @@ def build_assessment_charts(
                 ),
             ))
 
-            y_lo = min(min(ys) * 1.35, drift_action * 1.5)
-            y_hi = max(max(ys) * 1.35 if max(ys) > 0 else 0.005, 0.02)
+            y_lo = round(min(min(ys) * 1.35, drift_action * 1.5), 3)
+            y_hi = round(max(max(ys) * 1.35 if max(ys) > 0 else 0.005, 0.02), 3)
 
             fig.add_hline(y=0, line_color="#AAAAAA", line_width=1, line_dash="dot")
             for val, col, label in [
-                (drift_watch,  "#F1C40F", f"Watch {drift_watch:+.2f}"),
-                (drift_action, "#A32D2D", f"Critical {drift_action:+.2f}"),
+                (round(drift_watch,  3), "#F1C40F", f"Watch {drift_watch:+.2f}"),
+                (round(drift_action, 3), "#A32D2D", f"Critical {drift_action:+.2f}"),
             ]:
                 fig.add_hline(
                     y=val, line_color=col, line_dash="dash", line_width=1.2,
@@ -2016,7 +2016,7 @@ def build_assessment_charts(
                     font=dict(size=13),
                 ),
                 xaxis_title="Band centre (kW)",
-                yaxis=dict(title="PF drift", range=[y_lo, y_hi], tickformat="+.3f"),
+                yaxis=dict(title="PF drift", range=[y_lo, y_hi], tickformat="+.2f"),
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=50, r=130, t=65, b=50),
                 hovermode="x unified", font=dict(size=11), height=320,
