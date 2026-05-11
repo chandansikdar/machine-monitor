@@ -5193,6 +5193,66 @@ with tab_analysis:
                                          (_iuf_g_crit,  "#C0392B", f"Critical {_iuf_g_crit:.0f}%")],
                                         y_fmt=".1f", title_suffix="IUF (%)",
                                     )
+                                    # Regression statistics
+                                    _iuf_rc = _rc_iuf_s.copy()
+                                    _iuf_rc.index = pd.to_datetime(_iuf_rc.index)
+                                    _iuf_daily = _iuf_rc.resample("D").mean().dropna()
+                                    if len(_iuf_daily) >= 3:
+                                        _iuf_y   = _iuf_daily.values
+                                        _iuf_x   = np.arange(len(_iuf_y))
+                                        _coeffs  = np.polyfit(_iuf_x, _iuf_y, 1)
+                                        _slope   = _coeffs[0]          # IUF % change per day
+                                        _y_fit   = np.polyval(_coeffs, _iuf_x)
+                                        _ss_res  = float(np.sum((_iuf_y - _y_fit) ** 2))
+                                        _ss_tot  = float(np.sum((_iuf_y - _iuf_y.mean()) ** 2))
+                                        _r2      = 1 - _ss_res / _ss_tot if _ss_tot > 0 else 0.0
+                                        _latest  = float(_iuf_y[-1])
+                                        # Days to critical (only meaningful if trend is worsening)
+                                        _days_to_crit = None
+                                        if _slope > 0 and _latest < _iuf_g_crit:
+                                            _days_to_crit = int(
+                                                np.ceil((_iuf_g_crit - _latest) / _slope)
+                                            )
+                                        # Display metrics
+                                        _rm1, _rm2, _rm3 = st.columns(3)
+                                        _slope_dir = "\u2191 worsening" if _slope > 0 \
+                                                     else "\u2193 improving" if _slope < 0 \
+                                                     else "\u2192 stable"
+                                        _rm1.metric(
+                                            "Trend slope",
+                                            f"{_slope:+.3f}%/day",
+                                            delta=_slope_dir,
+                                            delta_color="inverse",
+                                            help="Linear regression slope of daily IUF means. Positive = worsening.",
+                                        )
+                                        _rm2.metric(
+                                            "Fit quality (R\u00b2)",
+                                            f"{_r2:.3f}",
+                                            help="R\u00b2 of the linear trend. Values near 1.0 indicate a consistent trend; near 0 indicates scatter with no clear direction.",
+                                        )
+                                        if _days_to_crit is not None:
+                                            _rm3.metric(
+                                                f"Days to Critical ({_iuf_g_crit:.0f}%)",
+                                                f"{_days_to_crit} days",
+                                                delta="\u26a0\ufe0f At current rate",
+                                                delta_color="off",
+                                                help=f"Estimated days until IUF reaches the Critical threshold "
+                                                     f"of {_iuf_g_crit:.0f}% if the current trend continues.",
+                                            )
+                                        elif _slope <= 0:
+                                            _rm3.metric(
+                                                f"Days to Critical ({_iuf_g_crit:.0f}%)",
+                                                "N/A",
+                                                delta="\u2193 Not worsening",
+                                                delta_color="off",
+                                            )
+                                        else:
+                                            _rm3.metric(
+                                                f"Days to Critical ({_iuf_g_crit:.0f}%)",
+                                                "Already exceeded",
+                                                delta="\U0001f534",
+                                                delta_color="off",
+                                            )
                                 except Exception as _e:
                                     st.warning(f"IUF run chart: {_e}")
 
