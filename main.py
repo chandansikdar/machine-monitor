@@ -2350,21 +2350,87 @@ def build_assessment_charts(
             h_lines=p_hlines or None,
         ))
 
-    # PF_machine chart
+    # PF_machine daily average run chart
     pf_hlines = []
     if baseline and baseline.bands:
         for b in baseline.bands[:6]:
             pf_hlines.append((
-                b.mean_pf_baseline, "rgba(180,180,180,0.6)", "dot",
-                f"Band {b.centre_kw:.0f} kW baseline PF",
+                b.mean_pf_baseline, "rgba(100,100,100,0.55)", "dot",
+                f"Baseline PF @ {b.centre_kw/1000:.0f} kW",
             ))
-    figs.append(_chart(
-        data.index, raw_pf,
-        cl_idx, cl_pf if has_cleaned else None,
-        "Machine Power Factor (PF_machine)", "PF_machine",
-        h_lines=pf_hlines or None,
-        y_range=[0, 1.05],
-    ))
+
+    try:
+        _pf_src = cl_pf if has_cleaned else raw_pf
+        _pf_idx = pd.to_datetime(
+            (cleaned_data if has_cleaned else data).index
+        )
+        _pf_s = _pf_src.copy()
+        _pf_s.index = _pf_idx
+        _pf_daily_avg = _pf_s.resample("D").mean().dropna()
+        if len(_pf_daily_avg) >= 1:
+            _pfrun = go.Figure()
+            _pfd_x = _pf_daily_avg.index.tolist()
+            _pfd_y = _pf_daily_avg.values.tolist()
+            _pfrun.add_trace(go.Scatter(
+                x=_pfd_x, y=_pfd_y,
+                mode="lines+markers",
+                name="Daily avg PF",
+                line=dict(color="#185FA5", width=2),
+                marker=dict(size=5),
+                hovertemplate="<b>PF</b> %{y:.4f}<extra></extra>",
+            ))
+            if len(_pfd_y) >= 2:
+                _pfxt = np.arange(len(_pfd_x))
+                _pfyt = np.polyval(np.polyfit(_pfxt, _pfd_y, 1), _pfxt)
+                _pfrun.add_trace(go.Scatter(
+                    x=_pfd_x, y=_pfyt.tolist(),
+                    mode="lines", showlegend=False, hoverinfo="skip",
+                    line=dict(color="#185FA5", width=1.2, dash="dot"),
+                ))
+            for _hv, _hc, _hd, _hl in (pf_hlines or []):
+                _pfrun.add_shape(
+                    type="line", xref="paper", x0=0, x1=1,
+                    yref="y", y0=_hv, y1=_hv,
+                    line=dict(color=_hc, width=1,
+                              dash={"dot": "dot", "dash": "dash",
+                                    "dashdot": "dashdot"}.get(_hd, "dot")),
+                )
+                _pfrun.add_annotation(
+                    xref="paper", x=1.01, yref="y", y=_hv,
+                    text=_hl, showarrow=False, xanchor="left",
+                    font=dict(size=8, color="#888"),
+                )
+            _pf_y_min = min(_pfd_y) if _pfd_y else 0.7
+            _pfrun.update_layout(
+                title=dict(
+                    text="Machine Power Factor — Daily Average"
+                         "<br><sup>Each point = daily mean (cleaned samples)"
+                         "  \u2502  Dotted = linear trend"
+                         "  \u2502  Grey lines = baseline band PF values</sup>",
+                    font=dict(size=13),
+                ),
+                xaxis=dict(title="Date", tickformat="%d %b"),
+                yaxis=dict(
+                    title="PF",
+                    range=[max(0, _pf_y_min * 0.97), 1.02],
+                    tickformat=".3f",
+                ),
+                showlegend=False,
+                hovermode="x unified",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=55, r=160, t=65, b=50),
+                height=300, font=dict(size=11),
+            )
+            figs.append(_pfrun)
+    except Exception:
+        figs.append(_chart(
+            data.index, raw_pf,
+            cl_idx, cl_pf if has_cleaned else None,
+            "Machine Power Factor (PF_machine)", "PF_machine",
+            h_lines=pf_hlines or None,
+            y_range=[0, 1.05],
+        ))
 
     # PF gauge — inverted scale (high PF = healthy)
     if has_cleaned and len(cl_pf) > 0:
