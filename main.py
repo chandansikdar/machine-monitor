@@ -2346,6 +2346,9 @@ for _k, _v in [
     ("_ep_just_saved",           False),  # flag to show save confirmation after rerun
     ("last_phase_bands",         {}),     # {1: [BandRecord], 2: [...], 3: [...]}
     ("last_phase_bl_all_bins",   {}),     # {1: all 100 bins, 2: ..., 3: ...}
+    ("baseline_vuf_mean",        None),   # baseline period mean VUF %
+    ("baseline_iuf_mean",        None),   # baseline period mean IUF %
+    ("baseline_ph_iuf",          {}),     # {1: mean%, 2: mean%, 3: mean%}
     # Gauge threshold defaults — version-stamped so a code change forces a clean reset.
     # _GAUGE_SS_VER should be bumped whenever the defaults or valid ranges change.
     ("vuf_gauge_watch",    float(VUF_WATCH)),
@@ -3987,6 +3990,40 @@ with tab_analysis:
                             else:
                                 st.session_state["last_phase_bands"]       = {}
                                 st.session_state["last_phase_bl_all_bins"] = {}
+
+                            # Baseline imbalance averages — stored for gauge comparison display
+                            _bl_vuf_mean = None
+                            _bl_iuf_mean = None
+                            _bl_ph_iuf   = {}
+                            if _cleaned_bl_for_phase is not None and len(_cleaned_bl_for_phase) > 0:
+                                try:
+                                    _bv1=_cleaned_bl_for_phase["phase_1_voltage"]
+                                    _bv2=_cleaned_bl_for_phase["phase_2_voltage"]
+                                    _bv3=_cleaned_bl_for_phase["phase_3_voltage"]
+                                    _bva=(_bv1+_bv2+_bv3)/3.0
+                                    _bl_vuf_mean = round(float(
+                                        (pd.concat([(_bv1-_bva).abs(),(_bv2-_bva).abs(),(_bv3-_bva).abs()],axis=1)
+                                         .max(axis=1)/_bva.replace(0,np.nan)*100.0).mean()
+                                    ), 3)
+                                    _bi1=_cleaned_bl_for_phase["phase_1_current"]
+                                    _bi2=_cleaned_bl_for_phase["phase_2_current"]
+                                    _bi3=_cleaned_bl_for_phase["phase_3_current"]
+                                    _bia=(_bi1+_bi2+_bi3)/3.0
+                                    _bis=_bia.replace(0,np.nan)
+                                    _bl_iuf_mean = round(float(
+                                        (pd.concat([(_bi1-_bia).abs(),(_bi2-_bia).abs(),(_bi3-_bia).abs()],axis=1)
+                                         .max(axis=1)/_bis*100.0).mean()
+                                    ), 2)
+                                    _bl_ph_iuf = {
+                                        1: round(float(((_bi1-_bia).abs()/_bis*100).mean()), 2),
+                                        2: round(float(((_bi2-_bia).abs()/_bis*100).mean()), 2),
+                                        3: round(float(((_bi3-_bia).abs()/_bis*100).mean()), 2),
+                                    }
+                                except Exception:
+                                    pass
+                            st.session_state["baseline_vuf_mean"] = _bl_vuf_mean
+                            st.session_state["baseline_iuf_mean"] = _bl_iuf_mean
+                            st.session_state["baseline_ph_iuf"]   = _bl_ph_iuf
                             st.rerun()
 
                 if _run_disabled:
@@ -4936,7 +4973,49 @@ with tab_analysis:
                                     st.warning(f"IUF run chart: {_e}")
 
                             st.plotly_chart(fig, use_container_width=True)
+
+                            # Below VUF gauge — baseline comparison
+                            if "VUF Gauge" in _fig_title:
+                                _bl_vuf = st.session_state.get("baseline_vuf_mean")
+                                if _bl_vuf is not None:
+                                    _delta_vuf = round(_latest_vuf - _bl_vuf, 3) \
+                                                 if _latest_vuf is not None else None
+                                    _bvc1, _bvc2 = st.columns([1, 2])
+                                    _bvc1.metric(
+                                        label="Baseline mean VUF",
+                                        value=f"{_bl_vuf:.2f}\u00a0%",
+                                        help="Mean VUF over the full baseline period (cleaned samples)",
+                                    )
+                                    if _delta_vuf is not None:
+                                        _bvc2.metric(
+                                            label="Change vs baseline",
+                                            value=f"{_delta_vuf:+.2f}\u00a0%",
+                                            delta=f"{_delta_vuf:+.2f}%",
+                                            delta_color="inverse",
+                                            help="Latest daily mean minus baseline mean (negative = improvement)",
+                                        )
                             if "IUF Gauge" in _fig_title and _latest_ph_iuf:
+                                # Baseline IUF overall comparison
+                                _bl_iuf = st.session_state.get("baseline_iuf_mean")
+                                if _bl_iuf is not None:
+                                    _delta_iuf = round(_latest_iuf - _bl_iuf, 2) \
+                                                 if _latest_iuf is not None else None
+                                    _bic1, _bic2 = st.columns([1, 2])
+                                    _bic1.metric(
+                                        label="Baseline mean IUF",
+                                        value=f"{_bl_iuf:.1f}\u00a0%",
+                                        help="Mean IUF over the full baseline period (cleaned samples)",
+                                    )
+                                    if _delta_iuf is not None:
+                                        _bic2.metric(
+                                            label="Change vs baseline",
+                                            value=f"{_delta_iuf:+.1f}\u00a0%",
+                                            delta=f"{_delta_iuf:+.1f}%",
+                                            delta_color="inverse",
+                                            help="Latest daily mean minus baseline mean (negative = improvement)",
+                                        )
+                                # Per-phase: latest vs baseline
+                                _bl_ph = st.session_state.get("baseline_ph_iuf") or {}
                                 try:
                                     _worst_ph = max(_latest_ph_iuf, key=_latest_ph_iuf.get)
                                     _mc1, _mc2, _mc3 = st.columns(3)
@@ -4947,14 +5026,17 @@ with tab_analysis:
                                             "\U0001f7e0 Watch"    if _pval >= _iuf_g_watch else
                                             "\U0001f7e2 Normal"
                                         )
+                                        _bl_pval = _bl_ph.get(_ph)
+                                        _ph_delta = f"{_pval - _bl_pval:+.1f}% vs baseline" \
+                                                    if _bl_pval is not None else _tier_s
                                         _mc.metric(
                                             label=f"Phase\u00a0{_ph} imbalance"
                                                   + (" \u2605 Worst" if _ph == _worst_ph else ""),
                                             value=f"{_pval:.1f}\u00a0%",
-                                            delta=_tier_s,
-                                            delta_color="off",
-                                            help=f"Per-phase current deviation as % of 3-phase average"
-                                                 f" \u2014 {_ph_date_used or 'latest available day'}",
+                                            delta=_ph_delta,
+                                            delta_color="inverse" if _bl_pval is not None else "off",
+                                            help=f"Per-phase current deviation \u2014 {_ph_date_used or 'latest available day'}"
+                                                 + (f" | Baseline: {_bl_pval:.1f}%" if _bl_pval is not None else ""),
                                         )
                                 except Exception as _pe:
                                     st.caption(f"Per-phase breakdown unavailable: {_pe}")
