@@ -4838,9 +4838,17 @@ with tab_analysis:
                                 st.warning(f"Imbalance run chart data error: {_rce}")
 
                         for _fig_idx, fig in enumerate(_report_figs):
-                            _fig_title = getattr(
+                            # Title can be on layout (Scatter charts) or on the
+                            # Indicator trace (gauges) — check both
+                            _layout_title = getattr(
                                 getattr(fig.layout, "title", None), "text", ""
                             ) or ""
+                            _trace_title = ""
+                            if fig.data and hasattr(fig.data[0], "title"):
+                                _trace_title = getattr(
+                                    getattr(fig.data[0], "title", None), "text", ""
+                                ) or ""
+                            _fig_title = _layout_title or _trace_title
 
                             # Insert VUF run chart before VUF gauge
                             if "VUF Gauge" in _fig_title and _rc_vuf_s is not None:
