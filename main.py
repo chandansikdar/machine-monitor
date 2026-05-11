@@ -4967,20 +4967,28 @@ with tab_analysis:
                         _pf_g_crit   = float(st.session_state.get("pf_gauge_critical", 0.75))
                         _pf_d_watch    = float(st.session_state.get("pf_drift_watch",    PF_DRIFT_WATCH))
                         _pf_d_critical = float(st.session_state.get("pf_drift_critical", PF_DRIFT_ACTION))
-                        _warn_vuf = _vuf_g_watch >= _vuf_g_crit
-                        _warn_iuf = _iuf_g_watch >= _iuf_g_crit
-                        _warn_pf  = _pf_g_watch  <= _pf_g_crit
-                        if _warn_vuf or _warn_iuf or _warn_pf:
-                            st.warning("Invalid thresholds detected. Affected gauge(s) reset to defaults.")
+                        _warn_vuf      = _vuf_g_watch >= _vuf_g_crit
+                        _warn_iuf      = _iuf_g_watch >= _iuf_g_crit
+                        _warn_pf       = _pf_g_watch  <= _pf_g_crit
+                        # Drift: Watch must be less negative than Critical
+                        # (Watch -0.01 > Critical -0.03 numerically)
+                        _warn_pf_drift = _pf_d_watch  <= _pf_d_critical
                         if _warn_vuf:
+                            st.warning("VUF: Watch threshold must be below Critical. Reset to defaults.")
                             _vuf_g_watch = float(VUF_WATCH)
                             _vuf_g_crit  = float(VUF_CRITICAL)
                         if _warn_iuf:
+                            st.warning("IUF: Watch threshold must be below Critical. Reset to defaults.")
                             _iuf_g_watch = float(IUF_WATCH)
                             _iuf_g_crit  = float(IUF_CRITICAL)
                         if _warn_pf:
+                            st.warning("PF level: Watch threshold must be above Critical. Reset to defaults.")
                             _pf_g_watch = 0.85
                             _pf_g_crit  = 0.75
+                        if _warn_pf_drift:
+                            st.warning("PF drift: Watch must be less negative than Critical (e.g. Watch \u2212 0.01, Critical \u2212 0.03). Reset to defaults.")
+                            _pf_d_watch    = float(PF_DRIFT_WATCH)
+                            _pf_d_critical = float(PF_DRIFT_ACTION)
 
                         # Latest daily VUF and IUF — computed before build so
                         # gauges show the most recent day's value
