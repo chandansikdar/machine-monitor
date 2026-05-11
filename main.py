@@ -5177,8 +5177,8 @@ with tab_analysis:
                                 try:
                                     _daily_run_chart(
                                         _cleaned_chart, _rc_vuf_s, "#054D5F",
-                                        [(VUF_WATCH,    "#E67E22", f"Watch {VUF_WATCH:.1f}%"),
-                                         (VUF_CRITICAL, "#C0392B", f"Critical {VUF_CRITICAL:.1f}%")],
+                                        [(_vuf_g_watch, "#E67E22", f"Watch {_vuf_g_watch:.1f}%"),
+                                         (_vuf_g_crit,  "#C0392B", f"Critical {_vuf_g_crit:.1f}%")],
                                         y_fmt=".2f", title_suffix="VUF (%)",
                                     )
                                 except Exception as _e:
@@ -5189,8 +5189,8 @@ with tab_analysis:
                                 try:
                                     _daily_run_chart(
                                         _cleaned_chart, _rc_iuf_s, "#C8A84B",
-                                        [(IUF_WATCH,    "#E67E22", f"Watch {IUF_WATCH:.0f}%"),
-                                         (IUF_CRITICAL, "#C0392B", f"Critical {IUF_CRITICAL:.0f}%")],
+                                        [(_iuf_g_watch, "#E67E22", f"Watch {_iuf_g_watch:.0f}%"),
+                                         (_iuf_g_crit,  "#C0392B", f"Critical {_iuf_g_crit:.0f}%")],
                                         y_fmt=".1f", title_suffix="IUF (%)",
                                     )
                                 except Exception as _e:
