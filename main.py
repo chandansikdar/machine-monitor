@@ -2222,14 +2222,13 @@ def build_assessment_charts(
             unit="%",
         ))
 
-    # P_total chart — baseline avg + 20% load precondition threshold
+    # P_total daily average run chart
     p_hlines = []
     if record.zone4 and record.zone4.p_baseline_avg_kw:
         p_hlines.append((
             record.zone4.p_baseline_avg_kw, "#054D5F", "dashdot",
             f"Baseline avg {record.zone4.p_baseline_avg_kw:.1f} kW",
         ))
-    # Assessment period average from cleaned data
     if cleaned_data is not None and not cleaned_data.empty:
         _p_cols = ["phase_1_active_power", "phase_2_active_power", "phase_3_active_power"]
         if all(c in cleaned_data.columns for c in _p_cols):
@@ -2241,7 +2240,6 @@ def build_assessment_charts(
                     _assess_avg_kw, "#C8A84B", "dash",
                     f"Assessment avg {_assess_avg_kw:.1f} kW",
                 ))
-    # 20% load precondition threshold — derive from meta or estimate from data
     _p40_kw = None
     if meta:
         _p_shaft = float(meta.get("p_rated_shaft_kw", 0))
@@ -2249,7 +2247,6 @@ def build_assessment_charts(
         if _p_shaft > 0 and _eta > 0:
             _p40_kw = 0.20 * (_p_shaft / _eta)
         else:
-            # Estimate from data 95th percentile (same logic as clean_samples)
             _p95_raw = float(raw_p_kw[raw_p_kw > 0].quantile(0.95)) if (raw_p_kw > 0).any() else 0.0
             _p_rated_est = _p95_raw / 0.95 if _p95_raw > 0 else 0.0
             _p40_kw = 0.20 * _p_rated_est if _p_rated_est > 0 else None
@@ -2258,12 +2255,73 @@ def build_assessment_charts(
             _p40_kw, "#177E40", "dot",
             f"20% load threshold ({_p40_kw:.1f} kW)",
         ))
-    figs.append(_chart(
-        data.index, raw_p_kw,
-        cl_idx, cl_p_kw if has_cleaned else None,
-        "Total Active Power (P_total)", "P_total (kW)",
-        h_lines=p_hlines or None,
-    ))
+
+    try:
+        _p_src = cleaned_data if has_cleaned else data
+        _p_idx = pd.to_datetime(_p_src.index)
+        _p_daily = (cl_p_kw if has_cleaned else raw_p_kw).copy()
+        _p_daily.index = _p_idx
+        _p_daily_avg = _p_daily.resample("D").mean().dropna()
+        if len(_p_daily_avg) >= 1:
+            _prun = go.Figure()
+            _pd_x = _p_daily_avg.index.tolist()
+            _pd_y = _p_daily_avg.values.tolist()
+            _prun.add_trace(go.Scatter(
+                x=_pd_x, y=_pd_y,
+                mode="lines+markers",
+                name="Daily avg P_total",
+                line=dict(color="#185FA5", width=2),
+                marker=dict(size=5),
+                hovertemplate="<b>P_total</b> %{y:.1f} kW<extra></extra>",
+            ))
+            if len(_pd_y) >= 2:
+                _pxt = np.arange(len(_pd_x))
+                _pyt = np.polyval(np.polyfit(_pxt, _pd_y, 1), _pxt)
+                _prun.add_trace(go.Scatter(
+                    x=_pd_x, y=_pyt.tolist(),
+                    mode="lines", showlegend=False, hoverinfo="skip",
+                    line=dict(color="#185FA5", width=1.2, dash="dot"),
+                ))
+            _p_y_max = max(_pd_y) if _pd_y else 0
+            for _hv, _hc, _hd, _hl in (p_hlines or []):
+                _prun.add_shape(
+                    type="line", xref="paper", x0=0, x1=1,
+                    yref="y", y0=_hv, y1=_hv,
+                    line=dict(color=_hc, width=1.2,
+                              dash={"dashdot": "dashdot", "dash": "dash",
+                                    "dot": "dot", "solid": "solid"}.get(_hd, "dash")),
+                )
+                _prun.add_annotation(
+                    xref="paper", x=1.01, yref="y", y=_hv,
+                    text=_hl, showarrow=False, xanchor="left",
+                    font=dict(size=8, color=_hc),
+                )
+                _p_y_max = max(_p_y_max, _hv)
+            _prun.update_layout(
+                title=dict(
+                    text="Total Active Power — Daily Average (P_total)"
+                         "<br><sup>Each point = daily mean (cleaned samples)"
+                         "  \u2502  Dotted = linear trend</sup>",
+                    font=dict(size=13),
+                ),
+                xaxis=dict(title="Date", tickformat="%d %b"),
+                yaxis=dict(title="P_total (kW)",
+                           range=[0, _p_y_max * 1.25 if _p_y_max > 0 else 10]),
+                showlegend=False,
+                hovermode="x unified",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=55, r=160, t=65, b=50),
+                height=300, font=dict(size=11),
+            )
+            figs.append(_prun)
+    except Exception:
+        figs.append(_chart(
+            data.index, raw_p_kw,
+            cl_idx, cl_p_kw if has_cleaned else None,
+            "Total Active Power (P_total)", "P_total (kW)",
+            h_lines=p_hlines or None,
+        ))
 
     # PF_machine chart
     pf_hlines = []
