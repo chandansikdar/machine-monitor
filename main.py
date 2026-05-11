@@ -4750,105 +4750,123 @@ with tab_analysis:
                             pf_gauge_watch=_pf_g_watch,
                             pf_gauge_critical=_pf_g_crit,
                         )
-                        # ── Daily Imbalance Run Chart ──────────────────
+                        # ── Helper: single-signal daily run chart ──────
+                        def _daily_run_chart(df, signal, colour, thresholds,
+                                             y_fmt=".2f", title_suffix=""):
+                            """Render a daily-average run chart for one signal.
+                            signal : pd.Series with DatetimeIndex
+                            thresholds : [(value, colour, label), ...]
+                            """
+                            _daily = signal.resample("D").mean().dropna()
+                            if len(_daily) < 2:
+                                st.caption(
+                                    f"Daily run chart requires \u22652 days of data.")
+                                return
+                            _xd = _daily.index.tolist()
+                            _yv = _daily.values.tolist()
+                            _xt = np.arange(len(_xd))
+                            _yt = np.polyval(np.polyfit(_xt, _yv, 1), _xt)
+                            _fig = go.Figure()
+                            _fig.add_trace(go.Scatter(
+                                x=_xd, y=_yv, mode="lines+markers",
+                                name=title_suffix,
+                                line=dict(color=colour, width=2),
+                                marker=dict(size=5, color=colour),
+                                hovertemplate=f"<b>{title_suffix}</b>"
+                                              " %{y:" + y_fmt + "}"
+                                              "%<extra></extra>",
+                            ))
+                            _fig.add_trace(go.Scatter(
+                                x=_xd, y=_yt.tolist(), mode="lines",
+                                showlegend=False, hoverinfo="skip",
+                                line=dict(color=colour, width=1.2, dash="dot"),
+                            ))
+                            _y_max = max(_yv) if _yv else thresholds[-1][0]
+                            for _tv, _tc, _tl in thresholds:
+                                _fig.add_shape(
+                                    type="line", xref="paper", x0=0, x1=1,
+                                    yref="y", y0=_tv, y1=_tv,
+                                    line=dict(color=_tc, width=1.2, dash="dash"),
+                                )
+                                _fig.add_annotation(
+                                    xref="paper", x=1.01, yref="y", y=_tv,
+                                    text=_tl, showarrow=False, xanchor="left",
+                                    font=dict(size=8, color=_tc),
+                                )
+                            _fig.update_layout(
+                                title=dict(
+                                    text=(
+                                        f"Daily Run Chart \u2014 {title_suffix}"
+                                        "<br><sup>Each point = daily mean"
+                                        " (cleaned samples) \u2502"
+                                        " Dotted = linear trend</sup>"
+                                    ),
+                                    font=dict(size=13),
+                                ),
+                                xaxis=dict(title="Date", tickformat="%d %b"),
+                                yaxis=dict(
+                                    title=title_suffix,
+                                    range=[0, max(_y_max * 1.4,
+                                                  thresholds[-1][0] * 1.6)],
+                                    tickformat=y_fmt,
+                                ),
+                                showlegend=False,
+                                hovermode="x unified",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                margin=dict(l=55, r=130, t=65, b=50),
+                                height=300, font=dict(size=11),
+                            )
+                            st.plotly_chart(_fig, use_container_width=True)
+
+                        # Pre-compute series if cleaned data available
+                        _rc_vuf_s = None
+                        _rc_iuf_s = None
                         if _cleaned_chart is not None and not _cleaned_chart.empty:
                             try:
                                 _rc = _cleaned_chart.copy()
                                 _rc.index = pd.to_datetime(_rc.index)
-                                _rv1 = _rc["phase_1_voltage"]
-                                _rv2 = _rc["phase_2_voltage"]
-                                _rv3 = _rc["phase_3_voltage"]
-                                _rv_avg = (_rv1+_rv2+_rv3)/3.0
-                                _vuf_s = (pd.concat([(_rv1-_rv_avg).abs(),
-                                                     (_rv2-_rv_avg).abs(),
-                                                     (_rv3-_rv_avg).abs()], axis=1)
-                                          .max(axis=1) / _rv_avg.replace(0, np.nan) * 100.0)
-                                _ri1 = _rc["phase_1_current"]
-                                _ri2 = _rc["phase_2_current"]
-                                _ri3 = _rc["phase_3_current"]
-                                _ri_avg = (_ri1+_ri2+_ri3)/3.0
-                                _iuf_s = (pd.concat([(_ri1-_ri_avg).abs(),
-                                                     (_ri2-_ri_avg).abs(),
-                                                     (_ri3-_ri_avg).abs()], axis=1)
-                                          .max(axis=1) / _ri_avg.replace(0, np.nan) * 100.0)
-                                _dv = _vuf_s.resample("D").mean().dropna()
-                                _di = _iuf_s.resample("D").mean().dropna()
-                                if len(_dv) >= 2 and len(_di) >= 2:
-                                    _vd = _dv.index.tolist(); _vv = _dv.values.tolist()
-                                    _id = _di.index.tolist(); _iv = _di.values.tolist()
-                                    _xn = np.arange(len(_vd))
-                                    _vt = np.polyval(np.polyfit(_xn, _vv, 1), _xn)
-                                    _xt = np.arange(len(_id))
-                                    _it = np.polyval(np.polyfit(_xt, _iv, 1), _xt)
-                                    _rf = go.Figure()
-                                    _rf.add_trace(go.Scatter(x=_vd, y=_vv, name="VUF (%)",
-                                        mode="lines+markers",
-                                        line=dict(color="#054D5F", width=2),
-                                        marker=dict(size=5), yaxis="y",
-                                        hovertemplate="<b>VUF</b> %{y:.2f}%<extra></extra>"))
-                                    _rf.add_trace(go.Scatter(x=_vd, y=_vt.tolist(),
-                                        mode="lines", showlegend=False, hoverinfo="skip",
-                                        line=dict(color="#054D5F", width=1.2, dash="dot"), yaxis="y"))
-                                    _rf.add_trace(go.Scatter(x=_id, y=_iv, name="IUF (%)",
-                                        mode="lines+markers",
-                                        line=dict(color="#C8A84B", width=2),
-                                        marker=dict(size=5), yaxis="y2",
-                                        hovertemplate="<b>IUF</b> %{y:.1f}%<extra></extra>"))
-                                    _rf.add_trace(go.Scatter(x=_id, y=_it.tolist(),
-                                        mode="lines", showlegend=False, hoverinfo="skip",
-                                        line=dict(color="#C8A84B", width=1.2, dash="dot"), yaxis="y2"))
-                                    for _yv, _co, _lb in [(VUF_WATCH,"#E67E22",f"VUF Watch {VUF_WATCH:.1f}%"),
-                                                          (VUF_CRITICAL,"#C0392B",f"VUF Critical {VUF_CRITICAL:.1f}%")]:
-                                        _rf.add_shape(type="line", xref="paper", x0=0, x1=1,
-                                            yref="y", y0=_yv, y1=_yv,
-                                            line=dict(color=_co, width=1, dash="dash"))
-                                        _rf.add_annotation(xref="paper", x=1.01, yref="y", y=_yv,
-                                            text=_lb, showarrow=False, xanchor="left",
-                                            font=dict(size=8, color=_co))
-                                    for _yv, _co, _lb in [(IUF_WATCH,"#E67E22",f"IUF Watch {IUF_WATCH:.0f}%"),
-                                                          (IUF_CRITICAL,"#C0392B",f"IUF Critical {IUF_CRITICAL:.0f}%")]:
-                                        _rf.add_shape(type="line", xref="paper", x0=0, x1=1,
-                                            yref="y2", y0=_yv, y1=_yv,
-                                            line=dict(color=_co, width=1, dash="dot"))
-                                    _rf.update_layout(
-                                        title=dict(text=(
-                                            "Daily Imbalance Run Chart \u2014 VUF & IUF"
-                                            "<br><sup>Dotted lines = linear trend"
-                                            "  \u2502  Dashed = VUF thresholds (left axis)"
-                                            "  \u2502  Dotted = IUF thresholds (right axis)</sup>"),
-                                            font=dict(size=13)),
-                                        xaxis=dict(title="Date", tickformat="%d %b"),
-                                        yaxis=dict(
-                                            title=dict(text="VUF (%)", font=dict(color="#054D5F")),
-                                            tickfont=dict(color="#054D5F"),
-                                            range=[0, max(max(_vv)*1.4, VUF_CRITICAL*1.6)],
-                                            tickformat=".2f"),
-                                        yaxis2=dict(
-                                            title=dict(text="IUF (%)", font=dict(color="#C8A84B")),
-                                            tickfont=dict(color="#C8A84B"),
-                                            overlaying="y", side="right",
-                                            range=[0, max(max(_iv)*1.4, IUF_CRITICAL*1.6)],
-                                            tickformat=".1f"),
-                                        legend=dict(orientation="h", y=1.08, x=0,
-                                            font=dict(size=10)),
-                                        hovermode="x unified",
-                                        plot_bgcolor="rgba(0,0,0,0)",
-                                        paper_bgcolor="rgba(0,0,0,0)",
-                                        margin=dict(l=55, r=130, t=65, b=50),
-                                        height=340, font=dict(size=11),
-                                    )
-                                    st.plotly_chart(_rf, use_container_width=True)
-                                else:
-                                    st.caption("Daily run chart requires \u22652 days of data.")
+                                _rv1=_rc["phase_1_voltage"]; _rv2=_rc["phase_2_voltage"]; _rv3=_rc["phase_3_voltage"]
+                                _rva=(_rv1+_rv2+_rv3)/3.0
+                                _rc_vuf_s=(pd.concat([(_rv1-_rva).abs(),(_rv2-_rva).abs(),(_rv3-_rva).abs()],axis=1)
+                                           .max(axis=1)/_rva.replace(0,np.nan)*100.0)
+                                _ri1=_rc["phase_1_current"]; _ri2=_rc["phase_2_current"]; _ri3=_rc["phase_3_current"]
+                                _ria=(_ri1+_ri2+_ri3)/3.0
+                                _rc_iuf_s=(pd.concat([(_ri1-_ria).abs(),(_ri2-_ria).abs(),(_ri3-_ria).abs()],axis=1)
+                                           .max(axis=1)/_ria.replace(0,np.nan)*100.0)
                             except Exception as _rce:
-                                st.warning(f"Daily run chart error: {_rce}")
+                                st.warning(f"Imbalance run chart data error: {_rce}")
 
                         for _fig_idx, fig in enumerate(_report_figs):
-                            st.plotly_chart(fig, use_container_width=True)
-                            # Detect IUF gauge by title (robust to conditional VUF gauge)
                             _fig_title = getattr(
                                 getattr(fig.layout, "title", None), "text", ""
                             ) or ""
+
+                            # Insert VUF run chart before VUF gauge
+                            if "VUF Gauge" in _fig_title and _rc_vuf_s is not None:
+                                try:
+                                    _daily_run_chart(
+                                        _cleaned_chart, _rc_vuf_s, "#054D5F",
+                                        [(VUF_WATCH,    "#E67E22", f"Watch {VUF_WATCH:.1f}%"),
+                                         (VUF_CRITICAL, "#C0392B", f"Critical {VUF_CRITICAL:.1f}%")],
+                                        y_fmt=".2f", title_suffix="VUF (%)",
+                                    )
+                                except Exception as _e:
+                                    st.warning(f"VUF run chart: {_e}")
+
+                            # Insert IUF run chart before IUF gauge
+                            if "IUF Gauge" in _fig_title and _rc_iuf_s is not None:
+                                try:
+                                    _daily_run_chart(
+                                        _cleaned_chart, _rc_iuf_s, "#C8A84B",
+                                        [(IUF_WATCH,    "#E67E22", f"Watch {IUF_WATCH:.0f}%"),
+                                         (IUF_CRITICAL, "#C0392B", f"Critical {IUF_CRITICAL:.0f}%")],
+                                        y_fmt=".1f", title_suffix="IUF (%)",
+                                    )
+                                except Exception as _e:
+                                    st.warning(f"IUF run chart: {_e}")
+
+                            st.plotly_chart(fig, use_container_width=True)
                             if "IUF Gauge" in _fig_title and _cleaned_chart is not None:
                                 try:
                                     _ci1 = _cleaned_chart["phase_1_current"]
