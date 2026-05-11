@@ -1992,8 +1992,16 @@ def build_assessment_charts(
                 ),
             ))
 
-            y_lo = round(min(min(ys) * 1.35, drift_action * 1.5), 3)
-            y_hi = round(max(max(ys) * 1.35 if max(ys) > 0 else 0.005, 0.02), 3)
+            y_lo = round(min(min(ys) * 1.35, drift_action * 1.5), 2)
+            y_hi = round(max(max(ys) * 1.35 if max(ys) > 0 else 0.005, 0.02), 2)
+            # Build explicit tick positions to avoid float precision noise on labels
+            _tick_step = 0.05
+            import math as _math
+            _tv_lo = _math.floor(y_lo / _tick_step) * _tick_step
+            _tv_hi = _math.ceil(y_hi  / _tick_step) * _tick_step
+            _tickvals = [round(_tv_lo + i * _tick_step, 2)
+                         for i in range(int(round((_tv_hi - _tv_lo) / _tick_step)) + 1)]
+            _ticktext = [f"{v:+.2f}" for v in _tickvals]
 
             fig.add_hline(y=0, line_color="#AAAAAA", line_width=1, line_dash="dot")
             for val, col, label in [
@@ -2016,7 +2024,8 @@ def build_assessment_charts(
                     font=dict(size=13),
                 ),
                 xaxis_title="Band centre (kW)",
-                yaxis=dict(title="PF drift", range=[y_lo, y_hi], tickformat="+.2f"),
+                yaxis=dict(title="PF drift", range=[y_lo, y_hi],
+                           tickvals=_tickvals, ticktext=_ticktext),
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=50, r=130, t=65, b=50),
                 hovermode="x unified", font=dict(size=11), height=320,
