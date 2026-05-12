@@ -1270,8 +1270,10 @@ def generate_assessment_report_pdf(
         sig = [b for b in record.motor_side.bands if b.drift_significant]
         if sig:
             worst = min(b.pf_drift for b in sig)
-            mside_pf_tier = ("critical" if worst <= -0.03 else
-                             "watch"    if worst <= -0.02 else None)
+            _pdf_zc = float(st.session_state.get("pf_drift_critical", -0.20))
+            _pdf_zw = float(st.session_state.get("pf_drift_watch",    -0.10))
+            mside_pf_tier = ("critical" if worst <= _pdf_zc else
+                             "watch"    if worst <= _pdf_zw else None)
 
     tiers   = [z1_tier, z2_tier, mside_pf_tier]
     overall = ("critical" if "critical" in tiers else
@@ -1414,7 +1416,8 @@ def generate_assessment_report_pdf(
     z3_msg = (f"Statistically significant PF drift in {n_sig} load band(s)."
               if n_sig else "No statistically significant PF drift detected.")
     story.append(_zone_row("Zone 3 — Motor Health (PF Drift)", mside_pf_tier, z3_msg,
-        "Watch \u2264-0.01  |  Alert \u2264-0.02  |  Action \u2264-0.03 (absolute PF)"))
+        f"Watch \u2264{float(st.session_state.get('pf_drift_watch', -0.10)):.2f}"
+        f"  |  Critical \u2264{float(st.session_state.get('pf_drift_critical', -0.20)):.2f} (absolute PF)"))
 
     z4_msg = "—"
     if record.zone4:
@@ -1598,8 +1601,10 @@ def generate_assessment_report_html(
         sig = [b for b in record.motor_side.bands if b.drift_significant]
         if sig:
             worst = min(b.pf_drift for b in sig)
-            if worst <= -0.03:   mside_pf_tier = "critical"
-            elif worst <= -0.02: mside_pf_tier = "watch"
+            _html_zc = float(st.session_state.get("pf_drift_critical", -0.20))
+            _html_zw = float(st.session_state.get("pf_drift_watch",    -0.10))
+            if worst <= _html_zc:   mside_pf_tier = "critical"
+            elif worst <= _html_zw: mside_pf_tier = "watch"
             else:                mside_pf_tier = None
     tiers.append(mside_pf_tier)
     overall = "critical" if "critical" in tiers else ("watch" if "watch" in tiers else None)
@@ -1877,7 +1882,7 @@ def generate_assessment_report_html(
     {'Statistically significant PF drift detected in ' + str(sum(1 for b in record.motor_side.bands if b.drift_significant)) + ' load band(s).'
       if record.motor_side and any(b.drift_significant for b in record.motor_side.bands)
       else 'No statistically significant PF drift detected.'}
-    <br><span style="font-size:11px;color:#888">Watch ≤-0.01 &nbsp;|&nbsp; Alert ≤-0.02 &nbsp;|&nbsp; Action ≤-0.03 (absolute)</span>
+    <br><span style="font-size:11px;color:#888">Watch ≤{float(st.session_state.get('pf_drift_watch', -0.10)):.2f} &nbsp;|&nbsp; Critical ≤{float(st.session_state.get('pf_drift_critical', -0.20)):.2f} (absolute)</span>
   </div>
 </div>
 
