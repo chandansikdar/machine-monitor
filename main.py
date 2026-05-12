@@ -1547,7 +1547,7 @@ def generate_assessment_report_pdf(
         f"PF Drift Critical \u2264{float(st.session_state.get('pf_drift_critical',-0.20)):.2f}"
     ))
 
-    # 4-cell decision matrix
+    # 3×3 decision matrix (PDF)
     _iuf_w   = gauge_thresholds.get("iuf_watch", 5.0)
     _iuf_c   = gauge_thresholds.get("iuf_critical", 10.0)
     _pfd_w   = float(st.session_state.get("pf_drift_watch",    -0.10))
@@ -1560,81 +1560,95 @@ def generate_assessment_report_pdf(
     _pfd_state = "Critical" if _pfd_val <= _pfd_c else "Watch" if _pfd_val <= _pfd_w else "Normal"
 
     _MATRIX = {
-        ("Normal",   "Normal"):   ("Cell 1", "Normal", "No motor-side fault indication.", "#177E40"),
-        ("Normal",   "Watch"):    ("Cell 3", "Watch",  "PF drift without IUF — winding or insulation degradation likely.", "#E67E22"),
-        ("Normal",   "Critical"): ("Cell 3", "Critical", "Significant PF drift, IUF normal — winding/insulation fault suspected.", "#C0392B"),
-        ("Watch",    "Normal"):   ("Cell 2", "Watch",  "IUF elevated, PF stable — supply or mechanical asymmetry; motor windings likely OK.", "#E67E22"),
-        ("Watch",    "Watch"):    ("Cell 4", "Watch",  "Both IUF and PF elevated — combined supply-side and motor-side involvement.", "#E67E22"),
-        ("Watch",    "Critical"): ("Cell 4", "Critical", "Critical PF drift with elevated IUF — urgent motor and supply investigation.", "#C0392B"),
-        ("Critical", "Normal"):   ("Cell 2", "Critical", "Severe IUF, PF normal — supply fault or mechanical imbalance; windings likely intact.", "#C0392B"),
-        ("Critical", "Watch"):    ("Cell 4", "Critical", "Severe IUF with developing PF drift — inspect both supply and motor.", "#C0392B"),
-        ("Critical", "Critical"): ("Cell 4", "Critical", "Both metrics critical — combined fault. Immediate inspection required.", "#C0392B"),
+        ("Normal",   "Normal"):   ("Normal",           "No motor-side fault indication.",                                       "#177E40"),
+        ("Normal",   "Watch"):    ("Motor/Winding",    "PF drift without IUF — winding or insulation degradation likely.",     "#E67E22"),
+        ("Normal",   "Critical"): ("Motor/Winding",    "Significant PF drift, IUF normal — winding/insulation fault suspected.","#C0392B"),
+        ("Watch",    "Normal"):   ("Supply/Mechanical","IUF elevated, PF stable — supply or mechanical asymmetry.",             "#E67E22"),
+        ("Watch",    "Watch"):    ("Combined",         "Both IUF and PF elevated — combined supply-side and motor-side.",       "#E67E22"),
+        ("Watch",    "Critical"): ("Combined",         "Critical PF drift with elevated IUF — urgent investigation.",           "#C0392B"),
+        ("Critical", "Normal"):   ("Supply/Mechanical","Severe IUF, PF normal — supply fault or mechanical imbalance.",         "#C0392B"),
+        ("Critical", "Watch"):    ("Combined",         "Severe IUF with developing PF drift — inspect both supply and motor.",  "#C0392B"),
+        ("Critical", "Critical"): ("Combined",         "Both metrics critical — immediate inspection required.",                 "#C0392B"),
     }
-    _cell_id, _cell_tier, _cell_decision, _cell_col = _MATRIX.get(
-        (_iuf_state, _pfd_state), ("—", None, "Insufficient data.", "#888888"))
+    _cell_label, _cell_decision, _cell_col = _MATRIX.get(
+        (_iuf_state, _pfd_state), ("—", "Insufficient data.", "#888888"))
 
-    _CELL_LABELS = {
-        "Cell 1": "Normal\n(No fault)",
-        "Cell 2": "Supply/Mechanical\n(IUF fault)",
-        "Cell 3": "Motor/Winding\n(PF fault)",
-        "Cell 4": "Combined\n(Both)",
-    }
+    # Colour helper: worst severity wins
+    def _cell_colour(iuf_s, pfd_s):
+        if "Critical" in (iuf_s, pfd_s): return "#C0392B"
+        if "Watch"    in (iuf_s, pfd_s): return "#E67E22"
+        return "#177E40"
 
-    # Build a 3×3 visual matrix (header + 2 rows)
-    _HL = rl_colors.HexColor("#054D5F")
-    _ACTIVE = rl_colors.HexColor(_cell_col)
-    _INACTIVE = rl_colors.HexColor("#F5F5F5")
+    def _mcell(text, iuf_s=None, pfd_s=None, is_header=False, is_active=False):
+        if is_header:
+            bg = rl_colors.HexColor(_cell_colour(iuf_s, pfd_s)) if iuf_s else rl_colors.HexColor("#F0F0F0")
+            fg = rl_colors.HexColor("#333333")
+        elif is_active:
+            bg = rl_colors.HexColor(_cell_colour(iuf_s, pfd_s))
+            fg = rl_colors.white
+        else:
+            hex_base = _cell_colour(iuf_s, pfd_s)
+            # Light tint: parse hex and make translucent by mixing with white
+            r = int(hex_base[1:3],16); g = int(hex_base[3:5],16); b = int(hex_base[5:7],16)
+            r2 = int(r*0.15 + 245*0.85); g2 = int(g*0.15 + 245*0.85); b2 = int(b*0.15 + 245*0.85)
+            bg = rl_colors.HexColor(f"#{r2:02X}{g2:02X}{b2:02X}")
+            fg = rl_colors.HexColor("#333333")
+        style = ParagraphStyle("mc", fontName="Helvetica-Bold" if is_active else "Helvetica",
+            fontSize=7, alignment=TA_CENTER,
+            textColor=fg, leading=9)
+        return (Paragraph(text.replace("\n","<br/>"), style), bg)
 
-    def _mcell(text, active=False, header=False):
-        style = ParagraphStyle("mc",
-            fontName="Helvetica-Bold" if (active or header) else "Helvetica",
-            fontSize=8, alignment=TA_CENTER,
-            textColor=rl_colors.white if active else (_HL if header else rl_colors.HexColor("#444")),
-            leading=10)
-        return Paragraph(text.replace("\n", "<br/>"), style)
+    def _mrow(iuf_s, iuf_label):
+        row = []
+        # Row header
+        hdr_bg = rl_colors.HexColor(_cell_colour(iuf_s, "Normal")
+                                     if iuf_s != "Normal" else "#177E40")
+        row.append((Paragraph(iuf_label, ParagraphStyle("rh",
+            fontName="Helvetica-Bold", fontSize=7, alignment=TA_CENTER,
+            textColor=rl_colors.HexColor("#333"), leading=9)), hdr_bg))
+        for pfd_s in ("Normal", "Watch", "Critical"):
+            _lbl, _, _ = _MATRIX.get((iuf_s, pfd_s), ("—","","#888"))
+            _active = (iuf_s == _iuf_state and pfd_s == _pfd_state)
+            row.append(_mcell(_lbl, iuf_s=iuf_s, pfd_s=pfd_s, is_active=_active))
+        return row
 
-    _pfd_col_norm   = f"PF Drift\nNormal\n(\u003e{_pfd_w:.2f})"
-    _pfd_col_watch  = f"PF Drift Watch\n({_pfd_w:.2f} to {_pfd_c:.2f})"
-    _pfd_col_crit   = f"PF Drift Critical\n(\u2264{_pfd_c:.2f})"
-
-    _matrix_data = [
-        ["", _mcell(_pfd_col_norm, header=True),  _mcell(_pfd_col_watch, header=True),  _mcell(_pfd_col_crit, header=True)],
-        [_mcell(f"IUF Normal\n(<{_iuf_w:.0f}%)", header=True),
-         _mcell(_CELL_LABELS["Cell 1"], active=(_iuf_state=="Normal" and _pfd_state=="Normal")),
-         _mcell(_CELL_LABELS["Cell 3"], active=(_iuf_state=="Normal" and _pfd_state=="Watch")),
-         _mcell(_CELL_LABELS["Cell 3"], active=(_iuf_state=="Normal" and _pfd_state=="Critical"))],
-        [_mcell(f"IUF Elevated\n(\u2265{_iuf_w:.0f}%)", header=True),
-         _mcell(_CELL_LABELS["Cell 2"], active=(_iuf_state in ("Watch","Critical") and _pfd_state=="Normal")),
-         _mcell(_CELL_LABELS["Cell 4"], active=(_iuf_state in ("Watch","Critical") and _pfd_state=="Watch")),
-         _mcell(_CELL_LABELS["Cell 4"], active=(_iuf_state in ("Watch","Critical") and _pfd_state=="Critical"))],
-    ]
     _col_w = COL_W / 4
-    _matrix_style = TableStyle([
-        ("BACKGROUND", (1,0), (-1,0), _HL),
-        ("BACKGROUND", (0,1), (0,-1), _HL),
-        ("BACKGROUND", (0,0), (0,0), rl_colors.white),
-        ("ALIGN",     (0,0), (-1,-1), "CENTER"),
-        ("VALIGN",    (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING",  (0,0), (-1,-1), 5),
+    # Header row
+    _hdr_row = [
+        (Paragraph("", ParagraphStyle("e", fontSize=7)), rl_colors.HexColor("#F0F0F0")),
+        _mcell(f"PF Normal\n(>{_pfd_w:.2f})",            iuf_s="Normal",   pfd_s="Normal",   is_header=True),
+        _mcell(f"PF Watch\n({_pfd_w:.2f} to {_pfd_c:.2f})", iuf_s="Normal",pfd_s="Watch",    is_header=True),
+        _mcell(f"PF Critical\n(\u2264{_pfd_c:.2f})",     iuf_s="Normal",   pfd_s="Critical", is_header=True),
+    ]
+
+    _rows_data = [_hdr_row,
+                  _mrow("Normal",   f"IUF Normal\n(<{_iuf_w:.0f}%)"),
+                  _mrow("Watch",    f"IUF Watch\n({_iuf_w:.0f}%-{_iuf_c:.0f}%)"),
+                  _mrow("Critical", f"IUF Critical\n(\u2265{_iuf_c:.0f}%)")]
+
+    # Build table with per-cell background colours
+    _tbl_data   = [[cell[0] for cell in row] for row in _rows_data]
+    _tbl_style  = TableStyle([
+        ("ALIGN",         (0,0), (-1,-1), "CENTER"),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 5),
         ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-        ("GRID", (0,0), (-1,-1), 0.5, rl_colors.HexColor("#CCCCCC")),
-        ("ROWBACKGROUNDS", (1,1), (-1,-1), [_INACTIVE, _INACTIVE]),
+        ("GRID",          (0,0), (-1,-1), 0.5, rl_colors.HexColor("#CCCCCC")),
     ])
-    # Highlight active cell
-    _row_map = {"Normal": 1, "Watch": 2, "Critical": 2}
-    _col_map = {"Normal": 1, "Watch": 2, "Critical": 3}
-    _ar, _ac = _row_map.get(_iuf_state, 1), _col_map.get(_pfd_state, 1)
-    _matrix_style.add("BACKGROUND", (_ac, _ar), (_ac, _ar), _ACTIVE)
-    _matrix_tbl = Table(_matrix_data, colWidths=[_col_w]*4,
-                        style=_matrix_style, hAlign="LEFT")
+    for ri, row in enumerate(_rows_data):
+        for ci, (_, bg) in enumerate(row):
+            _tbl_style.add("BACKGROUND", (ci, ri), (ci, ri), bg)
+
+    _matrix_tbl = Table(_tbl_data, colWidths=[_col_w]*4,
+                        style=_tbl_style, hAlign="LEFT")
 
     story.append(Spacer(1, 4))
     story.append(_matrix_tbl)
     story.append(Spacer(1, 4))
     story.append(Paragraph(
-        f"<b>Decision ({_cell_id}):</b> {_cell_decision}  "
+        f"<b>Decision:</b> {_cell_decision}  "
         f"\u2014  IUF = {_iuf_val:.1f}% ({_iuf_state})  |  "
-        f"PF Drift = {_pfd_val:+.3f} ({_pfd_state})",
+        f"PF Drift (worst band) = {_pfd_val:+.3f} ({_pfd_state})",
         ParagraphStyle("dec", parent=S["body"], fontSize=9,
                        textColor=rl_colors.HexColor(_cell_col),
                        borderPad=4, borderWidth=1,
