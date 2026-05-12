@@ -2006,7 +2006,7 @@ def generate_assessment_report_html(
             "Cell 1": "Normal",
             "Cell 2": "Supply / Mechanical",
             "Cell 3": "Motor / Winding",
-            "Cell 4": "Combined",
+            "Cell 4": "Supply / Mechanical<br>+ Motor / Winding",
         }.get(_cid, "—")
         # Colour by worst severity: Critical → Red, Watch → Yellow, both Normal → Green
         if "Critical" in (iuf_s, pfd_s):
