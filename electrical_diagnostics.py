@@ -487,7 +487,6 @@ def clean_samples(
             UserWarning, stacklevel=2,
         )
     load_min_w   = _load_frac * p_rated_elec * 1000.0
-    cold_min_w   = COLD_START_THRESHOLD_FRACTION * p_rated_elec * 1000.0
 
     # ── Step 1: Load precondition (≥ 20 % of rated electrical input) ────────
     df = raw.copy()
