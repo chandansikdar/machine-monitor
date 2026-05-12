@@ -839,8 +839,10 @@ def compute_pf_drift(
         )
         return None, updated, True, reason
 
-    total_weight = sum(active_weights)
-    aggregated = sum(d * w for d, w in zip(active_drifts, active_weights)) / total_weight
+    # Aggregated drift = worst (most negative) single band drift.
+    # Simple, interpretable, and conservative: catches the most degraded
+    # operating point and compares it directly against Watch/Critical thresholds.
+    aggregated = min(active_drifts)
     return round(aggregated, 5), updated, False, None
 
 
