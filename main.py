@@ -1326,17 +1326,76 @@ def generate_assessment_report_pdf(
 
     # ── Machine details ────────────────────────────────────────────────────────
     story.append(Paragraph("Machine Details", S["h2"]))
-    meta_rows = [
-        ["Machine", machine, "Type", mtype],
-        ["Application", mapp, "Rated shaft power", p_shaft_s],
-        ["Rated efficiency", eta_s, "Assessment period", period_str],
+
+    def _src_label(src: str) -> str:
+        return {"nameplate": "User-defined", "estimated_from_data": "Estimated from data",
+                "assumed_default": "Assumed default"}.get(src or "", src or "—")
+
+    def _src_style(src: str):
+        return {"nameplate": S["body"], "estimated_from_data": S["small"],
+                "assumed_default": S["small"]}.get(src or "", S["small"])
+
+    p_shaft    = meta.get("p_rated_shaft_kw")
+    p_elec     = meta.get("p_rated_elec_kw")
+    eta        = meta.get("eta_rated")
+    v_nom      = meta.get("v_nominal_phase")
+    i_rat      = meta.get("i_rated")
+    pf_rat     = meta.get("pf_rated")
+    speed      = meta.get("rated_speed_rpm")
+    poles      = meta.get("poles")
+    freq       = meta.get("supply_freq_hz")
+    pw_unit    = meta.get("power_unit", "W")
+
+    def _fval(v, fmt=".1f", unit=""):
+        return f"{v:{fmt}} {unit}".strip() if v and float(v) > 0 else "\u2014"
+
+    param_rows = [
+        [Paragraph(h, S["bold"]) for h in ["Parameter", "Value", "Source"]],
+        ["Machine ID / Name",   meta.get("machine_id") or meta.get("machine_name") or "\u2014",  "User-defined"],
+        ["Machine type",        meta.get("machine_type") or "\u2014",                            "User-defined"],
+        ["Application",         meta.get("application_type") or "\u2014",                        "User-defined"],
+        ["Rated shaft power",   _fval(p_shaft, ".1f", "kW"), _src_label(meta.get("p_rated_source"))],
+        ["Rated electrical input", _fval(p_elec, ".1f", "kW"), "Derived (shaft power / efficiency)"],
+        ["Rated efficiency (η)", _fval(eta, ".3f"), _src_label(meta.get("eta_rated_source"))],
+        ["Nominal phase voltage", _fval(v_nom, ".1f", "V"), _src_label(meta.get("v_nominal_source"))],
+        ["Rated current",       _fval(i_rat, ".1f", "A"), _src_label(meta.get("i_rated_source"))],
+        ["Rated power factor",  _fval(pf_rat, ".3f") if pf_rat else "\u2014", _src_label(meta.get("pf_rated_source"))],
+        ["Rated speed",         _fval(speed, ".0f", "rpm") if speed else "\u2014", "User-defined" if speed else "\u2014"],
+        ["Number of poles",     str(int(poles)) if poles else "\u2014", "User-defined" if poles else "\u2014"],
+        ["Supply frequency",    _fval(freq, ".1f", "Hz") if freq else "\u2014", "User-defined" if freq else "\u2014"],
+        ["Power unit (raw data)", pw_unit, "Data / settings"],
+        ["Assessment period",   period_str, "Derived from data"],
     ]
-    meta_tbl = _tbl(
-        [[Paragraph(c, S["bold"] if i%2==0 else S["body"]) for i,c in enumerate(r)]
-         for r in meta_rows],
-        [COL_W*0.2, COL_W*0.3, COL_W*0.2, COL_W*0.3],
-    )
-    story.append(meta_tbl)
+    _src_colours = {
+        "User-defined": rl_colors.HexColor("#177E40"),
+        "Estimated from data": rl_colors.HexColor("#E67E22"),
+        "Assumed default": rl_colors.HexColor("#888888"),
+        "Derived": rl_colors.HexColor("#185FA5"),
+    }
+
+    def _param_row(label, value, source):
+        src_col = next((v for k, v in _src_colours.items() if k in source), DGREY)
+        return [
+            Paragraph(label, S["body"]),
+            Paragraph(str(value), S["bold"]),
+            Paragraph(source, ParagraphStyle("src", parent=S["small"], textColor=src_col)),
+        ]
+
+    table_data = [param_rows[0]] + [_param_row(r[0], r[1], r[2]) for r in param_rows[1:]]
+    story.append(_tbl(table_data, [COL_W*0.35, COL_W*0.30, COL_W*0.35]))
+
+    # Source legend
+    story.append(Spacer(1, 4))
+    legend_parts = []
+    for label, col in _src_colours.items():
+        legend_parts.append(
+            Paragraph(f'<font color="#{col.hexval()[2:]}">■</font> {label}',
+                      ParagraphStyle("lg", parent=S["small"], spaceAfter=0))
+        )
+    story.append(Table([[p] for p in legend_parts],
+                       colWidths=[COL_W],
+                       style=TableStyle([("TOPPADDING",(0,0),(-1,-1),1),
+                                         ("BOTTOMPADDING",(0,0),(-1,-1),1)])))
     story.append(Spacer(1, 8))
 
     # ── Data quality ──────────────────────────────────────────────────────────
@@ -1560,14 +1619,8 @@ def generate_assessment_report_html(
     """
     import io as _io
 
-    now_str   = datetime.now().strftime("%Y-%m-%d %H:%M")
-    machine   = meta.get("machine_name") or meta.get("machine_id") or "—"
-    mtype     = meta.get("machine_type", "—")
-    mapp      = meta.get("application_type", "—")
-    p_shaft   = meta.get("p_rated_shaft_kw")
-    p_shaft_s = f"{p_shaft:.1f} kW" if p_shaft else "—"
-    eta       = meta.get("eta_rated")
-    eta_s     = f"{eta:.2f}" if eta else "—"
+    now_str    = datetime.now().strftime("%Y-%m-%d %H:%M")
+    machine    = meta.get("machine_name") or meta.get("machine_id") or "—"
 
     # ── Date range ───────────────────────────────────────────────────────────
     if data is not None and len(data) > 0:
@@ -1579,6 +1632,48 @@ def generate_assessment_report_html(
         n_raw = 0
     n_clean = len(cleaned_data) if cleaned_data is not None else 0
     ret_pct = f"{100 * n_clean / n_raw:.0f}%" if n_raw > 0 else "—"
+
+    # ── Machine parameter table ───────────────────────────────────────────────
+    def _src_badge(src):
+        cfg = {"nameplate":           ("#177E40", "User-defined"),
+               "estimated_from_data": ("#E67E22", "Estimated from data"),
+               "assumed_default":     ("#888888", "Assumed default")}
+        col, lbl = cfg.get(src, ("#888888", src or "—"))
+        return (f'<span style="background:{col};color:#fff;padding:1px 7px;'
+                f'border-radius:8px;font-size:10px">{lbl}</span>')
+
+    def _fv(v, fmt=".1f", unit=""):
+        try:
+            return f"{float(v):{fmt}}&nbsp;{unit}".strip() if v and float(v) > 0 else "—"
+        except Exception:
+            return str(v) if v else "—"
+
+    _params = [
+        ("Machine ID / Name",      meta.get("machine_id") or meta.get("machine_name") or "—", None),
+        ("Machine type",           meta.get("machine_type") or "—",                           None),
+        ("Application",            meta.get("application_type") or "—",                       None),
+        ("Rated shaft power",      _fv(meta.get("p_rated_shaft_kw"), ".1f", "kW"),   meta.get("p_rated_source")),
+        ("Rated electrical input", _fv(meta.get("p_rated_elec_kw"),  ".1f", "kW"),   "nameplate"),
+        ("Rated efficiency (η)",   _fv(meta.get("eta_rated"),         ".3f"),         meta.get("eta_rated_source")),
+        ("Nominal phase voltage",  _fv(meta.get("v_nominal_phase"),  ".1f", "V"),    meta.get("v_nominal_source")),
+        ("Rated current",          _fv(meta.get("i_rated"),          ".1f", "A"),    meta.get("i_rated_source")),
+        ("Rated power factor",     _fv(meta.get("pf_rated"),         ".3f") if meta.get("pf_rated") else "—",
+                                   meta.get("pf_rated_source")),
+        ("Rated speed",            _fv(meta.get("rated_speed_rpm"),  ".0f", "rpm") if meta.get("rated_speed_rpm") else "—",
+                                   "nameplate" if meta.get("rated_speed_rpm") else None),
+        ("Supply frequency",       _fv(meta.get("supply_freq_hz"),   ".1f", "Hz")  if meta.get("supply_freq_hz") else "—",
+                                   "nameplate" if meta.get("supply_freq_hz") else None),
+        ("Power unit (raw data)",  meta.get("power_unit", "W"), None),
+        ("Assessment period",      period_str, None),
+    ]
+    _param_rows_html = ""
+    for _pl, _pv, _ps in _params:
+        _badge = _src_badge(_ps) if _ps else ""
+        _param_rows_html += (
+            f'<tr><td style="padding:5px 10px;font-weight:600;color:#054D5F">{_pl}</td>'
+            f'<td style="padding:5px 10px">{_pv}</td>'
+            f'<td style="padding:5px 10px">{_badge}</td></tr>'
+        )
 
     # ── Zone colours ─────────────────────────────────────────────────────────
     _TIER_COL = {"critical": "#C0392B", "watch": "#E67E22", None: "#177E40", "none": "#177E40"}
@@ -1829,13 +1924,21 @@ def generate_assessment_report_html(
 
 <!-- Machine Details -->
 <h2>Machine Details</h2>
-<div class="meta-grid">
-  <div class="meta-box"><div class="meta-label">Machine</div><div class="meta-value">{machine}</div></div>
-  <div class="meta-box"><div class="meta-label">Type</div><div class="meta-value">{mtype}</div></div>
-  <div class="meta-box"><div class="meta-label">Application</div><div class="meta-value">{mapp}</div></div>
-  <div class="meta-box"><div class="meta-label">Rated shaft power</div><div class="meta-value">{p_shaft_s}</div></div>
-  <div class="meta-box"><div class="meta-label">Rated efficiency</div><div class="meta-value">{eta_s}</div></div>
-  <div class="meta-box"><div class="meta-label">Assessment period</div><div class="meta-value" style="font-size:12px">{period_str}</div></div>
+<table>
+  <thead><tr>
+    <th style="width:35%">Parameter</th>
+    <th style="width:30%">Value</th>
+    <th style="width:35%">Source</th>
+  </tr></thead>
+  <tbody>{_param_rows_html}</tbody>
+</table>
+<div style="margin-top:6px;font-size:11px;color:#888">
+  <span style="background:#177E40;color:#fff;padding:1px 6px;border-radius:6px;font-size:10px">User-defined</span>&nbsp;
+  Saved nameplate value &nbsp;|&nbsp;
+  <span style="background:#E67E22;color:#fff;padding:1px 6px;border-radius:6px;font-size:10px">Estimated from data</span>&nbsp;
+  Computed from measurements &nbsp;|&nbsp;
+  <span style="background:#888;color:#fff;padding:1px 6px;border-radius:6px;font-size:10px">Assumed default</span>&nbsp;
+  Platform default applied
 </div>
 
 <!-- Data Quality -->
