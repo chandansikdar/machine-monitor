@@ -5007,64 +5007,50 @@ with tab_analysis:
                             _gt_c1.markdown("**Voltage Imbalance (VUF)**")
                             _gt_c2.markdown("**Current Imbalance (IUF)**")
                             _gt_c3.markdown("**Power Factor (PF)**")
-                            _gt_c1.number_input(
-                                "Watch threshold (%)",
-                                min_value=0.1, max_value=10.0,
-                                step=0.1,
-                                key="vuf_gauge_watch",
-                                help=f"Default: {VUF_WATCH:.1f}% (VUF_WATCH)",
+                            # value= reads from SS (correctly initialised above);
+                            # return value is written back so user edits persist.
+                            st.session_state["vuf_gauge_watch"] = _gt_c1.number_input(
+                                "Watch threshold (%)", min_value=0.1, max_value=10.0,
+                                value=float(st.session_state.get("vuf_gauge_watch", 2.0)),
+                                step=0.1, help="Default: 2.0%",
                             )
-                            _gt_c2.number_input(
-                                "Watch threshold (%)",
-                                min_value=0.1, max_value=50.0,
-                                step=0.5,
-                                key="iuf_gauge_watch",
-                                help=f"Default: {IUF_WATCH:.0f}% (IUF_WATCH)",
+                            st.session_state["iuf_gauge_watch"] = _gt_c2.number_input(
+                                "Watch threshold (%)", min_value=0.1, max_value=50.0,
+                                value=float(st.session_state.get("iuf_gauge_watch", 5.0)),
+                                step=0.5, help="Default: 5%",
                             )
-                            _gt_c3.number_input(
-                                "Watch threshold (PF)",
-                                min_value=0.50, max_value=0.99,
-                                step=0.01,
-                                format="%.2f",
-                                key="pf_gauge_watch",
-                                help="PF below this value = amber. Default: 0.85",
+                            st.session_state["pf_gauge_watch"] = _gt_c3.number_input(
+                                "Watch threshold (PF)", min_value=0.50, max_value=0.99,
+                                value=float(st.session_state.get("pf_gauge_watch", 0.85)),
+                                step=0.01, format="%.2f", help="Default: 0.85",
                             )
-                            _gt_c1.number_input(
-                                "Critical threshold (%)",
-                                min_value=0.1, max_value=20.0,
-                                step=0.1,
-                                key="vuf_gauge_critical",
-                                help=f"Default: {VUF_CRITICAL:.1f}% (VUF_CRITICAL)",
+                            st.session_state["vuf_gauge_critical"] = _gt_c1.number_input(
+                                "Critical threshold (%)", min_value=0.1, max_value=20.0,
+                                value=float(st.session_state.get("vuf_gauge_critical", 5.0)),
+                                step=0.1, help="Default: 5.0%",
                             )
-                            _gt_c2.number_input(
-                                "Critical threshold (%)",
-                                min_value=0.1, max_value=100.0,
-                                step=0.5,
-                                key="iuf_gauge_critical",
-                                help=f"Default: {IUF_CRITICAL:.0f}% (IUF_CRITICAL)",
+                            st.session_state["iuf_gauge_critical"] = _gt_c2.number_input(
+                                "Critical threshold (%)", min_value=0.1, max_value=100.0,
+                                value=float(st.session_state.get("iuf_gauge_critical", 10.0)),
+                                step=0.5, help="Default: 10%",
                             )
-                            _gt_c3.number_input(
-                                "Critical threshold (PF)",
-                                min_value=0.30, max_value=0.98,
-                                step=0.01,
-                                format="%.2f",
-                                key="pf_gauge_critical",
-                                help="PF below this value = red. Default: 0.75",
+                            st.session_state["pf_gauge_critical"] = _gt_c3.number_input(
+                                "Critical threshold (PF)", min_value=0.30, max_value=0.98,
+                                value=float(st.session_state.get("pf_gauge_critical", 0.75)),
+                                step=0.01, format="%.2f", help="Default: 0.75",
                             )
                             st.markdown("**PF Drift thresholds (absolute)**")
                             _gd1, _gd2 = st.columns(2)
-                            _gd1.number_input(
-                                "Watch (drift)",
-                                min_value=-0.20, max_value=-0.001,
+                            st.session_state["pf_drift_watch"] = _gd1.number_input(
+                                "Watch (drift)", min_value=-0.20, max_value=-0.001,
+                                value=float(st.session_state.get("pf_drift_watch", -0.10)),
                                 step=0.005, format="%.3f",
-                                key="pf_drift_watch",
                                 help="Default: -0.10  |  Drift below this = Watch",
                             )
-                            _gd2.number_input(
-                                "Critical (drift)",
-                                min_value=-0.20, max_value=-0.001,
+                            st.session_state["pf_drift_critical"] = _gd2.number_input(
+                                "Critical (drift)", min_value=-0.20, max_value=-0.001,
+                                value=float(st.session_state.get("pf_drift_critical", -0.20)),
                                 step=0.005, format="%.3f",
-                                key="pf_drift_critical",
                                 help="Default: -0.20  |  Drift below this = Critical",
                             )
 
