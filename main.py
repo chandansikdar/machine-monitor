@@ -1151,6 +1151,7 @@ def generate_assessment_report_pdf(
     gauge_thresholds: dict,
     figs: list,
     baseline_period_str: str = "",
+    baseline_cr=None,
 ) -> bytes:
     """Build a ReportLab PDF assessment report and return as bytes.
 
@@ -1435,9 +1436,26 @@ def generate_assessment_report_pdf(
             [Paragraph("<b>Cleaned (analysis)</b>", S["body"]), f"{cr.n_cleaned:,}", ""],
         ]
         story.append(_tbl(cl_rows, [COL_W*0.55, COL_W*0.22, COL_W*0.23]))
-        # retained message removed
-        if False: story.append(Paragraph("",
-                                ParagraphStyle("gr", parent=S["small"], textColor=GREEN)))
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph("Data Quality — Baseline Period", S["h3"]))
+    if baseline_cr:
+        _bl_n_st = getattr(baseline_cr, "n_after_start_transient", baseline_cr.n_after_load_precondition)
+        bl_rows = [
+            [Paragraph(h, S["bold"]) for h in ["Step", "Samples", "Removed"]],
+            ["Raw samples",              f"{baseline_cr.n_raw:,}",             "—"],
+            [f"Step 1 — Load \u2265{getattr(baseline_cr, 'load_fraction', 0.20)*100:.0f}%",
+             f"{baseline_cr.n_after_load_precondition:,}",
+             Paragraph(f'<font color="#C0392B">-{baseline_cr.n_raw - baseline_cr.n_after_load_precondition:,}</font>', S["body"])
+             if baseline_cr.n_raw > baseline_cr.n_after_load_precondition else "0"],
+            ["Step 2 — User filter",     f"{baseline_cr.n_after_user_filter:,}",
+             Paragraph(f'<font color="#C0392B">-{_bl_n_st - baseline_cr.n_after_user_filter:,}</font>', S["body"])
+             if _bl_n_st > baseline_cr.n_after_user_filter else "0"],
+            [Paragraph("<b>Cleaned (baseline)</b>", S["body"]), f"{baseline_cr.n_cleaned:,}", ""],
+        ]
+        story.append(_tbl(bl_rows, [COL_W*0.55, COL_W*0.22, COL_W*0.23]))
+    else:
+        story.append(Paragraph("Baseline cleaning data not available. Re-run the assessment to populate.", S["small"]))
     story.append(Spacer(1, 8))
 
     # ── Zone findings ─────────────────────────────────────────────────────────
@@ -1622,6 +1640,7 @@ def generate_assessment_report_html(
     gauge_thresholds: dict,
     figs: list,
     baseline_period_str: str = "",
+    baseline_cr=None,
 ) -> str:
     """Generate a self-contained HTML assessment report.
 
@@ -1882,6 +1901,36 @@ def generate_assessment_report_html(
                 f'<td style="padding:5px 10px;text-align:right">{rm_s}</td></tr>'
             )
 
+    # Baseline data quality table
+    _bl_quality_html = ""
+    if baseline_cr:
+        _bl_rows_html = ""
+        _bl_steps = [
+            ("Raw samples",                    baseline_cr.n_raw,                    None),
+            (f"Step 1 — Load \u2265{getattr(baseline_cr, 'load_fraction', 0.20)*100:.0f}% rated",
+             baseline_cr.n_after_load_precondition,
+             baseline_cr.n_raw - baseline_cr.n_after_load_precondition),
+            ("Step 2 — User filter",           baseline_cr.n_after_user_filter,
+             baseline_cr.n_after_load_precondition - baseline_cr.n_after_user_filter),
+            ("Cleaned (used for baseline)",    baseline_cr.n_cleaned,                None),
+        ]
+        for _lbl, _cnt, _rm in _bl_steps:
+            _rm_s = (f'<span style="color:#C0392B;font-weight:600">-{_rm}</span>' if _rm and _rm > 0 else "")
+            _bl_rows_html += (
+                f'<tr><td style="padding:5px 10px">{_lbl}</td>'
+                f'<td style="padding:5px 10px;text-align:right;font-weight:600">{_cnt:,}</td>'
+                f'<td style="padding:5px 10px;text-align:right">{_rm_s}</td></tr>'
+            )
+        _bl_quality_html = (
+            '<table><thead><tr>'
+            '<th>Step</th>'
+            '<th style="text-align:right">Samples</th>'
+            '<th style="text-align:right">Removed</th>'
+            f'</tr></thead><tbody>{_bl_rows_html}</tbody></table>'
+        )
+    else:
+        _bl_quality_html = '<p style="color:#888;font-size:12px">Baseline cleaning data not available. Re-run the assessment to populate.</p>'
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1988,8 +2037,9 @@ def generate_assessment_report_html(
   <thead><tr><th>Step</th><th style="text-align:right">Samples</th><th style="text-align:right">Removed</th></tr></thead>
   <tbody>{cleaning_rows}</tbody>
 </table>
-<div style="margin-top:8px;font-size:12px;color:#177E40;font-weight:600">
-</div>
+
+<h3 style="margin-top:16px">Data Quality — Baseline Period</h3>
+{_bl_quality_html}
 
 <!-- Zone Findings -->
 <h2>Zone Diagnostic Findings</h2>
@@ -5573,6 +5623,7 @@ with tab_analysis:
                             gauge_thresholds=_gauge_thresholds,
                             figs=_report_figs,
                             baseline_period_str=_bl_period_str,
+                            baseline_cr=st.session_state.get("baseline_cleaning_report"),
                         )
                         _fname_stem = (
                             f"assessment_report_"
