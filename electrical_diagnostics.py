@@ -456,15 +456,37 @@ def clean_samples(
     report = CleaningReport(n_raw=len(raw))
     _load_frac = load_precondition_fraction if load_precondition_fraction is not None \
                  else LOAD_PRECONDITION_FRACTION
-    p_shaft = float(meta.get("p_rated_shaft_kw", 0))
-    eta     = float(meta.get("eta_rated", 0.90))
-    if p_shaft > 0 and eta > 0:
+
+    # Resolve rated electrical power — three sources in priority order:
+    # 1. p_rated_elec_kw  — pre-computed by resolve_effective_meta from the FULL
+    #    historical dataset; reliable even when the input window is mostly off-state.
+    # 2. p_rated_shaft_kw / eta_rated — from saved nameplate values.
+    # 3. Fallback P95 from raw — unreliable when input is mostly off-state, used
+    #    only as last resort and will log a warning.
+    p_rated_elec_direct = float(meta.get("p_rated_elec_kw", 0) or 0)
+    p_shaft = float(meta.get("p_rated_shaft_kw", 0) or 0)
+    eta     = float(meta.get("eta_rated", 0.90) or 0.90)
+    if eta <= 0:
+        eta = 0.90
+
+    if p_rated_elec_direct > 0:
+        p_rated_elec = p_rated_elec_direct
+    elif p_shaft > 0:
         p_rated_elec = p_shaft / eta
     else:
+        # Last resort — estimate from this window's data.
+        # This may underestimate rated power if the window is mostly off-state.
+        import warnings as _w
         _pt_fb = (raw["phase_1_active_power"] + raw["phase_2_active_power"]
                   + raw["phase_3_active_power"])
         _p95fb = float(_pt_fb[_pt_fb > 0].quantile(0.95)) / 1000.0 if (_pt_fb > 0).any() else 1.0
         p_rated_elec = _p95fb / 0.95
+        _w.warn(
+            f"clean_samples: p_rated_shaft_kw not set in meta — estimating rated power "
+            f"from input data P95 ({p_rated_elec:.1f} kW). Enter rated shaft power in "
+            f"the machine profile to eliminate this risk.",
+            UserWarning, stacklevel=2,
+        )
     load_min_w   = _load_frac * p_rated_elec * 1000.0
     cold_min_w   = COLD_START_THRESHOLD_FRACTION * p_rated_elec * 1000.0
 
