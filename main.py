@@ -547,7 +547,7 @@ def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning")
         st.markdown(f"**{title}**")
         steps = [
             ("Raw samples",                         report.n_raw),
-            ("Step 1 \u2014 Load \u226520% rated",  report.n_after_load_precondition),
+            (f"Step 1 \u2014 Load \u2265{report.load_fraction*100:.0f}% rated", report.n_after_load_precondition),
             ("Step 2 \u2014 Start transient",        getattr(report, "n_after_start_transient",
                                                      report.n_after_load_precondition)),
             ("Step 3 \u2014 User filter",            report.n_after_user_filter),
@@ -1429,7 +1429,7 @@ def generate_assessment_report_pdf(
         cl_rows = [
             [Paragraph(h, S["bold"]) for h in ["Step", "Samples", "Removed"]],
             ["Raw samples",              f"{cr.n_raw:,}",                      "—"],
-            ["Step 1 — Load \u226520%",  f"{cr.n_after_load_precondition:,}",
+            [f"Step 1 — Load \u2265{cr.load_fraction*100:.0f}%",  f"{cr.n_after_load_precondition:,}",
              Paragraph(f'<font color="#C0392B">-{cr.n_raw - cr.n_after_load_precondition:,}</font>',S["body"])
              if cr.n_raw > cr.n_after_load_precondition else "0"],
             ["Step 2 — Start transient", f"{n_st:,}",
@@ -1874,7 +1874,7 @@ def generate_assessment_report_html(
     if cr:
         steps = [
             ("Raw samples",                   cr.n_raw,                    None),
-            ("Step 1 — Load \u226520% rated", cr.n_after_load_precondition, cr.n_raw - cr.n_after_load_precondition),
+            (f"Step 1 — Load \u2265{cr.load_fraction*100:.0f}% rated", cr.n_after_load_precondition, cr.n_raw - cr.n_after_load_precondition),
             ("Step 2 — Start transient",      getattr(cr, "n_after_start_transient", cr.n_after_load_precondition),
              cr.n_after_load_precondition - getattr(cr, "n_after_start_transient", cr.n_after_load_precondition)),
             ("Step 3 — User filter",          cr.n_after_user_filter,
@@ -4569,7 +4569,7 @@ with tab_analysis:
                                     _lm_rm = 0.20 * (_p95_rm / 0.95)
                                 _removed_all_labelled["removed_at_step"] = _removed_all_labelled.apply(
                                     lambda r: (
-                                        "Step 1 - Load precondition (<20% rated)"
+                                        f"Step 1 - Load precondition (<{_load_frac_ui*100:.0f}% rated)"
                                         if (r["phase_1_active_power"] + r["phase_2_active_power"] +
                                             r["phase_3_active_power"]) < _lm_rm
                                         else "Step 2/3 - Transient or user filter"
