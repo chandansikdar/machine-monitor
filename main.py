@@ -1434,9 +1434,6 @@ def generate_assessment_report_pdf(
             [f"Step 1 — Load \u2265{getattr(cr, 'load_fraction', st.session_state.get('load_precondition_pct', 20) / 100.0)*100:.0f}%",  f"{cr.n_after_load_precondition:,}",
              Paragraph(f'<font color="#C0392B">-{cr.n_raw - cr.n_after_load_precondition:,}</font>',S["body"])
              if cr.n_raw > cr.n_after_load_precondition else "0"],
-            ["Step 2 — Start transient", f"{n_st:,}",
-             Paragraph(f'<font color="#C0392B">-{cr.n_after_load_precondition - n_st:,}</font>',S["body"])
-             if cr.n_after_load_precondition > n_st else "0"],
             ["Step 3 — User filter",     f"{cr.n_after_user_filter:,}",
              Paragraph(f'<font color="#C0392B">-{n_st - cr.n_after_user_filter:,}</font>',S["body"])
              if n_st > cr.n_after_user_filter else "0"],
@@ -1877,8 +1874,6 @@ def generate_assessment_report_html(
         steps = [
             ("Raw samples",                   cr.n_raw,                    None),
             (f"Step 1 — Load \u2265{getattr(cr, 'load_fraction', st.session_state.get('load_precondition_pct', 20) / 100.0)*100:.0f}% rated", cr.n_after_load_precondition, cr.n_raw - cr.n_after_load_precondition),
-            ("Step 2 — Start transient",      getattr(cr, "n_after_start_transient", cr.n_after_load_precondition),
-             cr.n_after_load_precondition - getattr(cr, "n_after_start_transient", cr.n_after_load_precondition)),
             ("Step 3 — User filter",          cr.n_after_user_filter,
              getattr(cr, "n_after_start_transient", cr.n_after_load_precondition) - cr.n_after_user_filter),
             ("Cleaned (used for analysis)",   cr.n_cleaned,                None),
