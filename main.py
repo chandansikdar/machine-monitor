@@ -1988,36 +1988,61 @@ def generate_assessment_report_html(
     def _mcol(iuf_s, pfd_s):
         _active = (iuf_s == _h_iuf_st and pfd_s == _h_pfd_st)
         _cid, _, _c, _lbl = _HMATRIX.get((iuf_s, pfd_s), ("","","#F5F5F5","—"))
-        _cell_lbl = {"Cell 1":"Cell 1<br>Normal","Cell 2":"Cell 2<br>Supply/Mech","Cell 3":"Cell 3<br>Motor/Winding","Cell 4":"Cell 4<br>Combined"}.get(_cid, "—")
-        _bg = _c if _active else "#F0F4F7"
-        _fg = "#fff" if _active else "#333"
-        _bw = "3px" if _active else "1px"
-        return f'<td class="dm-cell" style="background:{_bg};color:{_fg} !important;border:{_bw} solid {"#888" if _active else "#ccc"};font-weight:{"bold" if _active else "normal"}">{_cell_lbl}</td>'
+        _cell_label = {
+            "Cell 1": "Cell 1<br>Normal",
+            "Cell 2": "Cell 2<br>Supply/Mechanical",
+            "Cell 3": "Cell 3<br>Motor/Winding",
+            "Cell 4": "Cell 4<br>Combined",
+        }.get(_cid, "—")
+        _row_sub = f"IUF {iuf_s}"
+        _bg  = _c if _active else "#F0F4F7"
+        _fg  = "#fff" if _active else "#333"
+        _sub_fg = "#eee" if _active else "#888"
+        _bw  = "3px" if _active else "1px"
+        _bc  = "#333" if _active else "#ccc"
+        _fw  = "bold" if _active else "normal"
+        return (f'<td style="padding:8px;text-align:center;background:{_bg};'
+                f'color:{_fg};border:{_bw} solid {_bc};font-size:11px;'
+                f'font-weight:{_fw};line-height:1.5">'
+                f'<div style="font-size:9px;color:{_sub_fg};margin-bottom:2px">{_row_sub}</div>'
+                f'{_cell_label}</td>')
 
     _matrix_html = f"""
-<table style="width:100%;border-collapse:collapse;margin-bottom:8px">
-  <tr>
-    <td class="dm-hdr" style="background:#fff"></td>
-    <td class="dm-hdr"><span style="color:#fff !important">PF Drift Normal<br>(&gt;{_h_pfd_w:.2f})</span></td>
-    <td class="dm-hdr"><span style="color:#fff !important">PF Drift Watch<br>({_h_pfd_w:.2f} to {_h_pfd_c:.2f})</span></td>
-    <td class="dm-hdr"><span style="color:#fff !important">PF Drift Critical<br>(&le;{_h_pfd_c:.2f})</span></td>
-  </tr>
-  <tr>
-    <td class="dm-hdr"><span style="color:#fff !important">IUF Normal<br>(&lt;{_h_iuf_w:.0f}%)</span></td>
-    {_mcol("Normal","Normal")}{_mcol("Normal","Watch")}{_mcol("Normal","Critical")}
-  </tr>
-  <tr>
-    <td class="dm-hdr"><span style="color:#fff !important">IUF Elevated<br>(&ge;{_h_iuf_w:.0f}%)</span></td>
-    {_mcol("Watch","Normal")}{_mcol("Watch","Watch")}{_mcol("Watch","Critical")}
-  </tr>
+<div style="font-size:11px;margin-bottom:4px;color:#444">
+  <b>Columns:</b> PF Drift — 
+  Normal (&gt;{_h_pfd_w:.2f}) &nbsp;|&nbsp;
+  Watch ({_h_pfd_w:.2f} to {_h_pfd_c:.2f}) &nbsp;|&nbsp;
+  Critical (&le;{_h_pfd_c:.2f})
+  &nbsp;&nbsp;&nbsp;
+  <b>Rows:</b> IUF — 
+  Normal (&lt;{_h_iuf_w:.0f}%) &nbsp;|&nbsp;
+  Elevated (&ge;{_h_iuf_w:.0f}%)
+</div>
+<table style="width:100%;border-collapse:collapse;margin-bottom:6px">
+  <thead>
+    <tr>
+      <td style="width:33%;padding:8px;text-align:center;border:1px solid #ccc;background:#f8f8f8;font-size:11px;font-weight:600;color:#333">PF Normal</td>
+      <td style="width:33%;padding:8px;text-align:center;border:1px solid #ccc;background:#f8f8f8;font-size:11px;font-weight:600;color:#333">PF Watch</td>
+      <td style="width:33%;padding:8px;text-align:center;border:1px solid #ccc;background:#f8f8f8;font-size:11px;font-weight:600;color:#333">PF Critical</td>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      {_mcol("Normal","Normal")}{_mcol("Normal","Watch")}{_mcol("Normal","Critical")}
+    </tr>
+    <tr>
+      {_mcol("Watch","Normal")}{_mcol("Watch","Watch")}{_mcol("Watch","Critical")}
+    </tr>
+  </tbody>
 </table>
-<div style="padding:8px 12px;background:#f8f8f8;border-left:4px solid {_h_col};font-size:12px;margin-top:4px">
+<div style="font-size:11px;color:#666;margin-bottom:4px">
+  Row 1 = IUF Normal (&lt;{_h_iuf_w:.0f}%) &nbsp;|&nbsp; Row 2 = IUF Elevated (&ge;{_h_iuf_w:.0f}%)
+</div>
+<div style="padding:8px 12px;background:#f8f8f8;border-left:4px solid {_h_col};font-size:12px">
   <b>{_h_cell_id} Decision:</b> {_h_decision}<br>
-  <span style="color:#666;font-size:11px">
+  <span style="font-size:11px;color:#666">
     IUF = {_h_iuf_v:.1f}% ({_h_iuf_st}) &nbsp;|&nbsp;
-    PF Drift = {_h_pfd_v:+.3f} ({_h_pfd_st}) &nbsp;|&nbsp;
-    IUF thresholds: Watch &ge;{_h_iuf_w:.0f}%, Critical &ge;{_h_iuf_c:.0f}% &nbsp;|&nbsp;
-    PF Drift thresholds: Watch &le;{_h_pfd_w:.2f}, Critical &le;{_h_pfd_c:.2f}
+    PF Drift (worst band) = {_h_pfd_v:+.3f} ({_h_pfd_st})
   </span>
 </div>"""
     if record.zone4:
