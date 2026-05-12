@@ -2017,15 +2017,12 @@ def generate_assessment_report_html(
             _bg_base = "#177E40"
         _bg  = _bg_base if _active else f"{_bg_base}33"
         _fg  = "#fff" if _active else "#333"
-        _sub_fg = "#eee" if _active else "#888"
         _bw  = "3px" if _active else "1px"
         _bc  = _bg_base if _active else "#ccc"
         _fw  = "bold" if _active else "normal"
-        _row_sub = f"IUF {iuf_s}"
         return (f'<td style="padding:8px;text-align:center;background:{_bg};'
                 f'color:{_fg};border:{_bw} solid {_bc};font-size:11px;'
                 f'font-weight:{_fw};line-height:1.5">'
-                f'<div style="font-size:9px;color:{_sub_fg};margin-bottom:2px">{_row_sub}</div>'
                 f'{_cell_label}</td>')
 
     _matrix_html = f"""
