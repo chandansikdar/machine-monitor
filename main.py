@@ -1365,7 +1365,6 @@ def generate_assessment_report_pdf(
         ["Number of poles",     str(int(poles)) if poles else "\u2014", "User-defined" if poles else "\u2014"],
         ["Supply frequency",    _fval(freq, ".1f", "Hz") if freq else "\u2014", "User-defined" if freq else "\u2014"],
         ["Power unit (raw data)", pw_unit, "Data / settings"],
-        ["Assessment period",   period_str, "Derived from data"],
     ]
     _src_colours = {
         "User-defined": rl_colors.HexColor("#177E40"),
@@ -1402,11 +1401,23 @@ def generate_assessment_report_pdf(
     # ── Data section ──────────────────────────────────────────────────────────
     story.append(Paragraph("Data", S["h2"]))
     story.append(Paragraph("Periods", S["h3"]))
+    # Total data period = union of baseline + assessment
+    _pdf_dates = []
+    if baseline_period_str:
+        for _d in baseline_period_str.replace(" → ", " ").split():
+            try: _pdf_dates.append(pd.Timestamp(_d))
+            except: pass
+    if data is not None and len(data) > 0:
+        _pdf_dates += [pd.to_datetime(data.index).min(), pd.to_datetime(data.index).max()]
+    _total_period_str = (f"{min(_pdf_dates).strftime('%Y-%m-%d')} to "
+                         f"{max(_pdf_dates).strftime('%Y-%m-%d')}") if _pdf_dates else "—"
     period_data = [
         [Paragraph(h, S["bold"]) for h in ["Period", "Date range"]],
-        [Paragraph("Baseline", S["bold"]),
+        [Paragraph("Total data period", S["bold"]),
+         Paragraph(_total_period_str, S["body"])],
+        [Paragraph("Baseline period", S["bold"]),
          Paragraph(baseline_period_str or "—", S["body"])],
-        [Paragraph("Assessment", S["bold"]),
+        [Paragraph("Assessment period", S["bold"]),
          Paragraph(period_str, S["body"])],
     ]
     story.append(_tbl(period_data, [COL_W * 0.25, COL_W * 0.75]))
@@ -1645,6 +1656,17 @@ def generate_assessment_report_html(
         n_raw = 0
     n_clean = len(cleaned_data) if cleaned_data is not None else 0
     ret_pct = f"{100 * n_clean / n_raw:.0f}%" if n_raw > 0 else "—"
+
+    # Total data period = union of baseline and assessment
+    _all_dates = []
+    if baseline_period_str:
+        for _d in baseline_period_str.replace(" → ", " ").split():
+            try: _all_dates.append(pd.Timestamp(_d))
+            except: pass
+    if data is not None and len(data) > 0:
+        _all_dates += [pd.to_datetime(data.index).min(), pd.to_datetime(data.index).max()]
+    total_data_period_str = (f"{min(_all_dates).strftime('%Y-%m-%d')} → "
+                             f"{max(_all_dates).strftime('%Y-%m-%d')}") if _all_dates else "—"
 
     # ── Machine parameter table ───────────────────────────────────────────────
     def _src_badge(src):
@@ -1920,8 +1942,7 @@ def generate_assessment_report_html(
   <div style="text-align:right;font-size:12px;color:#6B7280">
     <div><strong>{machine}</strong></div>
     <div>Generated: {now_str}</div>
-    <div>Assessment period: {period_str}</div>
-  </div>
+    </div>
 </div>
 
 <!-- Executive Summary -->
@@ -1960,9 +1981,11 @@ def generate_assessment_report_html(
 <table>
   <thead><tr><th>Period</th><th>Date range</th></tr></thead>
   <tbody>
-    <tr><td style="padding:5px 10px;font-weight:600">Baseline</td>
+    <tr><td style="padding:5px 10px;font-weight:600">Total data period</td>
+        <td style="padding:5px 10px">{total_data_period_str}</td></tr>
+    <tr><td style="padding:5px 10px;font-weight:600">Baseline period</td>
         <td style="padding:5px 10px">{baseline_period_str if baseline_period_str else "—"}</td></tr>
-    <tr><td style="padding:5px 10px;font-weight:600">Assessment</td>
+    <tr><td style="padding:5px 10px;font-weight:600">Assessment period</td>
         <td style="padding:5px 10px">{period_str}</td></tr>
   </tbody>
 </table>
