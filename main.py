@@ -1995,19 +1995,19 @@ def generate_assessment_report_html(
         return f'<td style="padding:8px;text-align:center;background:{_bg};color:{_fg};font-size:11px;border:{_bw} solid #ccc;font-weight:{"bold" if _active else "normal"}">{_cell_lbl}</td>'
 
     _matrix_html = f"""
-<table style="width:100%;border-collapse:collapse;margin-bottom:8px">
+<table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:11px">
   <tr>
-    <td style="padding:6px;font-size:11px;color:#888"></td>
-    <td style="padding:6px;text-align:center;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">PF Drift Normal<br>(&gt;{_h_pfd_w:.2f})</td>
-    <td style="padding:6px;text-align:center;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">PF Drift Watch<br>({_h_pfd_w:.2f} to {_h_pfd_c:.2f})</td>
-    <td style="padding:6px;text-align:center;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">PF Drift Critical<br>(&le;{_h_pfd_c:.2f})</td>
+    <th style="padding:6px;background:#fff;color:#888;border:1px solid #ccc"></th>
+    <th style="padding:6px;text-align:center;background:#054D5F;color:#fff !important;border:1px solid #ccc">PF Drift Normal<br>(&gt;{_h_pfd_w:.2f})</th>
+    <th style="padding:6px;text-align:center;background:#054D5F;color:#fff !important;border:1px solid #ccc">PF Drift Watch<br>({_h_pfd_w:.2f} to {_h_pfd_c:.2f})</th>
+    <th style="padding:6px;text-align:center;background:#054D5F;color:#fff !important;border:1px solid #ccc">PF Drift Critical<br>(&le;{_h_pfd_c:.2f})</th>
   </tr>
   <tr>
-    <td style="padding:6px;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">IUF Normal<br>(&lt;{_h_iuf_w:.0f}%)</td>
+    <th style="padding:6px;background:#054D5F;color:#fff !important;border:1px solid #ccc">IUF Normal<br>(&lt;{_h_iuf_w:.0f}%)</th>
     {_mcol("Normal","Normal")}{_mcol("Normal","Watch")}{_mcol("Normal","Critical")}
   </tr>
   <tr>
-    <td style="padding:6px;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">IUF Elevated<br>(&ge;{_h_iuf_w:.0f}%)</td>
+    <th style="padding:6px;background:#054D5F;color:#fff !important;border:1px solid #ccc">IUF Elevated<br>(&ge;{_h_iuf_w:.0f}%)</th>
     {_mcol("Watch","Normal")}{_mcol("Watch","Watch")}{_mcol("Watch","Critical")}
   </tr>
 </table>
@@ -2174,6 +2174,7 @@ def generate_assessment_report_html(
   .zone-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}}
   .zone-title{{font-size:14px;font-weight:700;color:#054D5F}}
   .zone-body{{font-size:13px;color:#444;line-height:1.5}}
+  .zone-body th{{color:#fff !important}}
   .footer{{margin-top:40px;padding-top:16px;border-top:1px solid #E0E4EA;
            font-size:11px;color:#9CA3AF;display:flex;justify-content:space-between}}
   @media print{{
