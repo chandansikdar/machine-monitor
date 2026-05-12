@@ -1153,6 +1153,7 @@ def generate_assessment_report_pdf(
     phase_bands: dict,
     gauge_thresholds: dict,
     figs: list,
+    baseline_period_str: str = "",
 ) -> bytes:
     """Build a ReportLab PDF assessment report and return as bytes.
 
@@ -2069,7 +2070,6 @@ def build_assessment_charts(
     vuf_gauge_critical: float | None = None,
     pf_gauge_watch: float | None = None,
     pf_gauge_critical: float | None = None,
-    baseline_period_str: str = "",
     vuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     iuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     pf_gauge_value: float | None = None,    # override: latest daily mean PF
