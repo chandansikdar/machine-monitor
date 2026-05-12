@@ -2045,14 +2045,13 @@ def generate_assessment_report_html(
     PF Drift (worst band) = {_h_pfd_v:+.3f} ({_h_pfd_st})
   </span>
 </div>"""
+    z4_msg = "—"
     if record.zone4:
         z4r = record.zone4
         if hasattr(z4r, "finding") and z4r.finding:
             z4_msg = z4r.finding
         elif hasattr(z4r, "delta_pct") and z4r.delta_pct is not None:
             z4_msg = f"Power change: {z4r.delta_pct:+.1f}% vs baseline average."
-
-    # ── Recommendations ───────────────────────────────────────────────────────
     recs = []
     if z1_tier == "critical": recs.append(("Critical", "Zone 1", "Investigate supply voltage quality immediately. Check upstream transformer and busbars."))
     elif z1_tier == "watch":  recs.append(("Watch",    "Zone 1", "Monitor supply voltage balance. Check for single-phase loads on the feeder."))
