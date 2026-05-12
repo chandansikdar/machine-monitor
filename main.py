@@ -1564,11 +1564,11 @@ def generate_assessment_report_pdf(
         ("Normal",   "Watch"):    ("Motor/Winding",    "PF drift without IUF — winding or insulation degradation likely.",     "#E67E22"),
         ("Normal",   "Critical"): ("Motor/Winding",    "Significant PF drift, IUF normal — winding/insulation fault suspected.","#C0392B"),
         ("Watch",    "Normal"):   ("Supply/Mechanical","IUF elevated, PF stable — supply or mechanical asymmetry.",             "#E67E22"),
-        ("Watch",    "Watch"):    ("Combined",         "Both IUF and PF elevated — combined supply-side and motor-side.",       "#E67E22"),
-        ("Watch",    "Critical"): ("Combined",         "Critical PF drift with elevated IUF — urgent investigation.",           "#C0392B"),
+        ("Watch",    "Watch"):    ("Supply/Mechanical\n+ Motor/Winding", "Both IUF and PF elevated — combined supply-side and motor-side.",       "#E67E22"),
+        ("Watch",    "Critical"): ("Supply/Mechanical\n+ Motor/Winding", "Critical PF drift with elevated IUF — urgent investigation.",           "#C0392B"),
         ("Critical", "Normal"):   ("Supply/Mechanical","Severe IUF, PF normal — supply fault or mechanical imbalance.",         "#C0392B"),
-        ("Critical", "Watch"):    ("Combined",         "Severe IUF with developing PF drift — inspect both supply and motor.",  "#C0392B"),
-        ("Critical", "Critical"): ("Combined",         "Both metrics critical — immediate inspection required.",                 "#C0392B"),
+        ("Critical", "Watch"):    ("Supply/Mechanical\n+ Motor/Winding", "Severe IUF with developing PF drift — inspect both supply and motor.",  "#C0392B"),
+        ("Critical", "Critical"): ("Supply/Mechanical\n+ Motor/Winding", "Both metrics critical — immediate inspection required.",                 "#C0392B"),
     }
     _cell_label, _cell_decision, _cell_col = _MATRIX.get(
         (_iuf_state, _pfd_state), ("—", "Insufficient data.", "#888888"))
