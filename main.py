@@ -632,7 +632,7 @@ def render_motor_side(m: MotorSideResult):
     elif m.pf_drift_aggregated is not None:
         _disp_pf_watch  = float(st.session_state.get("pf_drift_watch",    -0.10))
         _disp_pf_crit   = float(st.session_state.get("pf_drift_critical", -0.20))
-        pf_html = (f"PF drift = <b>{m.pf_drift_aggregated:+.3f}</b> "
+        pf_html = (f"PF drift (worst band) = <b>{m.pf_drift_aggregated:+.3f}</b> "
                    f"(watch \u2264 {_disp_pf_watch:.2f}, "
                    f"critical \u2264 {_disp_pf_crit:.2f})")
     else:
