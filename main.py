@@ -1971,15 +1971,15 @@ def generate_assessment_report_html(
     _h_iuf_st = "Critical" if _h_iuf_v >= _h_iuf_c else "Watch" if _h_iuf_v >= _h_iuf_w else "Normal"
     _h_pfd_st = "Critical" if _h_pfd_v <= _h_pfd_c else "Watch" if _h_pfd_v <= _h_pfd_w else "Normal"
     _HMATRIX = {
-        ("Normal","Normal"):   ("Cell 1","normal","#177E40","No motor-side fault indication."),
-        ("Normal","Watch"):    ("Cell 3","watch","#E67E22","PF drift without IUF — winding or insulation degradation likely."),
-        ("Normal","Critical"): ("Cell 3","critical","#C0392B","Significant PF drift, IUF normal — winding/insulation fault suspected."),
-        ("Watch","Normal"):    ("Cell 2","watch","#E67E22","IUF elevated, PF stable — supply or mechanical asymmetry; motor windings likely OK."),
-        ("Watch","Watch"):     ("Cell 4","watch","#E67E22","Both IUF and PF elevated — combined supply-side and motor-side involvement."),
-        ("Watch","Critical"):  ("Cell 4","critical","#C0392B","Critical PF drift with elevated IUF — urgent motor and supply investigation."),
-        ("Critical","Normal"): ("Cell 2","critical","#C0392B","Severe IUF, PF normal — supply fault or mechanical imbalance; windings likely intact."),
-        ("Critical","Watch"):  ("Cell 4","critical","#C0392B","Severe IUF with developing PF drift — inspect both supply and motor."),
-        ("Critical","Critical"):("Cell 4","critical","#C0392B","Both metrics critical — combined fault. Immediate inspection required."),
+        ("Normal",   "Normal"):   ("Cell 1","normal",   "#177E40","No motor-side fault indication."),
+        ("Normal",   "Watch"):    ("Cell 3","watch",    "#E67E22","PF drift without IUF — winding or insulation degradation likely."),
+        ("Normal",   "Critical"): ("Cell 3","critical", "#C0392B","Significant PF drift, IUF normal — winding/insulation fault suspected."),
+        ("Watch",    "Normal"):   ("Cell 2","watch",    "#E67E22","IUF elevated, PF stable — supply or mechanical asymmetry; motor windings likely OK."),
+        ("Watch",    "Watch"):    ("Cell 4","watch",    "#E67E22","Both IUF and PF elevated — combined supply-side and motor-side involvement."),
+        ("Watch",    "Critical"): ("Cell 4","critical", "#C0392B","Critical PF drift with elevated IUF — urgent investigation."),
+        ("Critical", "Normal"):   ("Cell 2","critical", "#C0392B","Severe IUF, PF normal — supply fault or mechanical imbalance."),
+        ("Critical", "Watch"):    ("Cell 4","critical", "#C0392B","Severe IUF with developing PF drift — inspect both supply and motor."),
+        ("Critical", "Critical"): ("Cell 4","critical", "#C0392B","Both metrics critical — immediate inspection required."),
     }
     _h_cell_id, _h_z23_tier_str, _h_col, _h_decision = _HMATRIX.get(
         (_h_iuf_st, _h_pfd_st), ("—","normal","#888","Insufficient data."))
@@ -1987,20 +1987,27 @@ def generate_assessment_report_html(
 
     def _mcol(iuf_s, pfd_s):
         _active = (iuf_s == _h_iuf_st and pfd_s == _h_pfd_st)
-        _cid, _, _c, _lbl = _HMATRIX.get((iuf_s, pfd_s), ("","","#F5F5F5","—"))
+        _cid, _, _, _lbl = _HMATRIX.get((iuf_s, pfd_s), ("","","#F5F5F5","—"))
         _cell_label = {
-            "Cell 1": "Cell 1<br>Normal",
-            "Cell 2": "Cell 2<br>Supply/Mechanical",
-            "Cell 3": "Cell 3<br>Motor/Winding",
-            "Cell 4": "Cell 4<br>Combined",
+            "Cell 1": "Normal",
+            "Cell 2": "Supply / Mechanical",
+            "Cell 3": "Motor / Winding",
+            "Cell 4": "Combined",
         }.get(_cid, "—")
-        _row_sub = f"IUF {iuf_s}"
-        _bg  = _c if _active else "#F0F4F7"
+        # Colour by worst severity: Critical → Red, Watch → Yellow, both Normal → Green
+        if "Critical" in (iuf_s, pfd_s):
+            _bg_base = "#C0392B"
+        elif "Watch" in (iuf_s, pfd_s):
+            _bg_base = "#E67E22"
+        else:
+            _bg_base = "#177E40"
+        _bg  = _bg_base if _active else f"{_bg_base}33"
         _fg  = "#fff" if _active else "#333"
         _sub_fg = "#eee" if _active else "#888"
         _bw  = "3px" if _active else "1px"
-        _bc  = "#333" if _active else "#ccc"
+        _bc  = _bg_base if _active else "#ccc"
         _fw  = "bold" if _active else "normal"
+        _row_sub = f"IUF {iuf_s}"
         return (f'<td style="padding:8px;text-align:center;background:{_bg};'
                 f'color:{_fg};border:{_bw} solid {_bc};font-size:11px;'
                 f'font-weight:{_fw};line-height:1.5">'
@@ -2008,36 +2015,30 @@ def generate_assessment_report_html(
                 f'{_cell_label}</td>')
 
     _matrix_html = f"""
-<div style="font-size:11px;margin-bottom:4px;color:#444">
-  <b>Columns:</b> PF Drift — 
-  Normal (&gt;{_h_pfd_w:.2f}) &nbsp;|&nbsp;
-  Watch ({_h_pfd_w:.2f} to {_h_pfd_c:.2f}) &nbsp;|&nbsp;
-  Critical (&le;{_h_pfd_c:.2f})
-  &nbsp;&nbsp;&nbsp;
-  <b>Rows:</b> IUF — 
-  Normal (&lt;{_h_iuf_w:.0f}%) &nbsp;|&nbsp;
-  Elevated (&ge;{_h_iuf_w:.0f}%)
-</div>
-<table style="width:100%;border-collapse:collapse;margin-bottom:6px">
+<table style="width:100%;border-collapse:collapse;margin-bottom:6px;font-size:11px">
   <thead>
     <tr>
-      <td style="width:33%;padding:8px;text-align:center;border:1px solid #ccc;background:#f8f8f8;font-size:11px;font-weight:600;color:#333">PF Normal</td>
-      <td style="width:33%;padding:8px;text-align:center;border:1px solid #ccc;background:#f8f8f8;font-size:11px;font-weight:600;color:#333">PF Watch</td>
-      <td style="width:33%;padding:8px;text-align:center;border:1px solid #ccc;background:#f8f8f8;font-size:11px;font-weight:600;color:#333">PF Critical</td>
+      <td style="padding:6px;background:#f0f0f0;border:1px solid #ccc;font-weight:600;color:#333;text-align:center"></td>
+      <td style="padding:6px;background:#177E40;border:1px solid #ccc;font-weight:600;color:#333;text-align:center;min-width:30%">PF Normal<br><span style="font-weight:normal;font-size:10px">(&gt;{_h_pfd_w:.2f})</span></td>
+      <td style="padding:6px;background:#E67E22;border:1px solid #ccc;font-weight:600;color:#333;text-align:center;min-width:30%">PF Watch<br><span style="font-weight:normal;font-size:10px">({_h_pfd_w:.2f} to {_h_pfd_c:.2f})</span></td>
+      <td style="padding:6px;background:#C0392B;border:1px solid #ccc;font-weight:600;color:#333;text-align:center;min-width:30%">PF Critical<br><span style="font-weight:normal;font-size:10px">(&le;{_h_pfd_c:.2f})</span></td>
     </tr>
   </thead>
   <tbody>
     <tr>
+      <td style="padding:6px;background:#177E40;border:1px solid #ccc;font-weight:600;color:#333;text-align:center">IUF Normal<br><span style="font-weight:normal;font-size:10px">(&lt;{_h_iuf_w:.0f}%)</span></td>
       {_mcol("Normal","Normal")}{_mcol("Normal","Watch")}{_mcol("Normal","Critical")}
     </tr>
     <tr>
+      <td style="padding:6px;background:#E67E22;border:1px solid #ccc;font-weight:600;color:#333;text-align:center">IUF Watch<br><span style="font-weight:normal;font-size:10px">({_h_iuf_w:.0f}% to {_h_iuf_c:.0f}%)</span></td>
       {_mcol("Watch","Normal")}{_mcol("Watch","Watch")}{_mcol("Watch","Critical")}
+    </tr>
+    <tr>
+      <td style="padding:6px;background:#C0392B;border:1px solid #ccc;font-weight:600;color:#333;text-align:center">IUF Critical<br><span style="font-weight:normal;font-size:10px">(&ge;{_h_iuf_c:.0f}%)</span></td>
+      {_mcol("Critical","Normal")}{_mcol("Critical","Watch")}{_mcol("Critical","Critical")}
     </tr>
   </tbody>
 </table>
-<div style="font-size:11px;color:#666;margin-bottom:4px">
-  Row 1 = IUF Normal (&lt;{_h_iuf_w:.0f}%) &nbsp;|&nbsp; Row 2 = IUF Elevated (&ge;{_h_iuf_w:.0f}%)
-</div>
 <div style="padding:8px 12px;background:#f8f8f8;border-left:4px solid {_h_col};font-size:12px">
   <b>{_h_cell_id} Decision:</b> {_h_decision}<br>
   <span style="font-size:11px;color:#666">
