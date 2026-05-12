@@ -837,6 +837,71 @@ def render_motor_side(m: MotorSideResult):
                 })
             st.dataframe(pd.DataFrame(_ph_rows), use_container_width=True, hide_index=True)
 
+            # PF by operating-point band chart — same as machine level
+            if len(_ph_active) >= 2:
+                _ph_centres   = [b.centre_kw / 1000 for b in _ph_active]
+                _ph_bl_pf     = [b.mean_pf_baseline for b in _ph_active]
+                _ph_rec_pf    = [b.mean_pf_recent if b.mean_pf_recent is not None else None
+                                  for b in _ph_active]
+                _ph_drift     = [b.pf_drift if b.pf_drift is not None else 0.0
+                                  for b in _ph_active]
+                _ph_bw = float(st.session_state.get("pf_drift_watch",    -0.10))
+                _ph_bc = float(st.session_state.get("pf_drift_critical", -0.20))
+                _ph_bar_col = [
+                    "#A32D2D" if d <= _ph_bc else "#F1C40F" if d <= _ph_bw else "#177E40"
+                    for d in _ph_drift
+                ]
+                _ph_fig = go.Figure()
+                _ph_fig.add_trace(go.Scatter(
+                    x=_ph_centres, y=_ph_bl_pf,
+                    mode="lines", name="Baseline PF",
+                    line=dict(color="#054D5F", width=2),
+                ))
+                if any(v is not None for v in _ph_rec_pf):
+                    _ph_fig.add_trace(go.Scatter(
+                        x=_ph_centres, y=_ph_rec_pf,
+                        mode="lines", name="Recent PF",
+                        line=dict(color="#C8A84B", width=2, dash="dash"),
+                    ))
+                _ph_fig.add_trace(go.Bar(
+                    x=_ph_centres, y=_ph_drift,
+                    name="PF drift",
+                    marker_color=_ph_bar_col, opacity=0.5, yaxis="y2",
+                    width=[_ph_centres[1] - _ph_centres[0]] * len(_ph_centres)
+                          if len(_ph_centres) > 1 else [1],
+                ))
+                for _tv, _tc, _tl in [
+                    (_ph_bw, "#F1C40F", f"Watch {_ph_bw:.2f}"),
+                    (_ph_bc, "#A32D2D", f"Critical {_ph_bc:.2f}"),
+                ]:
+                    _ph_fig.add_hline(
+                        y=_tv, line_color=_tc, line_dash="dot", line_width=1,
+                        annotation_text=_tl, annotation_position="bottom right",
+                        annotation_font_size=9, yref="y2",
+                    )
+                _ph_drift_min = min(min(_ph_drift) * 1.2, _ph_bc * 1.2)
+                _ph_fig.update_layout(
+                    title=dict(
+                        text=f"Phase {_ph} — PF by operating-point band",
+                        font=dict(size=13),
+                    ),
+                    xaxis_title=f"Band centre (kW)  [Phase {_ph} power]",
+                    yaxis=dict(title="Power Factor", range=[0, 1.05]),
+                    yaxis2=dict(
+                        title="PF drift",
+                        overlaying="y", side="right",
+                        range=[round(_ph_drift_min, 2), 0.02],
+                        showgrid=False, tickformat=".3f",
+                    ),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=40, r=60, t=45, b=50),
+                    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                                xanchor="left", x=0, bgcolor="rgba(0,0,0,0)"),
+                    hovermode="x unified", font=dict(size=11), height=320,
+                )
+                st.plotly_chart(_ph_fig, use_container_width=True)
+
 
 def render_zone4(z: Zone4Result):
     if z.suppressed:
