@@ -1527,17 +1527,119 @@ def generate_assessment_report_pdf(
               ("above critical threshold." if z2_tier == "critical" else
                "above watch threshold." if z2_tier == "watch" else
                "within normal limits.")) if z2_iuf is not None else "No current data."
-    story.append(_zone_row("Zone 2 — Current Imbalance (IUF)", z2_tier, z2_msg,
-        f"Watch \u2265{gauge_thresholds.get('iuf_watch',5.0):.0f}%  |  "
-        f"Critical \u2265{gauge_thresholds.get('iuf_critical',10.0):.0f}%"))
 
     n_sig = sum(1 for b in record.motor_side.bands if b.drift_significant) \
             if record.motor_side else 0
     z3_msg = (f"Statistically significant PF drift in {n_sig} load band(s)."
               if n_sig else "No statistically significant PF drift detected.")
-    story.append(_zone_row("Zone 3 — Motor Health (PF Drift)", mside_pf_tier, z3_msg,
-        f"Watch \u2264{float(st.session_state.get('pf_drift_watch', -0.10)):.2f}"
-        f"  |  Critical \u2264{float(st.session_state.get('pf_drift_critical', -0.20)):.2f} (absolute PF)"))
+
+    # Combined Zones 2 & 3 header
+    _z23_tier = "critical" if "critical" in (z2_tier or "", mside_pf_tier or "") \
+                else "watch" if "watch" in (z2_tier or "", mside_pf_tier or "") \
+                else None
+    story.append(_zone_row(
+        "Zones 2 & 3 — Motor-side (IUF × PF Drift)",
+        _z23_tier,
+        f"{z2_msg}  |  {z3_msg}",
+        f"IUF Watch \u2265{gauge_thresholds.get('iuf_watch',5.0):.0f}%  |  "
+        f"IUF Critical \u2265{gauge_thresholds.get('iuf_critical',10.0):.0f}%  |  "
+        f"PF Drift Watch \u2264{float(st.session_state.get('pf_drift_watch',-0.10)):.2f}  |  "
+        f"PF Drift Critical \u2264{float(st.session_state.get('pf_drift_critical',-0.20)):.2f}"
+    ))
+
+    # 4-cell decision matrix
+    _iuf_w   = gauge_thresholds.get("iuf_watch", 5.0)
+    _iuf_c   = gauge_thresholds.get("iuf_critical", 10.0)
+    _pfd_w   = float(st.session_state.get("pf_drift_watch",    -0.10))
+    _pfd_c   = float(st.session_state.get("pf_drift_critical", -0.20))
+    _iuf_val = z2_iuf if z2_iuf is not None else 0.0
+    _pfd_val = record.motor_side.pf_drift_aggregated \
+               if record.motor_side and record.motor_side.pf_drift_aggregated is not None else 0.0
+
+    _iuf_state = "Critical" if _iuf_val >= _iuf_c else "Watch" if _iuf_val >= _iuf_w else "Normal"
+    _pfd_state = "Critical" if _pfd_val <= _pfd_c else "Watch" if _pfd_val <= _pfd_w else "Normal"
+
+    _MATRIX = {
+        ("Normal",   "Normal"):   ("Cell 1", "Normal", "No motor-side fault indication.", "#177E40"),
+        ("Normal",   "Watch"):    ("Cell 3", "Watch",  "PF drift without IUF — winding or insulation degradation likely.", "#E67E22"),
+        ("Normal",   "Critical"): ("Cell 3", "Critical", "Significant PF drift, IUF normal — winding/insulation fault suspected.", "#C0392B"),
+        ("Watch",    "Normal"):   ("Cell 2", "Watch",  "IUF elevated, PF stable — supply or mechanical asymmetry; motor windings likely OK.", "#E67E22"),
+        ("Watch",    "Watch"):    ("Cell 4", "Watch",  "Both IUF and PF elevated — combined supply-side and motor-side involvement.", "#E67E22"),
+        ("Watch",    "Critical"): ("Cell 4", "Critical", "Critical PF drift with elevated IUF — urgent motor and supply investigation.", "#C0392B"),
+        ("Critical", "Normal"):   ("Cell 2", "Critical", "Severe IUF, PF normal — supply fault or mechanical imbalance; windings likely intact.", "#C0392B"),
+        ("Critical", "Watch"):    ("Cell 4", "Critical", "Severe IUF with developing PF drift — inspect both supply and motor.", "#C0392B"),
+        ("Critical", "Critical"): ("Cell 4", "Critical", "Both metrics critical — combined fault. Immediate inspection required.", "#C0392B"),
+    }
+    _cell_id, _cell_tier, _cell_decision, _cell_col = _MATRIX.get(
+        (_iuf_state, _pfd_state), ("—", None, "Insufficient data.", "#888888"))
+
+    _CELL_LABELS = {
+        "Cell 1": "Normal\n(No fault)",
+        "Cell 2": "Supply/Mechanical\n(IUF fault)",
+        "Cell 3": "Motor/Winding\n(PF fault)",
+        "Cell 4": "Combined\n(Both)",
+    }
+
+    # Build a 3×3 visual matrix (header + 2 rows)
+    _HL = rl_colors.HexColor("#054D5F")
+    _ACTIVE = rl_colors.HexColor(_cell_col)
+    _INACTIVE = rl_colors.HexColor("#F5F5F5")
+
+    def _mcell(text, active=False, header=False):
+        style = ParagraphStyle("mc",
+            fontName="Helvetica-Bold" if (active or header) else "Helvetica",
+            fontSize=8, alignment=TA_CENTER,
+            textColor=rl_colors.white if active else (_HL if header else rl_colors.HexColor("#444")),
+            leading=10)
+        return Paragraph(text.replace("\n", "<br/>"), style)
+
+    _pfd_col_norm   = f"PF Drift\nNormal\n(\u003e{_pfd_w:.2f})"
+    _pfd_col_watch  = f"PF Drift Watch\n({_pfd_w:.2f} to {_pfd_c:.2f})"
+    _pfd_col_crit   = f"PF Drift Critical\n(\u2264{_pfd_c:.2f})"
+
+    _matrix_data = [
+        ["", _mcell(_pfd_col_norm, header=True),  _mcell(_pfd_col_watch, header=True),  _mcell(_pfd_col_crit, header=True)],
+        [_mcell(f"IUF Normal\n(<{_iuf_w:.0f}%)", header=True),
+         _mcell(_CELL_LABELS["Cell 1"], active=(_iuf_state=="Normal" and _pfd_state=="Normal")),
+         _mcell(_CELL_LABELS["Cell 3"], active=(_iuf_state=="Normal" and _pfd_state=="Watch")),
+         _mcell(_CELL_LABELS["Cell 3"], active=(_iuf_state=="Normal" and _pfd_state=="Critical"))],
+        [_mcell(f"IUF Elevated\n(\u2265{_iuf_w:.0f}%)", header=True),
+         _mcell(_CELL_LABELS["Cell 2"], active=(_iuf_state in ("Watch","Critical") and _pfd_state=="Normal")),
+         _mcell(_CELL_LABELS["Cell 4"], active=(_iuf_state in ("Watch","Critical") and _pfd_state=="Watch")),
+         _mcell(_CELL_LABELS["Cell 4"], active=(_iuf_state in ("Watch","Critical") and _pfd_state=="Critical"))],
+    ]
+    _col_w = COL_W / 4
+    _matrix_style = TableStyle([
+        ("BACKGROUND", (1,0), (-1,0), _HL),
+        ("BACKGROUND", (0,1), (0,-1), _HL),
+        ("BACKGROUND", (0,0), (0,0), rl_colors.white),
+        ("ALIGN",     (0,0), (-1,-1), "CENTER"),
+        ("VALIGN",    (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",  (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("GRID", (0,0), (-1,-1), 0.5, rl_colors.HexColor("#CCCCCC")),
+        ("ROWBACKGROUNDS", (1,1), (-1,-1), [_INACTIVE, _INACTIVE]),
+    ])
+    # Highlight active cell
+    _row_map = {"Normal": 1, "Watch": 2, "Critical": 2}
+    _col_map = {"Normal": 1, "Watch": 2, "Critical": 3}
+    _ar, _ac = _row_map.get(_iuf_state, 1), _col_map.get(_pfd_state, 1)
+    _matrix_style.add("BACKGROUND", (_ac, _ar), (_ac, _ar), _ACTIVE)
+    _matrix_tbl = Table(_matrix_data, colWidths=[_col_w]*4,
+                        style=_matrix_style, hAlign="LEFT")
+
+    story.append(Spacer(1, 4))
+    story.append(_matrix_tbl)
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(
+        f"<b>Decision ({_cell_id}):</b> {_cell_decision}  "
+        f"\u2014  IUF = {_iuf_val:.1f}% ({_iuf_state})  |  "
+        f"PF Drift = {_pfd_val:+.3f} ({_pfd_state})",
+        ParagraphStyle("dec", parent=S["body"], fontSize=9,
+                       textColor=rl_colors.HexColor(_cell_col),
+                       borderPad=4, borderWidth=1,
+                       borderColor=rl_colors.HexColor(_cell_col))))
+    story.append(Spacer(1, 8))
 
     z4_msg = "—"
     if record.zone4:
@@ -1858,7 +1960,66 @@ def generate_assessment_report_html(
                   else "above watch threshold." if z2_tier == "watch"
                   else "within normal limits.")) if z2_iuf is not None else "No current data."
 
-    z4_msg  = "—"
+    # 4-cell decision matrix for HTML
+    _h_iuf_w  = gauge_thresholds.get("iuf_watch",    5.0)
+    _h_iuf_c  = gauge_thresholds.get("iuf_critical", 10.0)
+    _h_pfd_w  = float(st.session_state.get("pf_drift_watch",    -0.10))
+    _h_pfd_c  = float(st.session_state.get("pf_drift_critical", -0.20))
+    _h_iuf_v  = z2_iuf if z2_iuf is not None else 0.0
+    _h_pfd_v  = (record.motor_side.pf_drift_aggregated
+                 if record.motor_side and record.motor_side.pf_drift_aggregated is not None else 0.0)
+    _h_iuf_st = "Critical" if _h_iuf_v >= _h_iuf_c else "Watch" if _h_iuf_v >= _h_iuf_w else "Normal"
+    _h_pfd_st = "Critical" if _h_pfd_v <= _h_pfd_c else "Watch" if _h_pfd_v <= _h_pfd_w else "Normal"
+    _HMATRIX = {
+        ("Normal","Normal"):   ("Cell 1","normal","#177E40","No motor-side fault indication."),
+        ("Normal","Watch"):    ("Cell 3","watch","#E67E22","PF drift without IUF — winding or insulation degradation likely."),
+        ("Normal","Critical"): ("Cell 3","critical","#C0392B","Significant PF drift, IUF normal — winding/insulation fault suspected."),
+        ("Watch","Normal"):    ("Cell 2","watch","#E67E22","IUF elevated, PF stable — supply or mechanical asymmetry; motor windings likely OK."),
+        ("Watch","Watch"):     ("Cell 4","watch","#E67E22","Both IUF and PF elevated — combined supply-side and motor-side involvement."),
+        ("Watch","Critical"):  ("Cell 4","critical","#C0392B","Critical PF drift with elevated IUF — urgent motor and supply investigation."),
+        ("Critical","Normal"): ("Cell 2","critical","#C0392B","Severe IUF, PF normal — supply fault or mechanical imbalance; windings likely intact."),
+        ("Critical","Watch"):  ("Cell 4","critical","#C0392B","Severe IUF with developing PF drift — inspect both supply and motor."),
+        ("Critical","Critical"):("Cell 4","critical","#C0392B","Both metrics critical — combined fault. Immediate inspection required."),
+    }
+    _h_cell_id, _h_z23_tier_str, _h_col, _h_decision = _HMATRIX.get(
+        (_h_iuf_st, _h_pfd_st), ("—","normal","#888","Insufficient data."))
+    _z23_tier = _h_z23_tier_str if _h_z23_tier_str != "normal" else None
+
+    def _mcol(iuf_s, pfd_s):
+        _active = (iuf_s == _h_iuf_st and pfd_s == _h_pfd_st)
+        _cid, _, _c, _lbl = _HMATRIX.get((iuf_s, pfd_s), ("","","#F5F5F5","—"))
+        _cell_lbl = {"Cell 1":"Cell 1<br>Normal","Cell 2":"Cell 2<br>Supply/Mech","Cell 3":"Cell 3<br>Motor/Winding","Cell 4":"Cell 4<br>Combined"}.get(_cid, "—")
+        _bg = _c if _active else "#F0F4F7"
+        _fg = "#fff" if _active else "#333"
+        _bw = "3px" if _active else "1px"
+        return f'<td style="padding:8px;text-align:center;background:{_bg};color:{_fg};font-size:11px;border:{_bw} solid #ccc;font-weight:{"bold" if _active else "normal"}">{_cell_lbl}</td>'
+
+    _matrix_html = f"""
+<table style="width:100%;border-collapse:collapse;margin-bottom:8px">
+  <tr>
+    <td style="padding:6px;font-size:11px;color:#888"></td>
+    <td style="padding:6px;text-align:center;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">PF Drift Normal<br>(&gt;{_h_pfd_w:.2f})</td>
+    <td style="padding:6px;text-align:center;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">PF Drift Watch<br>({_h_pfd_w:.2f} to {_h_pfd_c:.2f})</td>
+    <td style="padding:6px;text-align:center;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">PF Drift Critical<br>(&le;{_h_pfd_c:.2f})</td>
+  </tr>
+  <tr>
+    <td style="padding:6px;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">IUF Normal<br>(&lt;{_h_iuf_w:.0f}%)</td>
+    {_mcol("Normal","Normal")}{_mcol("Normal","Watch")}{_mcol("Normal","Critical")}
+  </tr>
+  <tr>
+    <td style="padding:6px;background:#054D5F;color:#fff;font-size:11px;font-weight:bold">IUF Elevated<br>(&ge;{_h_iuf_w:.0f}%)</td>
+    {_mcol("Watch","Normal")}{_mcol("Watch","Watch")}{_mcol("Watch","Critical")}
+  </tr>
+</table>
+<div style="padding:8px 12px;background:#f8f8f8;border-left:4px solid {_h_col};font-size:12px;margin-top:4px">
+  <b>{_h_cell_id} Decision:</b> {_h_decision}<br>
+  <span style="color:#666;font-size:11px">
+    IUF = {_h_iuf_v:.1f}% ({_h_iuf_st}) &nbsp;|&nbsp;
+    PF Drift = {_h_pfd_v:+.3f} ({_h_pfd_st}) &nbsp;|&nbsp;
+    IUF thresholds: Watch &ge;{_h_iuf_w:.0f}%, Critical &ge;{_h_iuf_c:.0f}% &nbsp;|&nbsp;
+    PF Drift thresholds: Watch &le;{_h_pfd_w:.2f}, Critical &le;{_h_pfd_c:.2f}
+  </span>
+</div>"""
     if record.zone4:
         z4r = record.zone4
         if hasattr(z4r, "finding") and z4r.finding:
@@ -2109,25 +2270,11 @@ def generate_assessment_report_html(
 
 <div class="zone-card">
   <div class="zone-header">
-    <span class="zone-title">Zone 2 — Current Imbalance (IUF)</span>
-    {_zone_badge(z2_tier)}
-  </div>
-  <div class="zone-body">{z2_msg}
-    <br><span style="font-size:11px;color:#888">Watch ≥{gauge_thresholds.get('iuf_watch',5.0):.0f}%
-    &nbsp;|&nbsp; Critical ≥{gauge_thresholds.get('iuf_critical',10.0):.0f}%</span>
-  </div>
-</div>
-
-<div class="zone-card">
-  <div class="zone-header">
-    <span class="zone-title">Zone 3 — Motor Health (PF Drift)</span>
-    {_zone_badge(mside_pf_tier)}
+    <span class="zone-title">Zones 2 &amp; 3 — Motor-side: IUF × PF Drift Decision Matrix</span>
+    {_zone_badge(_z23_tier)}
   </div>
   <div class="zone-body">
-    {'Statistically significant PF drift detected in ' + str(sum(1 for b in record.motor_side.bands if b.drift_significant)) + ' load band(s).'
-      if record.motor_side and any(b.drift_significant for b in record.motor_side.bands)
-      else 'No statistically significant PF drift detected.'}
-    <br><span style="font-size:11px;color:#888">Watch ≤{float(st.session_state.get('pf_drift_watch', -0.10)):.2f} &nbsp;|&nbsp; Critical ≤{float(st.session_state.get('pf_drift_critical', -0.20)):.2f} (absolute)</span>
+    {_matrix_html}
   </div>
 </div>
 
