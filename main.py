@@ -2556,7 +2556,7 @@ for _k, _v in [
 
 # Force-correct gauge thresholds that got corrupted to min_value in earlier versions.
 # Key: if any value is out of its expected range, the entire set is reset to defaults.
-_GAUGE_SS_VER = "v7"
+_GAUGE_SS_VER = "v8"
 if st.session_state.get("_gauge_ss_ver") != _GAUGE_SS_VER:
     st.session_state["vuf_gauge_watch"]    = 2.0
     st.session_state["vuf_gauge_critical"] = 5.0
@@ -4993,14 +4993,14 @@ with tab_analysis:
                                 min_value=-0.20, max_value=-0.001,
                                 step=0.005, format="%.3f",
                                 key="pf_drift_watch",
-                                help=f"Default: {PF_DRIFT_WATCH:+.2f}",
+                                help="Default: -0.10  |  Drift below this = Watch",
                             )
                             _gd2.number_input(
                                 "Critical (drift)",
                                 min_value=-0.20, max_value=-0.001,
                                 step=0.005, format="%.3f",
                                 key="pf_drift_critical",
-                                help=f"Default: {PF_DRIFT_ACTION:+.2f}",
+                                help="Default: -0.20  |  Drift below this = Critical",
                             )
 
                         # Read current widget values from session state
