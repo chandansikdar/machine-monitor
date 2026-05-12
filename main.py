@@ -549,7 +549,7 @@ def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning")
         st.markdown(f"**{title}**")
         steps = [
             ("Raw samples",                         report.n_raw),
-            (f"Step 1 \u2014 Load \u2265{getattr(report, 'load_fraction', 0.20)*100:.0f}% rated", report.n_after_load_precondition),
+            (f"Step 1 \u2014 Load \u2265{getattr(report, 'load_fraction', st.session_state.get('load_precondition_pct', 20) / 100.0)*100:.0f}% rated", report.n_after_load_precondition),
             ("Step 2 \u2014 Start transient",        getattr(report, "n_after_start_transient",
                                                      report.n_after_load_precondition)),
             ("Step 3 \u2014 User filter",            report.n_after_user_filter),
@@ -569,6 +569,7 @@ def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning")
             prev = count
 
         retained_pct = report.fraction_retained * 100
+        n_removed_total = report.n_raw - report.n_cleaned
         colour = "green" if retained_pct >= 70 else "orange" if retained_pct >= 40 else "red"
         st.markdown(
             f'<table style="border-collapse:collapse;width:100%">'
@@ -581,7 +582,6 @@ def render_cleaning_report(report: CleaningReport, title: str = "Data cleaning")
             f'</table>',
             unsafe_allow_html=True,
         )
-        st.caption(f":{colour}[{retained_pct:.0f}% of raw samples retained for analysis]")
     except Exception as _e:
         st.warning(f"Could not render cleaning report: {_e}. Re-run the assessment to refresh.")
 
@@ -1431,7 +1431,7 @@ def generate_assessment_report_pdf(
         cl_rows = [
             [Paragraph(h, S["bold"]) for h in ["Step", "Samples", "Removed"]],
             ["Raw samples",              f"{cr.n_raw:,}",                      "—"],
-            [f"Step 1 — Load \u2265{getattr(cr, 'load_fraction', 0.20)*100:.0f}%",  f"{cr.n_after_load_precondition:,}",
+            [f"Step 1 — Load \u2265{getattr(cr, 'load_fraction', st.session_state.get('load_precondition_pct', 20) / 100.0)*100:.0f}%",  f"{cr.n_after_load_precondition:,}",
              Paragraph(f'<font color="#C0392B">-{cr.n_raw - cr.n_after_load_precondition:,}</font>',S["body"])
              if cr.n_raw > cr.n_after_load_precondition else "0"],
             ["Step 2 — Start transient", f"{n_st:,}",
@@ -1876,7 +1876,7 @@ def generate_assessment_report_html(
     if cr:
         steps = [
             ("Raw samples",                   cr.n_raw,                    None),
-            (f"Step 1 — Load \u2265{getattr(cr, 'load_fraction', 0.20)*100:.0f}% rated", cr.n_after_load_precondition, cr.n_raw - cr.n_after_load_precondition),
+            (f"Step 1 — Load \u2265{getattr(cr, 'load_fraction', st.session_state.get('load_precondition_pct', 20) / 100.0)*100:.0f}% rated", cr.n_after_load_precondition, cr.n_raw - cr.n_after_load_precondition),
             ("Step 2 — Start transient",      getattr(cr, "n_after_start_transient", cr.n_after_load_precondition),
              cr.n_after_load_precondition - getattr(cr, "n_after_start_transient", cr.n_after_load_precondition)),
             ("Step 3 — User filter",          cr.n_after_user_filter,
