@@ -723,18 +723,16 @@ def render_motor_side(m: MotorSideResult):
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=centres, y=bl_pf_vals,
-                mode="lines+markers",
+                mode="lines",
                 name="Baseline PF",
                 line=dict(color="#054D5F", width=2),
-                marker=dict(size=6),
             ))
             if any(v is not None for v in rec_pf_vals):
                 fig.add_trace(go.Scatter(
                     x=centres, y=rec_pf_vals,
-                    mode="lines+markers",
+                    mode="lines",
                     name="Recent PF",
                     line=dict(color="#C8A84B", width=2, dash="dash"),
-                    marker=dict(size=6),
                 ))
             # Drift bar (secondary y)
             bar_colours = [
@@ -905,6 +903,25 @@ def render_assessment(record: AssessmentRecord):
             )
         else:
             render_cleaning_report(cr, title="Assessment data cleaning")
+        # Baseline cleaning summary
+        _bl_cr = st.session_state.get("baseline_cleaning_report")
+        if _bl_cr:
+            _bl_raw     = _bl_cr.n_raw
+            _bl_cleaned = _bl_cr.n_cleaned
+            _bl_removed = _bl_raw - _bl_cleaned
+            _bl_pct     = 100 * _bl_removed / _bl_raw if _bl_raw > 0 else 0.0
+            _bl_thresh  = float(st.session_state.get("load_precondition_pct", 20.0))
+            with st.expander("Baseline data cleaning summary", expanded=False):
+                _bc1, _bc2, _bc3, _bc4 = st.columns(4)
+                _bc1.metric("Raw baseline samples",    f"{_bl_raw:,}")
+                _bc2.metric("Retained after cleaning", f"{_bl_cleaned:,}",
+                            help="Samples used for baseline statistics after load precondition and filters")
+                _bc3.metric("Load data removed",       f"{_bl_pct:.1f}%",
+                            delta=f"-{_bl_removed:,} samples",
+                            delta_color="off",
+                            help="Samples excluded by load precondition and other cleaning steps")
+                _bc4.metric("Load threshold applied",  f"{_bl_thresh:.0f}% of rated",
+                            help="Minimum load (% of rated electrical input) required to include a sample in analysis")
     st.markdown("---")
 
     # Zone 1
@@ -2516,6 +2533,7 @@ for _k, _v in [
     ("baseline_iuf_mean",        None),   # baseline period mean IUF %
     ("baseline_ph_iuf",          {}),     # {1: mean%, 2: mean%, 3: mean%}
     ("baseline_p_daily",         {}),     # {date_str: kw} daily P_total baseline
+    ("baseline_cleaning_report", None),   # CleaningReport from baseline clean_samples
     # Gauge threshold defaults — version-stamped so a code change forces a clean reset.
     # _GAUGE_SS_VER should be bumped whenever the defaults or valid ranges change.
     ("vuf_gauge_watch",    2.0),
@@ -4133,8 +4151,9 @@ with tab_analysis:
                             # Use cleaned data for both baseline and assessment
                             _user_filter = _bm_loaded.user_filter_expr if _bm_loaded else None
                             _cleaned_bl_for_phase = None
+                            _bl_cleaning_report   = None
                             if _raw_bl_for_assess is not None:
-                                _cleaned_bl_for_phase, _ = clean_samples(
+                                _cleaned_bl_for_phase, _bl_cleaning_report = clean_samples(
                                     _raw_bl_for_assess, meta, _user_filter,
                                     load_precondition_fraction=_load_frac_ui,
                                 )
@@ -4198,6 +4217,7 @@ with tab_analysis:
                             st.session_state["baseline_vuf_mean"] = _bl_vuf_mean
                             st.session_state["baseline_iuf_mean"] = _bl_iuf_mean
                             st.session_state["baseline_ph_iuf"]   = _bl_ph_iuf
+                            st.session_state["baseline_cleaning_report"] = _bl_cleaning_report
 
                             # Baseline daily P_total for run chart
                             _bl_p_daily = {}
