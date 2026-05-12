@@ -158,9 +158,7 @@ HVAC_CHILLER_APP_TYPE: str = "hvac_chiller"
 RUNNING_THRESHOLD_FRACTION: float = 0.05
 
 # Start transient exclusion: cold start defined when P_total crosses from
-# below this fraction of P_rated_elec to above it (§4.1 Step 2)
-COLD_START_THRESHOLD_FRACTION: float = 0.01   # 1 % of rated electrical input
-COLD_START_TRANSIENT_SAMPLES: int = 2          # samples to drop after cold start
+# Step 2 (start transient exclusion) removed — not meaningful at 1-minute resolution
 
 
 # ---------------------------------------------------------------------------
@@ -498,35 +496,9 @@ def clean_samples(
                    + df["phase_3_active_power"])
         df = df[p_total >= load_min_w].copy()
     report.n_after_load_precondition = len(df)
-
-    # ── Step 2: Start transient exclusion ───────────────────────────────────
-    # A cold start is detected when P_total crosses from below 1% of rated to
-    # above it.  Only the samples that are ABOVE rated electrical input (genuine
-    # electrical spikes / inrush artefacts) are removed.  Samples within the
-    # normal load range (0 → P_rated_elec) are valid operating data even if they
-    # immediately follow a startup, and are kept.
-    if len(df) > 0 and "timestamp" in raw.columns:
-        raw_p = (raw["phase_1_active_power"] + raw["phase_2_active_power"]
-                 + raw["phase_3_active_power"])
-        rated_max_w = p_rated_elec * 1000.0          # upper bound for normal operation
-        prev_below  = raw_p.shift(1, fill_value=0.0) < cold_min_w
-        curr_above  = raw_p >= cold_min_w
-        crossing_idx = raw.index[prev_below & curr_above]
-
-        transient_ts: set = set()
-        for ci in crossing_idx:
-            loc = raw.index.get_loc(ci)
-            for offset in range(COLD_START_TRANSIENT_SAMPLES):
-                if loc + offset < len(raw):
-                    sample_p = raw_p.iloc[loc + offset]
-                    # Only exclude if the sample power is above rated
-                    # (genuine spike); keep if within normal load range
-                    if sample_p > rated_max_w:
-                        transient_ts.add(raw.iloc[loc + offset]["timestamp"])
-
-        if transient_ts:
-            df = df[~df["timestamp"].isin(transient_ts)].copy()
-
+    # Step 2 (start transient exclusion) removed: at 1-minute resolution the
+    # inrush transient is fully averaged out before the first sample is recorded,
+    # so the step provides no benefit and risks discarding valid startup data.
     report.n_after_start_transient = len(df)
 
     # ── Step 3: User operating-condition filter ──────────────────────────────
