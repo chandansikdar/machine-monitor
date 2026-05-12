@@ -2261,8 +2261,8 @@ def build_assessment_charts(
     # Resolve gauge thresholds (caller overrides take priority over constants)
     _iuf_watch    = iuf_gauge_watch    if iuf_gauge_watch    is not None else float(IUF_WATCH)
     _iuf_critical = iuf_gauge_critical if iuf_gauge_critical is not None else float(IUF_CRITICAL)
-    _vuf_watch    = vuf_gauge_watch    if vuf_gauge_watch    is not None else 2.0
-    _vuf_critical = vuf_gauge_critical if vuf_gauge_critical is not None else 5.0
+    _vuf_watch    = vuf_gauge_watch    if vuf_gauge_watch    is not None else 1.0
+    _vuf_critical = vuf_gauge_critical if vuf_gauge_critical is not None else 2.0
     _pf_watch     = pf_gauge_watch     if pf_gauge_watch     is not None else 0.85
     _pf_critical  = pf_gauge_critical  if pf_gauge_critical  is not None else 0.75
 
@@ -2607,8 +2607,8 @@ for _k, _v in [
     ("baseline_cleaning_report", None),   # CleaningReport from baseline clean_samples
     # Gauge threshold defaults — version-stamped so a code change forces a clean reset.
     # _GAUGE_SS_VER should be bumped whenever the defaults or valid ranges change.
-    ("vuf_gauge_watch",    2.0),
-    ("vuf_gauge_critical", 5.0),
+    ("vuf_gauge_watch",    1.0),
+    ("vuf_gauge_critical", 2.0),
     ("iuf_gauge_watch",    float(IUF_WATCH)),
     ("iuf_gauge_critical", float(IUF_CRITICAL)),
     ("pf_gauge_watch",     0.85),
@@ -2621,10 +2621,10 @@ for _k, _v in [
 
 # Force-correct gauge thresholds that got corrupted to min_value in earlier versions.
 # Key: if any value is out of its expected range, the entire set is reset to defaults.
-_GAUGE_SS_VER = "v8"
+_GAUGE_SS_VER = "v9"
 if st.session_state.get("_gauge_ss_ver") != _GAUGE_SS_VER:
-    st.session_state["vuf_gauge_watch"]    = 2.0
-    st.session_state["vuf_gauge_critical"] = 5.0
+    st.session_state["vuf_gauge_watch"]    = 1.0
+    st.session_state["vuf_gauge_critical"] = 2.0
     st.session_state["iuf_gauge_watch"]    = float(IUF_WATCH)
     st.session_state["iuf_gauge_critical"] = float(IUF_CRITICAL)
     st.session_state["pf_gauge_watch"]     = 0.85
@@ -5011,8 +5011,8 @@ with tab_analysis:
                             # return value is written back so user edits persist.
                             st.session_state["vuf_gauge_watch"] = _gt_c1.number_input(
                                 "Watch threshold (%)", min_value=0.1, max_value=10.0,
-                                value=float(st.session_state.get("vuf_gauge_watch", 2.0)),
-                                step=0.1, help="Default: 2.0%",
+                                value=float(st.session_state.get("vuf_gauge_watch", 1.0)),
+                                step=0.1, help="Default: 1.0%  (aligned with Zone 1 Watch threshold)",
                             )
                             st.session_state["iuf_gauge_watch"] = _gt_c2.number_input(
                                 "Watch threshold (%)", min_value=0.1, max_value=50.0,
@@ -5026,8 +5026,8 @@ with tab_analysis:
                             )
                             st.session_state["vuf_gauge_critical"] = _gt_c1.number_input(
                                 "Critical threshold (%)", min_value=0.1, max_value=20.0,
-                                value=float(st.session_state.get("vuf_gauge_critical", 5.0)),
-                                step=0.1, help="Default: 5.0%",
+                                value=float(st.session_state.get("vuf_gauge_critical", 2.0)),
+                                step=0.1, help="Default: 2.0%  (aligned with Zone 1 Critical threshold)",
                             )
                             st.session_state["iuf_gauge_critical"] = _gt_c2.number_input(
                                 "Critical threshold (%)", min_value=0.1, max_value=100.0,
@@ -5055,8 +5055,8 @@ with tab_analysis:
                             )
 
                         # Read current widget values from session state
-                        _vuf_g_watch = float(st.session_state.get("vuf_gauge_watch",  2.0))
-                        _vuf_g_crit  = float(st.session_state.get("vuf_gauge_critical", 5.0))
+                        _vuf_g_watch = float(st.session_state.get("vuf_gauge_watch",  1.0))
+                        _vuf_g_crit  = float(st.session_state.get("vuf_gauge_critical", 2.0))
                         _iuf_g_watch = float(st.session_state.get("iuf_gauge_watch",  IUF_WATCH))
                         _iuf_g_crit  = float(st.session_state.get("iuf_gauge_critical", IUF_CRITICAL))
                         _pf_g_watch  = float(st.session_state.get("pf_gauge_watch",  0.85))
@@ -5071,8 +5071,8 @@ with tab_analysis:
                         _warn_pf_drift = _pf_d_watch  <= _pf_d_critical
                         if _warn_vuf:
                             st.warning("VUF: Watch threshold must be below Critical. Reset to defaults.")
-                            _vuf_g_watch = 2.0
-                            _vuf_g_crit  = 5.0
+                            _vuf_g_watch = 1.0
+                            _vuf_g_crit  = 2.0
                         if _warn_iuf:
                             st.warning("IUF: Watch threshold must be below Critical. Reset to defaults.")
                             _iuf_g_watch = float(IUF_WATCH)
