@@ -454,9 +454,9 @@ def clean_samples(
     load_precondition_fraction : override for the minimum load fraction (0–1).
                                  Defaults to LOAD_PRECONDITION_FRACTION (0.20).
     """
-    report = CleaningReport(n_raw=len(raw), load_fraction=_load_frac)
     _load_frac = load_precondition_fraction if load_precondition_fraction is not None \
                  else LOAD_PRECONDITION_FRACTION
+    report = CleaningReport(n_raw=len(raw), load_fraction=_load_frac)
 
     # Resolve rated electrical power — three sources in priority order:
     # 1. p_rated_elec_kw  — pre-computed by resolve_effective_meta from the FULL
