@@ -1549,10 +1549,7 @@ def generate_assessment_report_pdf(
         "Zones 2 & 3 — Motor-side (IUF × PF Drift)",
         _z23_tier,
         f"{z2_msg}  |  {z3_msg}",
-        f"IUF Watch \u2265{gauge_thresholds.get('iuf_watch',5.0):.0f}%  |  "
-        f"IUF Critical \u2265{gauge_thresholds.get('iuf_critical',10.0):.0f}%  |  "
-        f"PF Drift Watch \u2264{float(st.session_state.get('pf_drift_watch',-0.10)):.2f}  |  "
-        f"PF Drift Critical \u2264{float(st.session_state.get('pf_drift_critical',-0.20)):.2f}"
+        ""
     ))
 
     # 3×3 decision matrix (PDF)
