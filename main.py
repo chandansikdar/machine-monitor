@@ -1398,8 +1398,19 @@ def generate_assessment_report_pdf(
                                          ("BOTTOMPADDING",(0,0),(-1,-1),1)])))
     story.append(Spacer(1, 8))
 
-    # ── Data quality ──────────────────────────────────────────────────────────
-    story.append(Paragraph("Data Quality", S["h2"]))
+    # ── Data section ──────────────────────────────────────────────────────────
+    story.append(Paragraph("Data", S["h2"]))
+    story.append(Paragraph("Periods", S["h3"]))
+    period_data = [
+        [Paragraph(h, S["bold"]) for h in ["Period", "Date range"]],
+        [Paragraph("Baseline", S["bold"]),
+         Paragraph(baseline_period_str or "—", S["body"])],
+        [Paragraph("Assessment", S["bold"]),
+         Paragraph(period_str, S["body"])],
+    ]
+    story.append(_tbl(period_data, [COL_W * 0.25, COL_W * 0.75]))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("Data Quality — Assessment Period", S["h3"]))
     cr = record.cleaning_report
     if cr:
         n_st  = getattr(cr, "n_after_start_transient", cr.n_after_load_precondition)
@@ -1603,6 +1614,7 @@ def generate_assessment_report_html(
     phase_bands: dict,
     gauge_thresholds: dict,
     figs: list,
+    baseline_period_str: str = "",
 ) -> str:
     """Generate a self-contained HTML assessment report.
 
@@ -1664,7 +1676,6 @@ def generate_assessment_report_html(
         ("Supply frequency",       _fv(meta.get("supply_freq_hz"),   ".1f", "Hz")  if meta.get("supply_freq_hz") else "—",
                                    "nameplate" if meta.get("supply_freq_hz") else None),
         ("Power unit (raw data)",  meta.get("power_unit", "W"), None),
-        ("Assessment period",      period_str, None),
     ]
     _param_rows_html = ""
     for _pl, _pv, _ps in _params:
@@ -1941,8 +1952,21 @@ def generate_assessment_report_html(
   Platform default applied
 </div>
 
-<!-- Data Quality -->
-<h2>Data Quality</h2>
+<!-- Data -->
+<h2>Data</h2>
+
+<h3>Periods</h3>
+<table>
+  <thead><tr><th>Period</th><th>Date range</th></tr></thead>
+  <tbody>
+    <tr><td style="padding:5px 10px;font-weight:600">Baseline</td>
+        <td style="padding:5px 10px">{baseline_period_str if baseline_period_str else "—"}</td></tr>
+    <tr><td style="padding:5px 10px;font-weight:600">Assessment</td>
+        <td style="padding:5px 10px">{period_str}</td></tr>
+  </tbody>
+</table>
+
+<h3 style="margin-top:16px">Data Quality — Assessment Period</h3>
 <table>
   <thead><tr><th>Step</th><th style="text-align:right">Samples</th><th style="text-align:right">Removed</th></tr></thead>
   <tbody>{cleaning_rows}</tbody>
@@ -2045,6 +2069,7 @@ def build_assessment_charts(
     vuf_gauge_critical: float | None = None,
     pf_gauge_watch: float | None = None,
     pf_gauge_critical: float | None = None,
+    baseline_period_str: str = "",
     vuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     iuf_gauge_value: float | None = None,   # override: latest daily mean (default: assessment mean)
     pf_gauge_value: float | None = None,    # override: latest daily mean PF
@@ -5520,6 +5545,10 @@ with tab_analysis:
                             "pf_watch":     _pf_g_watch,
                             "pf_critical":  _pf_g_crit,
                         }
+                        # Baseline period from stored daily data
+                        _bl_pd_keys = sorted((st.session_state.get("baseline_p_daily") or {}).keys())
+                        _bl_period_str = f"{_bl_pd_keys[0]} \u2192 {_bl_pd_keys[-1]}" if _bl_pd_keys else ""
+
                         _report_args = dict(
                             record=record,
                             meta=meta or {},
@@ -5528,6 +5557,7 @@ with tab_analysis:
                             phase_bands=st.session_state.get("last_phase_bands") or {},
                             gauge_thresholds=_gauge_thresholds,
                             figs=_report_figs,
+                            baseline_period_str=_bl_period_str,
                         )
                         _fname_stem = (
                             f"assessment_report_"
