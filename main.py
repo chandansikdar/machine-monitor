@@ -1530,8 +1530,16 @@ def generate_assessment_report_pdf(
 
     n_sig = sum(1 for b in record.motor_side.bands if b.drift_significant) \
             if record.motor_side else 0
-    z3_msg = (f"Statistically significant PF drift in {n_sig} load band(s)."
-              if n_sig else "No statistically significant PF drift detected.")
+    _pfd_agg   = record.motor_side.pf_drift_aggregated if record.motor_side else None
+    _pfd_w_pdf = float(st.session_state.get("pf_drift_watch",    -0.10))
+    _pfd_c_pdf = float(st.session_state.get("pf_drift_critical", -0.20))
+    if _pfd_agg is not None:
+        _pfd_tier_str = ("above critical threshold" if _pfd_agg <= _pfd_c_pdf else
+                         "above watch threshold"    if _pfd_agg <= _pfd_w_pdf else
+                         "within normal limits")
+        z3_msg = f"PF drift (worst band) = {_pfd_agg:+.3f} \u2014 {_pfd_tier_str}. {n_sig} statistically significant band(s)."
+    else:
+        z3_msg = f"PF drift \u2014 no data. {n_sig} band(s) with significant drift."
 
     # Combined Zones 2 & 3 header
     _z23_tier = "critical" if "critical" in (z2_tier or "", mside_pf_tier or "") \
