@@ -1152,6 +1152,7 @@ def generate_assessment_report_pdf(
     figs: list,
     baseline_period_str: str = "",
     baseline_cr=None,
+    integrity_summary: dict | None = None,
 ) -> bytes:
     """Build a ReportLab PDF assessment report and return as bytes.
 
@@ -1420,6 +1421,30 @@ def generate_assessment_report_pdf(
     ]
     story.append(_tbl(period_data, [COL_W * 0.25, COL_W * 0.75]))
     story.append(Spacer(1, 8))
+    story.append(Paragraph("Integrity Check Results", S["h3"]))
+    if integrity_summary and integrity_summary.get("n_total", 0) > 0:
+        _ig_tot = integrity_summary["n_total"]
+        _ig_pas = integrity_summary["n_passed"]
+        _ig_fai = integrity_summary["n_failed"]
+        _ig_pct = 100 * _ig_pas / _ig_tot if _ig_tot else 0
+        ic_rows = [
+            [Paragraph(h, S["bold"]) for h in ["Metric", "Count", ""]],
+            ["Total samples",   f"{_ig_tot:,}", ""],
+            ["Passed",          f"{_ig_pas:,}", Paragraph(f'<font color="#177E40">{_ig_pct:.1f}% pass rate</font>', S["small"])],
+            ["Failed / excluded", f"{_ig_fai:,}",
+             Paragraph(f'<font color="#C0392B">-{100-_ig_pct:.1f}%</font>', S["small"]) if _ig_fai else ""],
+        ]
+        story.append(_tbl(ic_rows, [COL_W*0.45, COL_W*0.22, COL_W*0.33]))
+        _ig_fails = integrity_summary.get("failures", {})
+        if _ig_fails:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph("Failure reasons:", S["small"]))
+            for _reason, _cnt in sorted(_ig_fails.items(), key=lambda x: -x[1]):
+                story.append(Paragraph(f"\u2022 {_reason}: {_cnt:,} sample(s)", S["small"]))
+    else:
+        story.append(Paragraph("Integrity check data not available. Run the integrity check in the Data tab.", S["small"]))
+    story.append(Spacer(1, 8))
+
     story.append(Paragraph("Data Quality — Assessment Period", S["h3"]))
     cr = record.cleaning_report
     if cr:
@@ -1641,6 +1666,7 @@ def generate_assessment_report_html(
     figs: list,
     baseline_period_str: str = "",
     baseline_cr=None,
+    integrity_summary: dict | None = None,
 ) -> str:
     """Generate a self-contained HTML assessment report.
 
@@ -1931,6 +1957,29 @@ def generate_assessment_report_html(
     else:
         _bl_quality_html = '<p style="color:#888;font-size:12px">Baseline cleaning data not available. Re-run the assessment to populate.</p>'
 
+    # Integrity check summary HTML
+    _integrity_html = ""
+    if integrity_summary and integrity_summary.get("n_total", 0) > 0:
+        _ig_tot = integrity_summary["n_total"]
+        _ig_pas = integrity_summary["n_passed"]
+        _ig_fai = integrity_summary["n_failed"]
+        _ig_pct = 100 * _ig_pas / _ig_tot if _ig_tot else 0
+        _ig_colour = "#177E40" if _ig_fai == 0 else "#E67E22" if _ig_pct >= 90 else "#C0392B"
+        _fail_rows = ""
+        for _r, _c in sorted(integrity_summary.get("failures", {}).items(), key=lambda x: -x[1]):
+            _fail_rows += f'<tr><td style="padding:3px 10px;color:#888">{_r}</td><td style="padding:3px 10px;text-align:right">{_c:,}</td></tr>'
+        _integrity_html = (
+            f'<table><thead><tr><th>Metric</th><th style="text-align:right">Count</th></tr></thead>'
+            f'<tbody>'
+            f'<tr><td style="padding:5px 10px">Total samples</td><td style="padding:5px 10px;text-align:right;font-weight:600">{_ig_tot:,}</td></tr>'
+            f'<tr><td style="padding:5px 10px">Passed ✅</td><td style="padding:5px 10px;text-align:right;font-weight:600;color:#177E40">{_ig_pas:,} ({_ig_pct:.1f}%)</td></tr>'
+            f'<tr><td style="padding:5px 10px">Failed / excluded</td><td style="padding:5px 10px;text-align:right;font-weight:600;color:{_ig_colour}">{_ig_fai:,} ({100-_ig_pct:.1f}%)</td></tr>'
+            + (_fail_rows and f'<tr><td colspan="2" style="padding:4px 10px;font-size:11px;color:#888;font-style:italic">Failure reasons:</td></tr>{_fail_rows}' or '')
+            + '</tbody></table>'
+        )
+    else:
+        _integrity_html = '<p style="color:#888;font-size:12px">Integrity check data not available. Run the integrity check in the Data tab.</p>'
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2031,6 +2080,9 @@ def generate_assessment_report_html(
         <td style="padding:5px 10px">{period_str}</td></tr>
   </tbody>
 </table>
+
+<h3 style="margin-top:16px">Integrity Check Results</h3>
+{_integrity_html}
 
 <h3 style="margin-top:16px">Data Quality — Assessment Period</h3>
 <table>
@@ -3666,6 +3718,9 @@ with tab_data:
                         _passed_df["timestamp"].astype(str).tolist()
                     )
                     st.session_state["last_integrity_failure_summary"] = {}
+                    st.session_state["last_integrity_n_total"]  = _n_total
+                    st.session_state["last_integrity_n_passed"] = _n_passed
+                    st.session_state["last_integrity_n_failed"] = _n_failed
                     st.download_button(
                         label=f"\u2b07\ufe0f Download all {_n_total:,} passed rows (CSV)",
                         data=_passed_df.to_csv(index=False).encode("utf-8"),
@@ -3756,6 +3811,9 @@ with tab_data:
                         else:
                             _reason_summary = {}
                         st.session_state["last_integrity_failure_summary"] = _reason_summary
+                        st.session_state["last_integrity_n_total"]  = _n_total
+                        st.session_state["last_integrity_n_passed"] = _n_passed
+                        st.session_state["last_integrity_n_failed"] = _n_failed
                         st.download_button(
                             label=f"\u2b07\ufe0f Download {_n_passed:,} passed rows (CSV)",
                             data=_passed_df.to_csv(index=False).encode("utf-8"),
@@ -5624,6 +5682,12 @@ with tab_analysis:
                             figs=_report_figs,
                             baseline_period_str=_bl_period_str,
                             baseline_cr=st.session_state.get("baseline_cleaning_report"),
+                            integrity_summary={
+                                "n_total":  st.session_state.get("last_integrity_n_total",  0),
+                                "n_passed": st.session_state.get("last_integrity_n_passed", 0),
+                                "n_failed": st.session_state.get("last_integrity_n_failed", 0),
+                                "failures": st.session_state.get("last_integrity_failure_summary", {}),
+                            },
                         )
                         _fname_stem = (
                             f"assessment_report_"
