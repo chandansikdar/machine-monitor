@@ -749,10 +749,12 @@ def render_motor_side(m: MotorSideResult):
                 yaxis="y2",
                 width=[centres[1] - centres[0]] * len(centres) if len(centres) > 1 else [1],
             ))
-            # Threshold lines on drift axis
+            # Threshold lines on drift axis — read from session state
+            _pf_bw = float(st.session_state.get("pf_drift_watch",    -0.10))
+            _pf_bc = float(st.session_state.get("pf_drift_critical", -0.20))
             for val, colour, label in [
-                (PF_DRIFT_WATCH,  "#F1C40F", f"Watch {PF_DRIFT_WATCH}"),
-                (PF_DRIFT_ACTION, "#A32D2D", f"Action {PF_DRIFT_ACTION}"),
+                (_pf_bw, "#F1C40F", f"Watch {_pf_bw:.2f}"),
+                (_pf_bc, "#A32D2D", f"Critical {_pf_bc:.2f}"),
             ]:
                 fig.add_hline(
                     y=val, line_color=colour, line_dash="dot", line_width=1,
@@ -1390,8 +1392,10 @@ def generate_assessment_report_pdf(
             d_data = [[Paragraph(h, S["bold"]) for h in
                        ["Band centre (kW)", "Baseline PF", "Recent PF", "Drift"]]]
             for b in sig_bands[:20]:
-                dc = ("#C0392B" if b.pf_drift <= -0.03 else
-                      "#E67E22" if b.pf_drift <= -0.02 else "#333333")
+                _dc_c = float(st.session_state.get("pf_drift_critical", -0.20))
+                _dc_w = float(st.session_state.get("pf_drift_watch",    -0.10))
+                dc = ("#C0392B" if b.pf_drift <= _dc_c else
+                      "#E67E22" if b.pf_drift <= _dc_w else "#333333")
                 d_data.append([
                     f"{b.centre_kw/1000:.2f}",
                     f"{b.mean_pf_baseline:.4f}",
@@ -1569,7 +1573,9 @@ def generate_assessment_report_html(
             '</tr></thead><tbody>'
         )
         for b in sig_rows[:15]:
-            drift_col = "#C0392B" if b.pf_drift <= -0.03 else ("#E67E22" if b.pf_drift <= -0.02 else "#333")
+            _pf_cc = float(st.session_state.get("pf_drift_critical", -0.20))
+            _pf_cw = float(st.session_state.get("pf_drift_watch",    -0.10))
+            drift_col = "#C0392B" if b.pf_drift <= _pf_cc else ("#E67E22" if b.pf_drift <= _pf_cw else "#333")
             html += (
                 f'<tr style="border-bottom:1px solid #F0F0F0">'
                 f'<td style="padding:5px 8px">{b.centre_kw/1000:.2f}</td>'
@@ -4632,9 +4638,10 @@ with tab_analysis:
                                                  (_pt_arr < _b.high_kw))
                                     _dp = ((_b.pf_drift / _b.mean_pf_baseline * 100)
                                            if _b.mean_pf_baseline else None)
-                                    _st = ("Action" if _b.pf_drift <= -0.03 else
-                                           "Critical" if _b.pf_drift <= float(st.session_state.get("pf_drift_critical", -0.20)) else
-                                           "Watch"  if _b.pf_drift <= -0.01 else
+                                    _pf_zw = float(st.session_state.get("pf_drift_watch",    -0.10))
+                                    _pf_zc = float(st.session_state.get("pf_drift_critical", -0.20))
+                                    _st = ("Critical" if _b.pf_drift <= _pf_zc else
+                                           "Watch"    if _b.pf_drift <= _pf_zw else
                                            "Normal")
                                     _sig = ("Yes" if _b.drift_significant else
                                             "No"  if _b.drift_significant is False
@@ -4743,9 +4750,10 @@ with tab_analysis:
                                 for _bi, _b in enumerate(_bands_src, start=1):
                                     _dp2 = ((_b.pf_drift / _b.mean_pf_baseline * 100)
                                             if _b.mean_pf_baseline else None)
-                                    _st2 = ("Action" if _b.pf_drift <= -0.03 else
-                                            "Critical" if _b.pf_drift <= float(st.session_state.get("pf_drift_critical", -0.20)) else
-                                            "Watch"  if _b.pf_drift <= -0.01 else
+                                    _pf_zw2 = float(st.session_state.get("pf_drift_watch",    -0.10))
+                                    _pf_zc2 = float(st.session_state.get("pf_drift_critical", -0.20))
+                                    _st2 = ("Critical" if _b.pf_drift <= _pf_zc2 else
+                                            "Watch"    if _b.pf_drift <= _pf_zw2 else
                                             "Normal")
                                     _row2 = [
                                         _bi,
